@@ -1,0 +1,99 @@
+# SemanticKITTI Semantic Class Color Mapping
+# Colors are specified as RGB values in range [0, 255]
+# Based on SemanticKITTI semantic label definitions
+# Colors have been converted from BGR to RGB format
+
+/**:
+  ros__parameters:
+    # Class ID to RGB color mapping (using actual SemanticKITTI label IDs)
+    # Format: label_id: [R, G, B]  # class_name
+    colors:
+      # Special classes
+      "0": [0, 0, 0]        # unlabeled
+      "1": [255, 0, 0]      # outlier
+      
+      # Vehicles
+      "10": [100, 150, 245] # car
+      "11": [100, 230, 245] # bicycle
+      "13": [100, 80, 250]  # bus
+      "15": [30, 60, 150]   # motorcycle
+      "16": [0, 0, 255]     # on-rails
+      "18": [80, 30, 180]   # truck
+      "20": [0, 0, 255]     # other-vehicle
+      
+      # Humans
+      "30": [255, 30, 30]   # person
+      "31": [255, 40, 200]  # bicyclist
+      "32": [150, 30, 90]   # motorcyclist
+      
+      # Ground surfaces
+      "40": [255, 0, 255]   # road
+      "44": [255, 150, 255] # parking
+      "48": [75, 0, 75]     # sidewalk
+      "49": [175, 0, 75]    # other-ground
+      
+      # Structures
+      "50": [255, 200, 0]   # building
+      "51": [255, 120, 50]  # fence
+      "52": [255, 150, 0]   # other-structure
+      "60": [150, 255, 170] # lane-marking
+      
+      # Nature
+      "70": [0, 175, 0]     # vegetation
+      "71": [135, 60, 0]    # trunk
+      "72": [150, 240, 80]  # terrain
+      
+      # Objects
+      "80": [255, 240, 150] # pole
+      "81": [255, 0, 0]     # traffic-sign
+      "99": [50, 255, 255]  # other-object
+      
+      # Moving objects (optional, same colors as static)
+      "252": [100, 150, 245] # moving-car
+      "253": [255, 40, 200]  # moving-bicyclist
+      "254": [255, 30, 30]   # moving-person
+      "255": [150, 30, 90]   # moving-motorcyclist
+      "256": [0, 0, 255]     # moving-on-rails
+      "257": [100, 80, 250]  # moving-bus
+      "258": [80, 30, 180]   # moving-truck
+      "259": [0, 0, 255]     # moving-other-vehicle
+
+    # Class ID to name mapping (using actual SemanticKITTI label IDs)
+    class_names:
+      "0": "unlabeled"
+      "1": "outlier"
+      "10": "car"
+      "11": "bicycle"
+      "13": "bus"
+      "15": "motorcycle"
+      "16": "on-rails"
+      "18": "truck"
+      "20": "other-vehicle"
+      "30": "person"
+      "31": "bicyclist"
+      "32": "motorcyclist"
+      "40": "road"
+      "44": "parking"
+      "48": "sidewalk"
+      "49": "other-ground"
+      "50": "building"
+      "51": "fence"
+      "52": "other-structure"
+      "60": "lane-marking"
+      "70": "vegetation"
+      "71": "trunk"
+      "72": "terrain"
+      "80": "pole"
+      "81": "traffic-sign"
+      "99": "other-object"
+      "252": "moving-car"
+      "253": "moving-bicyclist"
+      "254": "moving-person"
+      "255": "moving-motorcyclist"
+      "256": "moving-on-rails"
+      "257": "moving-bus"
+      "258": "moving-truck"
+      "259": "moving-other-vehicle"
+
+# Note: For ROS visualization, colors should be normalized to [0, 1] range
+# Divide RGB values by 255.0 when converting to std_msgs/ColorRGBA

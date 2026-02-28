@@ -1,0 +1,33 @@
+# semantickitti_04 config
+
+/**:
+  ros__parameters:
+    # Map information
+    resolution: 0.3
+    # num_class: number of common taxonomy classes (see labels_common.yaml).
+    # All raw labels are mapped to [0, num_class-1] at ingestion time.
+    num_class: 13
+
+    # Sampling resolutions
+    free_resolution: 100.0 # Free space sampling resolution
+    ds_resolution: 0.1 # Downsampling factor
+
+    # Information about range-finder data
+    scan_num: 100 # How many scans to use
+    max_range: -1.0 # Sensor max range (m)
+
+    # Dataset information
+    input_data_prefix: velodyne/
+    input_label_prefix: predictions/
+    lidar_pose_file: poses.txt
+    gt_label_prefix: labels/
+    evaluation_result_prefix: evaluations/
+    query: true
+    visualize: true
+
+    # Label mapping keys: select which *_to_common mapping from labels_common.yaml to use
+    inferred_labels_key: semkitti
+    gt_labels_key: semkitti
+
+    # Color configuration (uses common taxonomy colors)
+    colors_file: labels_common.yaml
