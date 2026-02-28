@@ -19,9 +19,9 @@
     # Dataset information
     input_data_prefix: kth_day_09/lidar_bin/data
     lidar_pose_file: kth_day_09/pose_inW.csv
-    evaluation_result_prefix: evaluations/osm_uncertainty_prior_evaluations/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_new/
     query: true
-    visualize: true
+    visualize: false
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_prefix
@@ -36,12 +36,12 @@
     color_mode: semantic
 
     # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
-    publish_variance: true
+    publish_variance: false
     variance_topic: /semantic_bki_variance
 
     # Semantic uncertainty map: publish accumulated input observation uncertainty per voxel (like variance map).
     # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.
-    publish_semantic_uncertainty: true
+    publish_semantic_uncertainty: false
     semantic_uncertainty_topic: /semantic_uncertainty_map
 
     # Color configuration (matters if color_mode is set to 'semantic').
@@ -53,7 +53,7 @@
     # --------------------------------
     # Uncertainty filtering: build running confusion matrix from GT labels,
     # compute per-class precision, drop uncertain points for low-precision classes.
-    use_uncertainty_filter: true
+    use_uncertainty_filter: false
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
     uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
@@ -77,7 +77,7 @@
     # Adds OSM-based bias to every BKI observation, maintaining constant influence.
     # Maps predicted semantic classes to OSM prior categories to bias predictions toward OSM-compatible classes.
     osm_confusion_matrix_file: osm_confusion_matrix.yaml
-    osm_prior_strength: 1.5  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
 
     # OSM height filter: scale OSM priors by height (z). Per-scan mean and std of z per OSM category
     # are computed; priors apply only when voxel z is within [mean - k*std, mean + k*std].

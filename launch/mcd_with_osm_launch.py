@@ -95,7 +95,7 @@ def launch_setup(context):
     # Fallback: use this file's location (works when running directly from src/).
     pkg_share_dir = get_package_share_directory('semantic_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
-    pkg_src_dir = os.path.join(ws_root, 'src', 'BKISemanticMapping')
+    pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     if not os.path.isdir(os.path.join(pkg_src_dir, 'config')):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     
