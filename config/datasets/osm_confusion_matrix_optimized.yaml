@@ -1,0 +1,51 @@
+# Optimized OSM confusion matrix (derived from GT co-occurrence analysis).
+# Rows  = common taxonomy semantic classes (1-12).
+# Cols   = OSM prior categories: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
+# Values in [0.0, 1.0]: boost only (no suppression).
+#
+# Common taxonomy:
+#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,
+#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,
+#   11: vehicle, 12: other-object
+
+osm_prior_columns: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
+
+#       roads  park  grass  trees  forest  build  fence  stairs  none
+confusion_matrix:
+  1:  [  1.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00]   # road
+  2:  [  1.00,   0.00,   0.00,   0.22,   0.00,   0.00,   0.00,   0.34,   1.00]   # sidewalk
+  3:  [  0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
+  4:  [  0.21,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   1.00]   # other-ground
+  5:  [  0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.31,   0.00]   # building
+  6:  [  0.00,   1.00,   1.00,   0.00,   0.16,   0.00,   1.00,   0.00,   0.13]   # fence
+  7:  [  0.33,   1.00,   0.96,   0.00,   0.22,   0.00,   0.16,   0.62,   0.81]   # pole
+  8:  [  0.00,   1.00,   1.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.47]   # traffic-sign
+  9:  [  0.00,   0.76,   0.81,   1.00,   1.00,   0.00,   1.00,   0.00,   0.00]   # vegetation
+  10:  [  0.59,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.06,   1.00]   # two-wheeler
+  11:  [  1.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.49]   # vehicle
+  12:  [  0.25,   0.00,   0.40,   0.86,   0.00,   0.00,   0.00,   0.20,   1.00]   # other-object
+
+osm_class_map:
+  roads: 0
+  parking: 1
+  grasslands: 2
+  trees: 3
+  forest: 4
+  buildings: 5
+  fences: 6
+  stairs: 7
+  none: 8
+
+label_to_matrix_idx:
+  1: 0
+  2: 1
+  3: 2
+  4: 3
+  5: 4
+  6: 5
+  7: 6
+  8: 7
+  9: 8
+  10: 9
+  11: 10
+  12: 11
