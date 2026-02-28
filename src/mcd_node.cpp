@@ -98,6 +98,8 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("osm_prior_strength", 0.0);
     node->declare_parameter<bool>("use_osm_height_filter", false);
     node->declare_parameter<double>("osm_height_std_multiplier", 2.0);
+    node->declare_parameter<bool>("publish_variance", false);
+    node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -389,9 +391,14 @@ int main(int argc, char **argv) {
       double osm_height_std_mult;
       node->get_parameter<std::string>("osm_confusion_matrix_file", osm_cm_file);
       node->get_parameter<double>("osm_prior_strength", osm_prior_str);
-      node->get_parameter<bool>("use_osm_height_filter", use_osm_height_filter);
-      node->get_parameter<double>("osm_height_std_multiplier", osm_height_std_mult);
-      mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
+    node->get_parameter<bool>("use_osm_height_filter", use_osm_height_filter);
+    node->get_parameter<double>("osm_height_std_multiplier", osm_height_std_mult);
+    bool publish_variance = false;
+    std::string variance_topic = "/semantic_bki_variance";
+    node->get_parameter<bool>("publish_variance", publish_variance);
+    node->get_parameter<std::string>("variance_topic", variance_topic);
+    mcd_data.set_publish_variance(publish_variance, variance_topic);
+    mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
       mcd_data.set_osm_height_filter_enabled(use_osm_height_filter);
       mcd_data.set_osm_height_std_multiplier(static_cast<float>(osm_height_std_mult));
       if (!osm_cm_file.empty() && osm_prior_str > 0.0) {

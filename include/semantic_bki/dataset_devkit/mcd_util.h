@@ -84,6 +84,7 @@ class MCDData {
              float prior)
       : node_(node)
       , resolution_(resolution)
+      , num_class_(num_class)
       , ds_resolution_(ds_resolution)
       , free_resolution_(free_resolution)
       , max_range_(max_range)
@@ -446,6 +447,16 @@ class MCDData {
     /// Set map visualization color mode: semantic class or OSM prior (building/road/grassland/tree).
     void set_color_mode(semantic_bki::MapColorMode mode) {
       if (m_pub_) m_pub_->set_color_mode(mode);
+    }
+
+    /// Enable variance visualization on a separate topic. Jet colormap: blue=low variance, red=high.
+    void set_publish_variance(bool enabled, const std::string& topic) {
+      publish_variance_ = enabled;
+      variance_topic_ = topic;
+      if (enabled && !variance_pub_) {
+        variance_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        RCLCPP_INFO_STREAM(node_->get_logger(), "Variance visualization enabled on topic: " << topic);
+      }
     }
 
     void set_osm_buildings(const std::vector<semantic_bki::Geometry2D> &buildings) {
@@ -866,7 +877,10 @@ class MCDData {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Unknown exception getting iterators");
         return;
       }
-      
+
+      // First pass: main map + compute min/max variance for variance visualization
+      float min_var = std::numeric_limits<float>::max();
+      float max_var = std::numeric_limits<float>::lowest();
       semantic_bki::MapColorMode mode = m_pub_->get_color_mode();
       int voxel_count = 0;
       int iter_count = 0;
@@ -885,6 +899,16 @@ class MCDData {
               if (node.get_state() == semantic_bki::State::OCCUPIED) {
               semantic_bki::point3f p = it.get_loc();
               float size = it.get_size();
+              if (publish_variance_) {
+                std::vector<float> vars(num_class_);
+                node.get_vars(vars);
+                int semantics = node.get_semantics();
+                if (semantics >= 0 && semantics < num_class_) {
+                  float v = vars[semantics];
+                  if (v > max_var) max_var = v;
+                  if (v < min_var) min_var = v;
+                }
+              }
               if (mode == semantic_bki::MapColorMode::Semantic) {
                 m_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, node.get_semantics(), 2);
               } else if (mode == semantic_bki::MapColorMode::OSMBlend) {
@@ -927,6 +951,24 @@ class MCDData {
         return;
       }
       m_pub_->publish();
+
+      // Second pass: publish variance map if enabled
+      if (publish_variance_ && variance_pub_) {
+        if (min_var > max_var) min_var = max_var = 0.f;  // avoid div by zero
+        variance_pub_->clear_map(static_cast<float>(resolution_));
+        for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
+          auto node = it.get_node();
+          if (node.get_state() == semantic_bki::State::OCCUPIED) {
+            semantic_bki::point3f p = it.get_loc();
+            int semantics = node.get_semantics();
+            std::vector<float> vars(num_class_);
+            node.get_vars(vars);
+            if (semantics >= 0 && semantics < num_class_)
+              variance_pub_->insert_point3d_variance(p.x(), p.y(), p.z(), min_var, max_var, it.get_size(), vars[semantics]);
+          }
+        }
+        variance_pub_->publish();
+      }
     }
     
     // Load colors from ROS parameters
@@ -1132,11 +1174,15 @@ class MCDData {
   private:
     rclcpp::Node::SharedPtr node_;
     double resolution_;
+    int num_class_;
     double ds_resolution_;
     double free_resolution_;
     double max_range_;
     semantic_bki::SemanticBKIOctoMap* map_;
     semantic_bki::MarkerArrayPub* m_pub_;
+    semantic_bki::MarkerArrayPub* variance_pub_{nullptr};
+    bool publish_variance_{false};
+    std::string variance_topic_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_pub_;  // Publisher for individual scan point clouds
     tf2_ros::TransformBroadcaster tf_broadcaster_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -1202,7 +1248,7 @@ class MCDData {
       long label_file_sz = std::ftell(fp_label);
       std::rewind(fp_label);
       int num_labels_in_file = static_cast<int>(label_file_sz / sizeof(uint32_t));
-      RCLCPP_INFO_STREAM(node_->get_logger(), "\n\n\n\n     Scan: " << fn << " \n\nlabel file: " << fn_label << " number of labels: " << num_labels_in_file << "\n\n\n\n");
+      // RCLCPP_INFO_STREAM(node_->get_logger(), "\n\n\n\n     Scan: " << fn << " \n\nlabel file: " << fn_label << " number of labels: " << num_labels_in_file << "\n\n\n\n");
 
       // Preallocate point cloud for better performance (avoids reallocation)
       pcl::PointCloud<pcl::PointXYZL>::Ptr pc(new pcl::PointCloud<pcl::PointXYZL>);

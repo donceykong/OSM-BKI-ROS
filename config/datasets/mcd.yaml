@@ -34,6 +34,10 @@
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
     # Options: semantic, osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
     color_mode: semantic
+
+    # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
+    publish_variance: true
+    variance_topic: /semantic_bki_variance
     # Color configuration (matters if color_mode is set to 'semantic').
     # Uses common taxonomy colors from labels_common.yaml.
     colors_file: labels_common.yaml
