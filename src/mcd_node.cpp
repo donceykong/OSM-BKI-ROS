@@ -100,6 +100,8 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("osm_height_std_multiplier", 2.0);
     node->declare_parameter<bool>("publish_variance", false);
     node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
+    node->declare_parameter<bool>("publish_semantic_uncertainty", false);
+    node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -398,6 +400,11 @@ int main(int argc, char **argv) {
     node->get_parameter<bool>("publish_variance", publish_variance);
     node->get_parameter<std::string>("variance_topic", variance_topic);
     mcd_data.set_publish_variance(publish_variance, variance_topic);
+    bool publish_semantic_uncertainty = false;
+    std::string semantic_uncertainty_topic = "/semantic_uncertainty_cloud";
+    node->get_parameter<bool>("publish_semantic_uncertainty", publish_semantic_uncertainty);
+    node->get_parameter<std::string>("semantic_uncertainty_topic", semantic_uncertainty_topic);
+    mcd_data.set_publish_semantic_uncertainty(publish_semantic_uncertainty, semantic_uncertainty_topic);
     mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
       mcd_data.set_osm_height_filter_enabled(use_osm_height_filter);
       mcd_data.set_osm_height_std_multiplier(static_cast<float>(osm_height_std_mult));

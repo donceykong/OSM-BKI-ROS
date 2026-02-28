@@ -28,6 +28,7 @@
 
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "bkioctomap.h"
@@ -43,6 +44,14 @@ struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
   std::vector<float> variances;
   int n_classes = 0;
+};
+
+/// Voxel key for semantic uncertainty accumulation (input observation uncertainty per voxel)
+struct VoxelKey {
+  int x = 0, y = 0, z = 0;
+  bool operator<(const VoxelKey& o) const {
+    return std::tie(x, y, z) < std::tie(o.x, o.y, o.z);
+  }
 };
 
 /// Convert IEEE 754 half-precision (uint16) to single-precision float.
@@ -459,6 +468,17 @@ class MCDData {
       }
     }
 
+    /// Enable semantic uncertainty (input observation) map visualization. Voxel map with jet colormap: blue=confident, red=uncertain.
+    /// Same pattern as variance map. Requires inferred_use_multiclass.
+    void set_publish_semantic_uncertainty(bool enabled, const std::string& topic) {
+      publish_semantic_uncertainty_ = enabled;
+      semantic_uncertainty_topic_ = topic;
+      if (enabled && !semantic_uncertainty_pub_) {
+        semantic_uncertainty_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        RCLCPP_INFO_STREAM(node_->get_logger(), "Semantic uncertainty map visualization enabled on topic: " << topic);
+      }
+    }
+
     void set_osm_buildings(const std::vector<semantic_bki::Geometry2D> &buildings) {
       if (map_) map_->set_osm_buildings(buildings);
     }
@@ -629,11 +649,18 @@ class MCDData {
         std::string scan_name = input_data_dir + "/" + std::string(scan_id_c) + ".bin";
 
         pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
+        pcl::PointCloud<pcl::PointXYZL>::ConstPtr orig_cloud_for_unc;
+        std::vector<float> orig_variances_copy;  // copy must outlive mc_result for accumulation
+        int orig_n_classes_for_unc = 0;
         if (inferred_use_multiclass_) {
           std::string mc_name = inferred_multiclass_dir_ + "/" + std::string(scan_id_c) + ".bin";
           MulticlassResult mc_result = mcd2pcl_multiclass(scan_name, mc_name);
           cloud = mc_result.cloud;
-
+          if (publish_semantic_uncertainty_ && mc_result.n_classes > 1 && !mc_result.variances.empty()) {
+            orig_cloud_for_unc = mc_result.cloud;
+            orig_variances_copy = mc_result.variances;  // copy: mc_result is destroyed at block end
+            orig_n_classes_for_unc = mc_result.n_classes;
+          }
           // Compute per-point weights from uncertainty for kernel discounting
           if (use_uncertainty_filter_ && cloud && !cloud->points.empty() &&
               mc_result.n_classes > 1) {
@@ -793,7 +820,25 @@ class MCDData {
         cloud_msg.header.frame_id = "lidar";
         cloud_msg.header.stamp = node_->now();
         pointcloud_pub_->publish(cloud_msg);
-        
+
+        // Accumulate semantic uncertainty per voxel (for map visualization)
+        if (orig_cloud_for_unc && !orig_variances_copy.empty() && publish_semantic_uncertainty_) {
+          float max_var = static_cast<float>(orig_n_classes_for_unc - 1) /
+              (static_cast<float>(orig_n_classes_for_unc) * orig_n_classes_for_unc);
+          pcl::PointCloud<pcl::PointXYZL> cloud_map;
+          pcl::transformPointCloud(*orig_cloud_for_unc, cloud_map, lidar_to_map.cast<float>());
+          for (size_t pi = 0; pi < cloud_map.points.size(); ++pi) {
+            float u = 1.0f - std::min(orig_variances_copy[pi] / max_var, 1.0f);
+            int kx = static_cast<int>(std::floor(cloud_map.points[pi].x / resolution_));
+            int ky = static_cast<int>(std::floor(cloud_map.points[pi].y / resolution_));
+            int kz = static_cast<int>(std::floor(cloud_map.points[pi].z / resolution_));
+            VoxelKey key{kx, ky, kz};
+            auto& p = semantic_uncertainty_acc_[key];
+            p.first += u;
+            p.second += 1;
+          }
+        }
+
         if (insertion_count == 0) {
           RCLCPP_INFO_STREAM(node_->get_logger(), "Published PointCloud2 with " << cloud->points.size() << " points in frame 'lidar'");
         }
@@ -968,6 +1013,42 @@ class MCDData {
           }
         }
         variance_pub_->publish();
+      }
+
+      // Third pass: publish semantic uncertainty map if enabled (input observation uncertainty per voxel)
+      if (publish_semantic_uncertainty_ && semantic_uncertainty_pub_ && !semantic_uncertainty_acc_.empty()) {
+        float min_unc = 1.f;
+        float max_unc = 0.f;
+        for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
+          auto node = it.get_node();
+          if (node.get_state() != semantic_bki::State::OCCUPIED) continue;
+          semantic_bki::point3f p = it.get_loc();
+          int kx = static_cast<int>(std::floor(p.x() / resolution_));
+          int ky = static_cast<int>(std::floor(p.y() / resolution_));
+          int kz = static_cast<int>(std::floor(p.z() / resolution_));
+          VoxelKey key{kx, ky, kz};
+          auto fit = semantic_uncertainty_acc_.find(key);
+          if (fit == semantic_uncertainty_acc_.end()) continue;
+          float avg_u = fit->second.first / static_cast<float>(fit->second.second);
+          if (avg_u < min_unc) min_unc = avg_u;
+          if (avg_u > max_unc) max_unc = avg_u;
+        }
+        if (min_unc > max_unc) min_unc = max_unc = 0.f;
+        semantic_uncertainty_pub_->clear_map(static_cast<float>(resolution_));
+        for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
+          auto node = it.get_node();
+          if (node.get_state() != semantic_bki::State::OCCUPIED) continue;
+          semantic_bki::point3f p = it.get_loc();
+          int kx = static_cast<int>(std::floor(p.x() / resolution_));
+          int ky = static_cast<int>(std::floor(p.y() / resolution_));
+          int kz = static_cast<int>(std::floor(p.z() / resolution_));
+          VoxelKey key{kx, ky, kz};
+          auto fit = semantic_uncertainty_acc_.find(key);
+          if (fit == semantic_uncertainty_acc_.end()) continue;
+          float avg_u = fit->second.first / static_cast<float>(fit->second.second);
+          semantic_uncertainty_pub_->insert_point3d_variance(p.x(), p.y(), p.z(), min_unc, max_unc, it.get_size(), avg_u);
+        }
+        semantic_uncertainty_pub_->publish();
       }
     }
     
@@ -1183,6 +1264,10 @@ class MCDData {
     semantic_bki::MarkerArrayPub* variance_pub_{nullptr};
     bool publish_variance_{false};
     std::string variance_topic_;
+    semantic_bki::MarkerArrayPub* semantic_uncertainty_pub_{nullptr};
+    bool publish_semantic_uncertainty_{false};
+    std::string semantic_uncertainty_topic_;
+    std::map<VoxelKey, std::pair<float, int>> semantic_uncertainty_acc_;  // per-voxel: (sum_uncertainty, count)
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_pub_;  // Publisher for individual scan point clouds
     tf2_ros::TransformBroadcaster tf_broadcaster_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;

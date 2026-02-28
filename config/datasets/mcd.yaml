@@ -19,7 +19,7 @@
     # Dataset information
     input_data_prefix: kth_day_09/lidar_bin/data
     lidar_pose_file: kth_day_09/pose_inW.csv
-    evaluation_result_prefix: evaluations/osm_prior_evaluations/
+    evaluation_result_prefix: evaluations/osm_uncertainty_prior_evaluations/
     query: true
     visualize: true
 
@@ -38,6 +38,12 @@
     # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
     publish_variance: true
     variance_topic: /semantic_bki_variance
+
+    # Semantic uncertainty map: publish accumulated input observation uncertainty per voxel (like variance map).
+    # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.
+    publish_semantic_uncertainty: true
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+
     # Color configuration (matters if color_mode is set to 'semantic').
     # Uses common taxonomy colors from labels_common.yaml.
     colors_file: labels_common.yaml
@@ -47,10 +53,10 @@
     # --------------------------------
     # Uncertainty filtering: build running confusion matrix from GT labels,
     # compute per-class precision, drop uncertain points for low-precision classes.
-    use_uncertainty_filter: false
+    use_uncertainty_filter: true
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
-    uncertainty_drop_percent: 90.0  # for top_percent mode: discount this % of most uncertain points per scan
+    uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
     uncertainty_min_weight: 0.00     # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
     confusion_matrix_file: confusion_matrix_mcd.yaml  # for confusion_matrix mode
 
