@@ -338,8 +338,8 @@ class MCDData {
 
     /// Load common taxonomy mappings from labels_common.yaml.
     /// @param yaml_path       Path to labels_common.yaml.
-    /// @param inferred_key    "mcd" or "semkitti" — picks <key>_to_common for inferred labels.
-    /// @param gt_key          "mcd" or "semkitti" — picks <key>_to_common for GT labels.
+    /// @param inferred_key    "mcd", "semkitti", or "kitti360" — picks <key>_to_common for inferred labels.
+    /// @param gt_key          "mcd", "semkitti", or "kitti360" — picks <key>_to_common for GT labels.
     bool load_common_label_config(const std::string& yaml_path,
                                   const std::string& inferred_key,
                                   const std::string& gt_key) {
@@ -485,6 +485,12 @@ class MCDData {
     void set_osm_roads(const std::vector<semantic_bki::Geometry2D> &roads) {
       if (map_) map_->set_osm_roads(roads);
     }
+    void set_osm_sidewalks(const std::vector<semantic_bki::Geometry2D> &sidewalks) {
+      if (map_) map_->set_osm_sidewalks(sidewalks);
+    }
+    void set_osm_cycleways(const std::vector<semantic_bki::Geometry2D> &cycleways) {
+      if (map_) map_->set_osm_cycleways(cycleways);
+    }
     void set_osm_grasslands(const std::vector<semantic_bki::Geometry2D> &grasslands) {
       if (map_) map_->set_osm_grasslands(grasslands);
     }
@@ -509,8 +515,17 @@ class MCDData {
     void set_osm_fences(const std::vector<semantic_bki::Geometry2D> &fences) {
       if (map_) map_->set_osm_fences(fences);
     }
+    void set_osm_walls(const std::vector<semantic_bki::Geometry2D> &walls) {
+      if (map_) map_->set_osm_walls(walls);
+    }
     void set_osm_stairs(const std::vector<semantic_bki::Geometry2D> &stairs) {
       if (map_) map_->set_osm_stairs(stairs);
+    }
+    void set_osm_water(const std::vector<semantic_bki::Geometry2D> &water) {
+      if (map_) map_->set_osm_water(water);
+    }
+    void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points) {
+      if (map_) map_->set_osm_pole_points(pole_points);
     }
     void set_osm_stairs_width(float width_m) {
       if (map_) map_->set_osm_stairs_width(width_m);
@@ -544,8 +559,8 @@ class MCDData {
         int n_rows = max_row + 1;
 
         // Parse confusion matrix rows (keyed by common class ID)
-        // 9 columns: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
-        static constexpr int N_OSM_COLS = 9;
+        // 14 columns: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
+        static constexpr int N_OSM_COLS = 14;
         std::vector<std::vector<float>> matrix(n_rows, std::vector<float>(N_OSM_COLS, 0.f));
         for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
           int common_class = it->first.as<int>();
@@ -1296,7 +1311,7 @@ class MCDData {
     // Uncertainty filtering
     bool use_uncertainty_filter_;
     bool confusion_matrix_loaded_;
-    std::string inferred_labels_key_;  // "mcd" or "semkitti"
+    std::string inferred_labels_key_;  // "mcd", "semkitti", or "kitti360"
     std::string uncertainty_filter_mode_;  // "confusion_matrix" or "top_percent"
     float uncertainty_drop_percent_;       // for top_percent mode: discount this % of most uncertain points
     float uncertainty_min_weight_;         // minimum kernel weight for the most uncertain points

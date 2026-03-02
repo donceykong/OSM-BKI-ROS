@@ -339,6 +339,8 @@ namespace semantic_bki {
         /// OSM semantics: set 2D geometries (same frame as map) and decay distance for prior dropoff.
         void set_osm_buildings(const std::vector<Geometry2D> &buildings);
         void set_osm_roads(const std::vector<Geometry2D> &roads);
+        void set_osm_sidewalks(const std::vector<Geometry2D> &sidewalks);
+        void set_osm_cycleways(const std::vector<Geometry2D> &cycleways);
         void set_osm_grasslands(const std::vector<Geometry2D> &grasslands);
         void set_osm_trees(const std::vector<Geometry2D> &trees);
         void set_osm_forests(const std::vector<Geometry2D> &forests);
@@ -346,13 +348,16 @@ namespace semantic_bki {
         void set_osm_tree_point_radius(float radius_m);
         void set_osm_parking(const std::vector<Geometry2D> &parking);
         void set_osm_fences(const std::vector<Geometry2D> &fences);
+        void set_osm_walls(const std::vector<Geometry2D> &walls);
         void set_osm_stairs(const std::vector<Geometry2D> &stairs);
+        void set_osm_water(const std::vector<Geometry2D> &water);
+        void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points);
         void set_osm_stairs_width(float width_m);
         void set_osm_decay_meters(float decay_m);
 
         /// OSM confusion matrix: set pre-parsed matrix and label mappings.
         /// K_pred rows (semantic super-classes) x K_prior cols (OSM categories).
-        /// Column order: [roads, parking, grasslands, trees, buildings, fences, stairs, none].
+        /// Column order: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none].
         /// Values in [-1, 1]: negative = decrease likelihood, positive = increase.
         /// "none" column is active (1.0) when no OSM geometry covers the point.
         /// @param matrix  rows x N_OSM_PRIOR_COLS values, outer index = row
@@ -367,7 +372,7 @@ namespace semantic_bki {
         void set_osm_height_std_multiplier(float k);  // e.g. 2.0 for mean ± 2*std
 
     private:
-        static constexpr int N_OSM_PRIOR_COLS = 9;  // roads, parking, grasslands, trees, forest, buildings, fences, stairs, none
+        static constexpr int N_OSM_PRIOR_COLS = 14;  // roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none
 
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
@@ -383,7 +388,12 @@ namespace semantic_bki {
         float compute_osm_forest_prior(float x, float y) const;
         float compute_osm_parking_prior(float x, float y) const;
         float compute_osm_fence_prior(float x, float y) const;
+        float compute_osm_wall_prior(float x, float y) const;
         float compute_osm_stairs_prior(float x, float y) const;
+        float compute_osm_sidewalk_prior(float x, float y) const;
+        float compute_osm_cycleway_prior(float x, float y) const;
+        float compute_osm_water_prior(float x, float y) const;
+        float compute_osm_pole_prior(float x, float y) const;
 
     private:
         /// @return true if point is inside a bounding box given min and max limits.
@@ -448,6 +458,8 @@ namespace semantic_bki {
         MyRTree rtree;
         std::vector<Geometry2D> osm_buildings_;
         std::vector<Geometry2D> osm_roads_;
+        std::vector<Geometry2D> osm_sidewalks_;
+        std::vector<Geometry2D> osm_cycleways_;
         std::vector<Geometry2D> osm_grasslands_;
         std::vector<Geometry2D> osm_trees_;
         std::vector<Geometry2D> osm_forests_;
@@ -455,7 +467,11 @@ namespace semantic_bki {
         float osm_tree_point_radius_{5.0f};  // Radius (m) for tree point circles; prior projected same as polygons
         std::vector<Geometry2D> osm_parking_;
         std::vector<Geometry2D> osm_fences_;
+        std::vector<Geometry2D> osm_walls_;
         std::vector<Geometry2D> osm_stairs_;
+        std::vector<Geometry2D> osm_water_;
+        std::vector<std::pair<float, float>> osm_pole_points_;
+        float osm_pole_point_radius_{2.0f};  // Radius (m) for pole/traffic-sign points
         float osm_stairs_width_{1.5f};  // Width (m) for stairs polylines; prior = 1 inside width band, decays outside
         float osm_decay_meters_;
 
@@ -470,9 +486,9 @@ namespace semantic_bki {
         // OSM height filter: scale priors by z within mean ± k*std per OSM category
         bool use_osm_height_filter_{false};
         float osm_height_std_multiplier_{2.0f};
-        float osm_height_mean_[8]{};   // roads, parking, grasslands, trees, forest, buildings, fences, stairs
-        float osm_height_std_[8]{};    // std per category; 0 = no valid stats
-        bool osm_height_valid_[8]{};   // true if category has enough points
+        float osm_height_mean_[13]{};   // roads..poles (excl. none)
+        float osm_height_std_[13]{};
+        bool osm_height_valid_[13]{};
     };
 
 }

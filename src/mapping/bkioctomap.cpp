@@ -246,6 +246,14 @@ namespace semantic_bki {
         osm_roads_ = roads;
     }
 
+    void SemanticBKIOctoMap::set_osm_sidewalks(const std::vector<Geometry2D> &sidewalks) {
+        osm_sidewalks_ = sidewalks;
+    }
+
+    void SemanticBKIOctoMap::set_osm_cycleways(const std::vector<Geometry2D> &cycleways) {
+        osm_cycleways_ = cycleways;
+    }
+
     void SemanticBKIOctoMap::set_osm_grasslands(const std::vector<Geometry2D> &grasslands) {
         osm_grasslands_ = grasslands;
     }
@@ -274,8 +282,20 @@ namespace semantic_bki {
         osm_fences_ = fences;
     }
 
+    void SemanticBKIOctoMap::set_osm_walls(const std::vector<Geometry2D> &walls) {
+        osm_walls_ = walls;
+    }
+
     void SemanticBKIOctoMap::set_osm_stairs(const std::vector<Geometry2D> &stairs) {
         osm_stairs_ = stairs;
+    }
+
+    void SemanticBKIOctoMap::set_osm_water(const std::vector<Geometry2D> &water) {
+        osm_water_ = water;
+    }
+
+    void SemanticBKIOctoMap::set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points) {
+        osm_pole_points_ = pole_points;
     }
 
     void SemanticBKIOctoMap::set_osm_stairs_width(float width_m) {
@@ -314,7 +334,7 @@ namespace semantic_bki {
     }
 
     void SemanticBKIOctoMap::compute_osm_height_stats_from_cloud(const PCLPointCloud &cloud) {
-        static constexpr int N_CAT = 8;  // roads, parking, grasslands, trees, forest, buildings, fences, stairs
+        static constexpr int N_CAT = 13;  // roads..poles (excl. none)
         std::vector<std::vector<float>> z_per_cat(N_CAT);
         const float threshold = 0.3f;
 
@@ -350,18 +370,23 @@ namespace semantic_bki {
     void SemanticBKIOctoMap::compute_osm_prior_vec(float x, float y,
                                                     float osm_vec[N_OSM_PRIOR_COLS]) const {
         osm_vec[0] = compute_osm_road_prior(x, y);
-        osm_vec[1] = compute_osm_parking_prior(x, y);
-        osm_vec[2] = compute_osm_grassland_prior(x, y);
-        osm_vec[3] = compute_osm_tree_prior(x, y);
-        osm_vec[4] = compute_osm_forest_prior(x, y);
-        osm_vec[5] = compute_osm_building_prior(x, y);
-        osm_vec[6] = compute_osm_fence_prior(x, y);
-        osm_vec[7] = compute_osm_stairs_prior(x, y);
+        osm_vec[1] = compute_osm_sidewalk_prior(x, y);
+        osm_vec[2] = compute_osm_cycleway_prior(x, y);
+        osm_vec[3] = compute_osm_parking_prior(x, y);
+        osm_vec[4] = compute_osm_grassland_prior(x, y);
+        osm_vec[5] = compute_osm_tree_prior(x, y);
+        osm_vec[6] = compute_osm_forest_prior(x, y);
+        osm_vec[7] = compute_osm_building_prior(x, y);
+        osm_vec[8] = compute_osm_fence_prior(x, y);
+        osm_vec[9] = compute_osm_wall_prior(x, y);
+        osm_vec[10] = compute_osm_stairs_prior(x, y);
+        osm_vec[11] = compute_osm_water_prior(x, y);
+        osm_vec[12] = compute_osm_pole_prior(x, y);
         // "none" = 1 when no OSM geometry covers this point, 0 when fully covered
         float max_geom = 0.f;
-        for (int c = 0; c < 8; ++c)
+        for (int c = 0; c < 13; ++c)
             if (osm_vec[c] > max_geom) max_geom = osm_vec[c];
-        osm_vec[8] = 1.0f - max_geom;
+        osm_vec[13] = 1.0f - max_geom;
     }
 
     void SemanticBKIOctoMap::apply_osm_prior_to_ybars(std::vector<float> &ybars,
@@ -372,7 +397,7 @@ namespace semantic_bki {
         compute_osm_prior_vec(x, y, osm_vec);
 
         if (use_osm_height_filter_) {
-            for (int c = 0; c < 8; ++c) {
+            for (int c = 0; c < 13; ++c) {
                 if (!osm_height_valid_[c]) continue;
                 float mean = osm_height_mean_[c];
                 float stdv = osm_height_std_[c];
@@ -513,6 +538,58 @@ namespace semantic_bki {
             if (d < min_d) min_d = d;
         }
         return osm_prior_from_distance(min_d, osm_decay_meters_);
+    }
+
+    float SemanticBKIOctoMap::compute_osm_sidewalk_prior(float x, float y) const {
+        if (osm_sidewalks_.empty()) return 0.f;
+        float min_d = std::numeric_limits<float>::max();
+        for (const auto &sw : osm_sidewalks_) {
+            float d = distance_to_polyline(x, y, sw);
+            if (d < min_d) min_d = d;
+        }
+        return osm_prior_from_distance(min_d, osm_decay_meters_);
+    }
+
+    float SemanticBKIOctoMap::compute_osm_cycleway_prior(float x, float y) const {
+        if (osm_cycleways_.empty()) return 0.f;
+        float min_d = std::numeric_limits<float>::max();
+        for (const auto &cw : osm_cycleways_) {
+            float d = distance_to_polyline(x, y, cw);
+            if (d < min_d) min_d = d;
+        }
+        return osm_prior_from_distance(min_d, osm_decay_meters_);
+    }
+
+    float SemanticBKIOctoMap::compute_osm_wall_prior(float x, float y) const {
+        if (osm_walls_.empty()) return 0.f;
+        float min_d = std::numeric_limits<float>::max();
+        for (const auto &wall : osm_walls_) {
+            float d = distance_to_polyline(x, y, wall);
+            if (d < min_d) min_d = d;
+        }
+        return osm_prior_from_distance(min_d, osm_decay_meters_);
+    }
+
+    float SemanticBKIOctoMap::compute_osm_water_prior(float x, float y) const {
+        if (osm_water_.empty()) return 0.f;
+        float min_positive_d = std::numeric_limits<float>::max();
+        for (const auto &poly : osm_water_) {
+            float signed_d = distance_to_polygon_boundary(x, y, poly);
+            if (signed_d <= 0.f) return 1.f;  // inside water
+            if (signed_d < min_positive_d) min_positive_d = signed_d;
+        }
+        return osm_prior_from_signed_distance(min_positive_d, osm_decay_meters_);
+    }
+
+    float SemanticBKIOctoMap::compute_osm_pole_prior(float x, float y) const {
+        if (osm_pole_points_.empty()) return 0.f;
+        float min_signed_d = std::numeric_limits<float>::max();
+        for (const auto &pt : osm_pole_points_) {
+            float signed_d = distance_to_circle_signed(x, y, pt.first, pt.second, osm_pole_point_radius_);
+            if (signed_d <= 0.f) return 1.f;  // inside pole circle
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
+        }
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_stairs_prior(float x, float y) const {

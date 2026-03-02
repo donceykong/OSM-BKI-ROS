@@ -1,6 +1,6 @@
 # Optimized OSM confusion matrix (derived from GT co-occurrence analysis).
 # Rows  = common taxonomy semantic classes (1-12).
-# Cols   = OSM prior categories: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
+# Cols  = OSM prior categories: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
 # Values in [0.0, 1.0]: boost only (no suppression).
 #
 # Common taxonomy:
@@ -8,33 +8,37 @@
 #   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,
 #   11: vehicle, 12: other-object
 
-osm_prior_columns: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
+osm_prior_columns: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
 
-#       roads  park  grass  trees  forest  build  fence  stairs  none
 confusion_matrix:
-  1:  [  1.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00]   # road
-  2:  [  1.00,   0.00,   0.00,   0.22,   0.00,   0.00,   0.00,   0.34,   1.00]   # sidewalk
-  3:  [  0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
-  4:  [  0.21,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   1.00]   # other-ground
-  5:  [  0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.31,   0.00]   # building
-  6:  [  0.00,   1.00,   1.00,   0.00,   0.16,   0.00,   1.00,   0.00,   0.13]   # fence
-  7:  [  0.33,   1.00,   0.96,   0.00,   0.22,   0.00,   0.16,   0.62,   0.81]   # pole
-  8:  [  0.00,   1.00,   1.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.47]   # traffic-sign
-  9:  [  0.00,   0.76,   0.81,   1.00,   1.00,   0.00,   1.00,   0.00,   0.00]   # vegetation
-  10:  [  0.59,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.06,   1.00]   # two-wheeler
-  11:  [  1.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.49]   # vehicle
-  12:  [  0.25,   0.00,   0.40,   0.86,   0.00,   0.00,   0.00,   0.20,   1.00]   # other-object
+  1:  [  1.00,   0.00,   1.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.67,   0.00,   0.00,   0.00,   1.00]   # road
+  2:  [  1.00,   1.00,   0.00,   0.00,   0.00,   0.22,   0.00,   0.00,   0.00,   0.00,   0.30,   0.47,   0.00,   1.00]   # sidewalk
+  3:  [  1.00,   0.00,   0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
+  4:  [  0.00,   0.47,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.00,   1.00]   # other-ground
+  5:  [  0.00,   0.14,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.00,   0.35,   0.00,   0.00,   0.00]   # building
+  6:  [  0.00,   0.00,   0.00,   1.00,   1.00,   0.00,   0.14,   0.00,   1.00,   1.00,   0.00,   0.00,   0.00,   0.00]   # fence
+  7:  [  0.78,   0.16,   0.50,   1.00,   0.98,   0.00,   0.22,   0.00,   0.19,   1.00,   0.56,   0.00,   0.13,   0.74]   # pole
+  8:  [  1.00,   0.00,   0.68,   1.00,   1.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.53]   # traffic-sign
+  9:  [  0.00,   0.00,   1.00,   0.76,   0.80,   1.00,   1.00,   0.00,   1.00,   0.23,   0.00,   0.65,   0.00,   0.00]   # vegetation
+  10:  [  0.00,   0.80,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.06,   0.00,   0.00,   1.00]   # two-wheeler
+  11:  [  1.00,   0.00,   0.18,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.56]   # vehicle
+  12:  [  1.00,   0.09,   0.00,   0.00,   0.42,   0.85,   0.00,   0.00,   0.00,   1.00,   0.18,   1.00,   1.00,   1.00]   # other-object
 
 osm_class_map:
   roads: 0
-  parking: 1
-  grasslands: 2
-  trees: 3
-  forest: 4
-  buildings: 5
-  fences: 6
-  stairs: 7
-  none: 8
+  sidewalks: 1
+  cycleways: 2
+  parking: 3
+  grasslands: 4
+  trees: 5
+  forest: 6
+  buildings: 7
+  fences: 8
+  walls: 9
+  stairs: 10
+  water: 11
+  poles: 12
+  none: 13
 
 label_to_matrix_idx:
   1: 0

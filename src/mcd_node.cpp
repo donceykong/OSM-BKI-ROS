@@ -247,9 +247,15 @@ int main(int argc, char **argv) {
     }
 
     // Multiclass setup: inferred and/or GT can use per-class scores (float16) instead of single uint32 labels.
-    // learning_map_inv is inferred from inferred_labels_key / gt_labels_key (labels_semkitti.yaml or labels_mcd.yaml).
+    // learning_map_inv is inferred from inferred_labels_key / gt_labels_key (labels_semkitti.yaml, labels_mcd.yaml, or labels_kitti360.yaml).
     auto resolve_label_config_path = [&](const std::string& labels_key) -> std::string {
-      std::string f = (labels_key == "mcd") ? "labels_mcd.yaml" : "labels_semkitti.yaml";
+      std::string f;
+      if (labels_key == "mcd")
+        f = "labels_mcd.yaml";
+      else if (labels_key == "kitti360")
+        f = "labels_kitti360.yaml";
+      else
+        f = "labels_semkitti.yaml";
       size_t dp = dir.rfind("/data/");
       if (dp != std::string::npos)
         return dir.substr(0, dp) + "/config/datasets/" + f;
@@ -362,24 +368,27 @@ int main(int argc, char **argv) {
         osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
         mcd_data.set_osm_buildings(osm_vis.getBuildings());
         mcd_data.set_osm_roads(osm_vis.getRoads());
+        mcd_data.set_osm_sidewalks(osm_vis.getSidewalks());
+        mcd_data.set_osm_cycleways(osm_vis.getCycleways());
         mcd_data.set_osm_grasslands(osm_vis.getGrasslands());
         mcd_data.set_osm_trees(osm_vis.getTrees());
         mcd_data.set_osm_forests(osm_vis.getForests());
         mcd_data.set_osm_tree_points(osm_vis.getTreePoints());
         mcd_data.set_osm_parking(osm_vis.getParking());
         mcd_data.set_osm_fences(osm_vis.getFences());
+        mcd_data.set_osm_walls(osm_vis.getWalls());
         mcd_data.set_osm_stairs(osm_vis.getStairs());
+        mcd_data.set_osm_water(osm_vis.getWater());
+        mcd_data.set_osm_pole_points(osm_vis.getPolePoints());
         mcd_data.set_osm_stairs_width(osm_vis.getStairsWidth());
-        RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: " 
-            << osm_vis.getBuildings().size() << " buildings, " 
-            << osm_vis.getRoads().size() << " roads, "
-            << osm_vis.getParking().size() << " parking, "
-            << osm_vis.getFences().size() << " fences, "
-            << osm_vis.getStairs().size() << " stairs, "
-            << osm_vis.getGrasslands().size() << " grasslands, "
-            << osm_vis.getTrees().size() << " tree polygons, "
-            << osm_vis.getForests().size() << " forest polygons, "
-            << osm_vis.getTreePoints().size() << " tree points (decay=" << osm_decay_meters << " m)");
+        RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: "
+            << osm_vis.getBuildings().size() << " buildings, " << osm_vis.getRoads().size() << " roads, "
+            << osm_vis.getSidewalks().size() << " sidewalks, " << osm_vis.getCycleways().size() << " cycleways, "
+            << osm_vis.getParking().size() << " parking, " << osm_vis.getFences().size() << " fences, "
+            << osm_vis.getWalls().size() << " walls, " << osm_vis.getStairs().size() << " stairs, "
+            << osm_vis.getGrasslands().size() << " grasslands, " << osm_vis.getTrees().size() << " trees, "
+            << osm_vis.getForests().size() << " forests, " << osm_vis.getTreePoints().size() << " tree points, "
+            << osm_vis.getWater().size() << " water, " << osm_vis.getPolePoints().size() << " pole points (decay=" << osm_decay_meters << " m)");
       } else {
         RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM file for priors: " << full_osm_path);
       }
