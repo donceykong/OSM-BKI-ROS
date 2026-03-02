@@ -110,9 +110,6 @@ namespace semantic_bki {
             return;
         }
 
-        if (use_osm_height_filter_ && osm_prior_strength_ > 0.0f)
-            compute_osm_height_stats_from_cloud(cloud);
-
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
 
@@ -216,13 +213,6 @@ namespace semantic_bki {
                 apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
 
                 node.update(ybars[j]);
-                node.set_osm_building(compute_osm_building_prior(loc.x(), loc.y()));
-                node.set_osm_road(compute_osm_road_prior(loc.x(), loc.y()));
-                node.set_osm_grassland(compute_osm_grassland_prior(loc.x(), loc.y()));
-                node.set_osm_tree(compute_osm_tree_prior(loc.x(), loc.y()));
-                node.set_osm_parking(compute_osm_parking_prior(loc.x(), loc.y()));
-                node.set_osm_fence(compute_osm_fence_prior(loc.x(), loc.y()));
-                node.set_osm_stairs(compute_osm_stairs_prior(loc.x(), loc.y()));
             }
 
         }
@@ -310,12 +300,16 @@ namespace semantic_bki {
         osm_prior_strength_ = strength;
     }
 
-    void SemanticBKIOctoMap::set_osm_height_filter_enabled(bool enabled) {
-        use_osm_height_filter_ = enabled;
-    }
-
-    void SemanticBKIOctoMap::set_osm_height_std_multiplier(float k) {
-        osm_height_std_multiplier_ = std::max(0.5f, k);
+    void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
+                                                              float &grassland, float &tree, float &parking,
+                                                              float &fence, float &stairs) const {
+        building = compute_osm_building_prior(x, y);
+        road = compute_osm_road_prior(x, y);
+        grassland = compute_osm_grassland_prior(x, y);
+        tree = compute_osm_tree_prior(x, y);
+        parking = compute_osm_parking_prior(x, y);
+        fence = compute_osm_fence_prior(x, y);
+        stairs = compute_osm_stairs_prior(x, y);
     }
 
     void SemanticBKIOctoMap::set_osm_confusion_matrix(
@@ -331,40 +325,6 @@ namespace semantic_bki {
         osm_cm_row_to_labels_ = row_to_labels;
         osm_cm_row_to_labels_.resize(osm_cm_rows_);
         osm_cm_loaded_ = true;
-    }
-
-    void SemanticBKIOctoMap::compute_osm_height_stats_from_cloud(const PCLPointCloud &cloud) {
-        static constexpr int N_CAT = 13;  // roads..poles (excl. none)
-        std::vector<std::vector<float>> z_per_cat(N_CAT);
-        const float threshold = 0.3f;
-
-        for (size_t i = 0; i < cloud.size(); ++i) {
-            float x = cloud[i].x;
-            float y = cloud[i].y;
-            float z = cloud[i].z;
-            float osm_vec[N_OSM_PRIOR_COLS];
-            compute_osm_prior_vec(x, y, osm_vec);
-            for (int c = 0; c < N_CAT; ++c) {
-                if (osm_vec[c] >= threshold)
-                    z_per_cat[c].push_back(z);
-            }
-        }
-
-        for (int c = 0; c < N_CAT; ++c) {
-            const size_t n = z_per_cat[c].size();
-            if (n < 5u) {
-                osm_height_valid_[c] = false;
-                continue;
-            }
-            float sum = std::accumulate(z_per_cat[c].begin(), z_per_cat[c].end(), 0.f);
-            osm_height_mean_[c] = sum / static_cast<float>(n);
-            float var = 0.f;
-            for (float z : z_per_cat[c])
-                var += (z - osm_height_mean_[c]) * (z - osm_height_mean_[c]);
-            osm_height_std_[c] = std::sqrt(var / static_cast<float>(n));
-            if (osm_height_std_[c] < 1e-4f) osm_height_std_[c] = 0.2f;  // avoid division by zero
-            osm_height_valid_[c] = true;
-        }
     }
 
     void SemanticBKIOctoMap::compute_osm_prior_vec(float x, float y,
@@ -395,19 +355,6 @@ namespace semantic_bki {
 
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
-
-        if (use_osm_height_filter_) {
-            for (int c = 0; c < 13; ++c) {
-                if (!osm_height_valid_[c]) continue;
-                float mean = osm_height_mean_[c];
-                float stdv = osm_height_std_[c];
-                float k = osm_height_std_multiplier_;
-                float lo = mean - k * stdv;
-                float hi = mean + k * stdv;
-                float w = (z >= lo && z <= hi) ? 1.0f : 0.0f;
-                osm_vec[c] *= w;
-            }
-        }
 
         // p_super[row] = sum_j(M[row][j] * osm_vec[j])
         // M values in [-1, 1]; negative decreases likelihood, positive increases.
@@ -669,9 +616,6 @@ namespace semantic_bki {
             return;
         }
 
-        if (use_osm_height_filter_ && osm_prior_strength_ > 0.0f)
-            compute_osm_height_stats_from_cloud(cloud);
-
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
 
@@ -776,13 +720,6 @@ namespace semantic_bki {
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
 
                     node.update(ybars[j]);
-                    node.set_osm_building(compute_osm_building_prior(loc.x(), loc.y()));
-                    node.set_osm_road(compute_osm_road_prior(loc.x(), loc.y()));
-                    node.set_osm_grassland(compute_osm_grassland_prior(loc.x(), loc.y()));
-                    node.set_osm_tree(compute_osm_tree_prior(loc.x(), loc.y()));
-                    node.set_osm_parking(compute_osm_parking_prior(loc.x(), loc.y()));
-                    node.set_osm_fence(compute_osm_fence_prior(loc.x(), loc.y()));
-                    node.set_osm_stairs(compute_osm_stairs_prior(loc.x(), loc.y()));
                 }
             }
         }
@@ -955,9 +892,6 @@ namespace semantic_bki {
 
         if (xy.size() == 0) return;
 
-        if (use_osm_height_filter_ && osm_prior_strength_ > 0.0f)
-            compute_osm_height_stats_from_cloud(cloud);
-
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
 
@@ -1041,13 +975,6 @@ namespace semantic_bki {
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
 
                     node.update(ybars[j]);
-                    node.set_osm_building(compute_osm_building_prior(loc.x(), loc.y()));
-                    node.set_osm_road(compute_osm_road_prior(loc.x(), loc.y()));
-                    node.set_osm_grassland(compute_osm_grassland_prior(loc.x(), loc.y()));
-                    node.set_osm_tree(compute_osm_tree_prior(loc.x(), loc.y()));
-                    node.set_osm_parking(compute_osm_parking_prior(loc.x(), loc.y()));
-                    node.set_osm_fence(compute_osm_fence_prior(loc.x(), loc.y()));
-                    node.set_osm_stairs(compute_osm_stairs_prior(loc.x(), loc.y()));
                 }
             }
         }

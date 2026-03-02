@@ -366,10 +366,9 @@ namespace semantic_bki {
                                       const std::vector<std::vector<int>> &row_to_labels);
         void set_osm_prior_strength(float strength);
 
-        /// OSM height filter: scale OSM priors by height (z) so priors apply only within
-        /// typical height range of points in each OSM category. Uses per-scan mean ± k*std.
-        void set_osm_height_filter_enabled(bool enabled);
-        void set_osm_height_std_multiplier(float k);  // e.g. 2.0 for mean ± 2*std
+        /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
+        void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
+                                              float &tree, float &parking, float &fence, float &stairs) const;
 
     private:
         static constexpr int N_OSM_PRIOR_COLS = 14;  // roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none
@@ -378,8 +377,6 @@ namespace semantic_bki {
 
         void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
 
-        /// Compute per-OSM-category height stats (mean, std) from scan points; used for height filter.
-        void compute_osm_height_stats_from_cloud(const PCLPointCloud &cloud);
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
         float compute_osm_road_prior(float x, float y) const;
@@ -482,13 +479,6 @@ namespace semantic_bki {
         float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
-
-        // OSM height filter: scale priors by z within mean ± k*std per OSM category
-        bool use_osm_height_filter_{false};
-        float osm_height_std_multiplier_{2.0f};
-        float osm_height_mean_[13]{};   // roads..poles (excl. none)
-        float osm_height_std_[13]{};
-        bool osm_height_valid_[13]{};
     };
 
 }
