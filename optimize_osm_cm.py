@@ -192,8 +192,10 @@ ROAD_HIGHWAY_TYPES = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
     "unclassified", "residential", "motorway_link", "trunk_link",
     "primary_link", "secondary_link", "tertiary_link", "living_street",
-    "service", "pedestrian", "road", "cycleway", "footway", "path", "foot",
+    "service", "road",
 }
+SIDEWALK_HIGHWAY_TYPES = {"footway", "path", "pedestrian", "foot"}
+CYCLEWAY_HIGHWAY = {"cycleway"}
 GRASSLAND_LANDUSE = {"grass", "meadow", "greenfield", "recreation_ground"}
 GRASSLAND_NATURAL = {"grassland", "heath", "scrub"}
 FOREST_NATURAL = {"wood", "forest"}
@@ -288,12 +290,19 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             ways_coords[way.attrib["id"]] = coords
 
     buildings, roads, grasslands, trees_poly, forests = [], [], [], [], []
-    parking, fences, stairs, tree_points = [], [], [], []
+    parking, fences, stairs, tree_points, pole_points = [], [], [], [], []
+    sidewalks, cycleways, walls, water = [], [], [], []
 
     for nd in root.iter("node"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in nd.iter("tag")}
         if tags.get("natural") == "tree":
             tree_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
+        elif tags.get("highway") == "traffic_signals":
+            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
+        elif tags.get("power") in ("pole", "tower"):
+            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
+        elif tags.get("man_made") in ("street_cabinet", "mast"):
+            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
 
     for way in root.iter("way"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in way.iter("tag")}
@@ -311,12 +320,24 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         if tags.get("barrier") == "fence":
             fences.append(coords)
             continue
+        if tags.get("barrier") == "wall" or tags.get("man_made") == "wall":
+            walls.append(coords)
+            continue
         hw = tags.get("highway", "")
         if hw == "steps":
             stairs.append(coords)
             continue
+        if hw in SIDEWALK_HIGHWAY_TYPES:
+            sidewalks.append(coords)
+            continue
+        if hw in CYCLEWAY_HIGHWAY:
+            cycleways.append(coords)
+            continue
         if hw in ROAD_HIGHWAY_TYPES:
             roads.append(coords)
+            continue
+        if tags.get("natural") == "water" and len(coords) >= 3 and coords[0] == coords[-1]:
+            water.append((coords, []))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -365,10 +386,14 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             forests.extend(polys)
         elif tags.get("landcover") == "trees":
             trees_poly.extend(polys)
+        elif tags.get("natural") == "water":
+            water.extend(polys)
 
     return dict(buildings=buildings, roads=roads, grasslands=grasslands,
                 trees=trees_poly, forests=forests, parking=parking,
-                fences=fences, stairs=stairs, tree_points=tree_points)
+                fences=fences, stairs=stairs, tree_points=tree_points,
+                sidewalks=sidewalks, cycleways=cycleways, walls=walls, water=water,
+                pole_points=pole_points)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -396,14 +421,16 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     """
     out = {}
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs"):
-        out[cat] = [g for g in geom[cat] if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
-    xs = [p[0] for p in geom["tree_points"]]
-    ys = [p[1] for p in geom["tree_points"]]
-    out["tree_points"] = [
-        geom["tree_points"][i] for i in range(len(geom["tree_points"]))
-        if (xmin - margin <= xs[i] <= xmax + margin and ymin - margin <= ys[i] <= ymax + margin)
-    ]
+                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+        out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
+    for pt_key in ("tree_points", "pole_points"):
+        pts = geom.get(pt_key, [])
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        out[pt_key] = [
+            pts[i] for i in range(len(pts))
+            if (xmin - margin <= xs[i] <= xmax + margin and ymin - margin <= ys[i] <= ymax + margin)
+        ]
     return out
 
 
@@ -411,9 +438,12 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
 # 4. Grid-based OSM prior computation (fast)
 # ═══════════════════════════════════════════════════════════════════
 
-OSM_COLUMNS = ["roads", "parking", "grasslands", "trees", "forest",
-               "buildings", "fences", "stairs", "none"]
+OSM_COLUMNS = [
+    "roads", "sidewalks", "cycleways", "parking", "grasslands", "trees", "forest",
+    "buildings", "fences", "walls", "stairs", "water", "poles", "none"
+]
 N_OSM = len(OSM_COLUMNS)
+_POLE_RADIUS = 2.0  # meters; radius around pole/traffic-sign nodes for prior
 
 # Search radius for STRtree: geometry beyond this does not affect prior (decay_m typically 3m)
 _QUERY_BUFFER = 50.0  # meters
@@ -423,16 +453,16 @@ def _build_shapely_index(geom):
     """Build Shapely geometries + STRtrees for fast spatial queries. Returns dict or None if Shapely unavailable."""
     if not SHAPELY_AVAILABLE:
         return None
-    idx = {"geom": geom, "tree_points": geom["tree_points"]}
-    for cat in ("roads", "fences", "stairs"):
+    idx = {"geom": geom, "tree_points": geom.get("tree_points", []), "pole_points": geom.get("pole_points", [])}
+    for cat in ("roads", "sidewalks", "cycleways", "fences", "walls", "stairs"):
         geoms = []
-        for coords in geom[cat]:
+        for coords in geom.get(cat, []):
             if len(coords) >= 2:
                 geoms.append(LineString(coords))
         idx[cat] = (STRtree(geoms), geoms) if geoms else (None, [])
-    for cat in ("buildings", "grasslands", "trees", "forests", "parking"):
+    for cat in ("buildings", "grasslands", "trees", "forests", "parking", "water"):
         geoms = []
-        for poly in geom[cat]:
+        for poly in geom.get(cat, []):
             outer = _poly_outer(poly)
             holes = _poly_holes(poly)
             if len(outer) < 3:
@@ -505,6 +535,24 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
 
     if cat == "roads":
         candidates = _query_candidates(idx, "roads", x, y)
+        min_d = float("inf")
+        for g in candidates:
+            d = g.distance(pt)
+            if d < min_d:
+                min_d = d
+        return _prior_dist(min_d) if min_d != float("inf") else 0.0
+
+    elif cat == "sidewalks":
+        candidates = _query_candidates(idx, "sidewalks", x, y)
+        min_d = float("inf")
+        for g in candidates:
+            d = g.distance(pt)
+            if d < min_d:
+                min_d = d
+        return _prior_dist(min_d) if min_d != float("inf") else 0.0
+
+    elif cat == "cycleways":
+        candidates = _query_candidates(idx, "cycleways", x, y)
         min_d = float("inf")
         for g in candidates:
             d = g.distance(pt)
@@ -600,17 +648,54 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
                 min_d = d
         return _prior_dist(min_d) if min_d != float("inf") else 0.0
 
+    elif cat == "walls":
+        min_d = float("inf")
+        for g in _query_candidates(idx, "walls", x, y):
+            d = g.distance(pt)
+            if d < min_d:
+                min_d = d
+        return _prior_dist(min_d) if min_d != float("inf") else 0.0
+
+    elif cat == "water":
+        min_d = float("inf")
+        for g in _query_candidates(idx, "water", x, y):
+            sd, ok = _shapely_signed_distance(g, pt)
+            if not ok:
+                continue
+            if sd <= 0:
+                return 1.0
+            if sd < min_d:
+                min_d = sd
+        return _prior_signed(min_d) if min_d != float("inf") else 0.0
+
+    elif cat == "poles":
+        max_p = 0.0
+        for cx, cy in idx.get("pole_points", []):
+            d_center = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
+            sd = d_center - _POLE_RADIUS
+            p = _prior_signed(sd)
+            if p > max_p:
+                max_p = p
+        return max_p
+
     return 0.0
 
 
 def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
     """Compute OSM prior for one category at (x,y)."""
-    if cat == "roads":
+    def _line_prior(lines_key):
         min_d = float("inf")
-        for road in geom["roads"]:
-            d = distance_to_polyline(x, y, road)
-            if d < min_d: min_d = d
+        for line in geom.get(lines_key, []):
+            d = distance_to_polyline(x, y, line)
+            if d < min_d:
+                min_d = d
         return osm_prior_from_distance(min_d, decay_m)
+    if cat == "roads":
+        return _line_prior("roads")
+    elif cat == "sidewalks":
+        return _line_prior("sidewalks")
+    elif cat == "cycleways":
+        return _line_prior("cycleways")
     elif cat == "parking":
         max_p = 0.0
         for poly in geom["parking"]:
@@ -665,24 +750,40 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
             if d < min_d: min_d = d
         return osm_prior_from_distance(min_d, decay_m)
     elif cat == "stairs":
+        return _line_prior("stairs")
+    elif cat == "walls":
+        return _line_prior("walls")
+    elif cat == "water":
         min_d = float("inf")
-        for poly in geom["stairs"]:
-            d = distance_to_polyline(x, y, poly)
-            if d < min_d: min_d = d
-        return osm_prior_from_distance(min_d, decay_m)
+        for poly in geom.get("water", []):
+            sd = distance_to_polygon_boundary(x, y, poly)
+            if sd <= 0:
+                return 1.0
+            if sd < min_d:
+                min_d = sd
+        return osm_prior_from_signed_distance(min_d, decay_m)
+    elif cat == "poles":
+        max_p = 0.0
+        for cx, cy in geom.get("pole_points", []):
+            d = math.sqrt((x - cx) ** 2 + (y - cy) ** 2) - _POLE_RADIUS
+            p = osm_prior_from_signed_distance(d, decay_m)
+            if p > max_p:
+                max_p = p
+        return max_p
     return 0.0
 
 
 def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     """Compute OSM prior vector for one grid cell. Uses Shapely if available."""
-    v = np.zeros(9, dtype=np.float32)
+    n_cats = len(cats)
+    v = np.zeros(N_OSM, dtype=np.float32)
     if idx_shapely is not None:
         for ci, cat in enumerate(cats):
             v[ci] = _compute_single_prior_shapely(cx, cy, idx_shapely, cat, decay_m, tree_radius)
     else:
         for ci, cat in enumerate(cats):
             v[ci] = _compute_single_prior(cx, cy, geom, cat, decay_m, tree_radius)
-    v[8] = 1.0 - max(v[:8])
+    v[n_cats] = max(0.0, 1.0 - v[:n_cats].max())
     return v
 
 
@@ -693,7 +794,7 @@ def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m,
     gy_min = int(np.floor((ymin - margin) / grid_res))
     gy_max = int(np.floor((ymax + margin) / grid_res))
     idx_shapely = _build_shapely_index(geom)
-    cats = OSM_COLUMNS[:8]
+    cats = [c for c in OSM_COLUMNS if c != "none"]
     grid = {}
     for gx in range(gx_min, gx_max + 1):
         for gy in range(gy_min, gy_max + 1):
@@ -712,7 +813,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
     n = len(pts_xy)
     keys = np.floor(pts_xy / grid_res).astype(np.int64)
     osm_vecs = np.zeros((n, N_OSM), dtype=np.float32)
-    cats = OSM_COLUMNS[:8]
+    cats = [c for c in OSM_COLUMNS if c != "none"]
 
     if precomputed_grid is not None:
         # Fast path: lookup only (rare fallback for points outside bbox)
@@ -840,14 +941,19 @@ CLASS_NAMES = [
 # Used for inferred-row: only count OSM evidence when GT aligns (to learn correction).
 OSM_GT_COMPATIBLE = {
     0: {1, 2},           # roads -> road, sidewalk
-    1: {3},              # parking -> parking
-    2: {4, 9},           # grasslands -> other-ground, vegetation
-    3: {9},              # trees -> vegetation
-    4: {9},              # forest -> vegetation
-    5: {5},              # buildings -> building
-    6: {6},              # fences -> fence
-    7: {4},              # stairs -> other-ground
-    8: set(range(13)),   # none -> all (neutral)
+    1: {2},              # sidewalks -> sidewalk
+    2: {10},             # cycleways -> two-wheeler
+    3: {3},              # parking -> parking
+    4: {4, 9},           # grasslands -> other-ground, vegetation
+    5: {9},              # trees -> vegetation
+    6: {9},              # forest -> vegetation
+    7: {5},              # buildings -> building
+    8: {6},              # fences -> fence
+    9: {6, 4},           # walls -> fence, other-ground (retaining walls)
+    10: {4},             # stairs -> other-ground
+    11: {4},             # water -> other-ground
+    12: {7, 8},          # poles -> pole, traffic-sign
+    13: set(range(13)),  # none -> all (neutral)
 }
 
 
@@ -958,7 +1064,7 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         ix = int((xy[i, 0] - xmin) / grid_res)
         iy = int((xy[i, 1] - ymin) / grid_res)
         if 0 <= ix < nx and 0 <= iy < ny:
-            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i, :8].max())
+            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i, :-1].max())  # exclude 'none'
     extent = (xmin, xmax, ymin, ymax)
     ax1.imshow(heatmap, origin="lower", extent=extent, aspect="auto",
                cmap="Greens", alpha=0.5, vmin=0, vmax=1)
@@ -1038,7 +1144,7 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
         print("Visualization skipped: matplotlib not installed (pip install matplotlib)")
         return
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(max(14, N_OSM * 1.2), 8))
     # Diverging colormap: blue = negative (suppress), white = 0, red = positive (boost)
     cmap = plt.cm.RdBu_r
     norm = mcolors.TwoSlopeNorm(vmin=-1, vcenter=0, vmax=1)
@@ -1081,10 +1187,11 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False):
         val_comment = "# Values in [0.0, 1.0]: boost only (no suppression)."
     else:
         val_comment = "# Values in [-1.0, 1.0]: positive = boost, negative = suppress, 0 = neutral."
+    cols_str = ", ".join(OSM_COLUMNS)
     lines = [
         "# Optimized OSM confusion matrix (derived from GT co-occurrence analysis).",
         "# Rows  = common taxonomy semantic classes (1-12).",
-        "# Cols   = OSM prior categories: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]",
+        f"# Cols  = OSM prior categories: [{cols_str}]",
         val_comment,
         "#",
         "# Common taxonomy:",
@@ -1092,9 +1199,8 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False):
         "#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,",
         "#   11: vehicle, 12: other-object",
         "",
-        "osm_prior_columns: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]",
+        f"osm_prior_columns: [{cols_str}]",
         "",
-        "#       roads  park  grass  trees  forest  build  fence  stairs  none",
         "confusion_matrix:",
     ]
     for i in range(12):
@@ -1211,7 +1317,9 @@ def main():
             p = first_inv @ np.array([x, y, 0, 1])
             ring[k] = (float(p[0]), float(p[1]))
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs"):
+                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+        if cat not in geom:
+            continue
         for item in geom[cat]:
             if _poly_holes(item):  # polygon with holes: (outer, [hole1, hole2, ...])
                 outer, holes = _poly_outer(item), _poly_holes(item)
@@ -1221,10 +1329,13 @@ def main():
             else:  # simple polyline or polygon
                 ring = _poly_outer(item)
                 _transform_ring(ring)
-    for k in range(len(geom["tree_points"])):
-        x, y = geom["tree_points"][k]
-        p = first_inv @ np.array([x, y, 0, 1])
-        geom["tree_points"][k] = (float(p[0]), float(p[1]))
+    for pt_key in ("tree_points", "pole_points"):
+        if pt_key not in geom:
+            continue
+        for k in range(len(geom[pt_key])):
+            x, y = geom[pt_key][k]
+            p = first_inv @ np.array([x, y, 0, 1])
+            geom[pt_key][k] = (float(p[0]), float(p[1]))
 
     # Select scans
     valid = 0
@@ -1345,7 +1456,7 @@ def main():
         mask = all_gt == cls
         if mask.sum() == 0:
             continue
-        covered = (all_osm[mask, :8].max(axis=1) > 0).mean() * 100
+        covered = (all_osm[mask, :-1].max(axis=1) > 0).mean() * 100  # exclude 'none'
         print(f"  {CLASS_NAMES[cls]:>14s}: {covered:5.1f}% of {mask.sum()} pts covered by OSM")
 
     write_osm_cm_yaml(matrix, args.output, positive_only=args.positive_only)
