@@ -20,8 +20,6 @@ Usage:
     --no-show             Save PNG only, do not block to show figure.
     --height-bins N       Number of per-scan height bins for osm_height_confusion_matrix (default: 20).
     --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
-    --max-iters N         Alternate prior/height optimization until convergence (default: 10).
-    --tol T               Convergence tolerance: stop when max abs change < T (default: 1e-4).
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
@@ -449,7 +447,7 @@ OSM_COLUMNS = [
 ]
 N_OSM = len(OSM_COLUMNS)
 _POLE_RADIUS = 2.0  # meters; radius around pole/traffic-sign nodes for prior
-_STAIRS_WIDTH = 1.5  # meters; half-width perpendicular to stairs polyline (matches ROS bkioctomap default)
+_STAIRS_WIDTH = 1.5  # meters; half-width perpendicular to stairs polyline (matches ROS bkioctomap)
 
 # Search radius for STRtree: geometry beyond this does not affect prior (decay_m typically 3m)
 _QUERY_BUFFER = 50.0  # meters
@@ -530,7 +528,7 @@ def _query_candidates(idx, cat, x, y):
     return [geoms[i] for i in inds if 0 <= i < len(geoms)]
 
 
-def _stairs_prior_at_point(x, y, stairs_polylines, decay_m, stairs_width):
+def _stairs_prior_at_point(x, y, stairs_polylines, decay_m, stairs_width=_STAIRS_WIDTH):
     """Compute stairs OSM prior using width band (matches ROS bkioctomap).
     Each polyline segment is expanded into a rectangle of half-width stairs_width/2.
     Points inside get prior 1; outside get decay from signed distance to boundary.
@@ -566,7 +564,7 @@ def _stairs_prior_at_point(x, y, stairs_polylines, decay_m, stairs_width):
     return osm_prior_from_signed_distance(min_positive_d, decay_m)
 
 
-def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius, stairs_width=_STAIRS_WIDTH):
+def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
     """Fast prior using Shapely + STRtree."""
     pt = Point(x, y)
 
@@ -684,7 +682,7 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius, stairs_w
 
     elif cat == "stairs":
         candidates = _query_candidates(idx, "stairs", x, y)
-        return _stairs_prior_at_point(x, y, candidates, decay_m, stairs_width)
+        return _stairs_prior_at_point(x, y, candidates, decay_m)
 
     elif cat == "walls":
         min_d = float("inf")
@@ -719,7 +717,7 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius, stairs_w
     return 0.0
 
 
-def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius, stairs_width=_STAIRS_WIDTH):
+def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
     """Compute OSM prior for one category at (x,y)."""
     def _line_prior(lines_key):
         min_d = float("inf")
@@ -788,7 +786,7 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius, stairs_width=_S
             if d < min_d: min_d = d
         return osm_prior_from_distance(min_d, decay_m)
     elif cat == "stairs":
-        return _stairs_prior_at_point(x, y, geom.get("stairs", []), decay_m, stairs_width)
+        return _stairs_prior_at_point(x, y, geom.get("stairs", []), decay_m)
     elif cat == "walls":
         return _line_prior("walls")
     elif cat == "water":
@@ -811,21 +809,21 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius, stairs_width=_S
     return 0.0
 
 
-def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats, stairs_width=_STAIRS_WIDTH):
+def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     """Compute OSM prior vector for one grid cell. Uses Shapely if available."""
     n_cats = len(cats)
     v = np.zeros(N_OSM, dtype=np.float32)
     if idx_shapely is not None:
         for ci, cat in enumerate(cats):
-            v[ci] = _compute_single_prior_shapely(cx, cy, idx_shapely, cat, decay_m, tree_radius, stairs_width)
+            v[ci] = _compute_single_prior_shapely(cx, cy, idx_shapely, cat, decay_m, tree_radius)
     else:
         for ci, cat in enumerate(cats):
-            v[ci] = _compute_single_prior(cx, cy, geom, cat, decay_m, tree_radius, stairs_width)
+            v[ci] = _compute_single_prior(cx, cy, geom, cat, decay_m, tree_radius)
     v[n_cats] = max(0.0, 1.0 - v[:n_cats].max())
     return v
 
 
-def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m, tree_radius, stairs_width=_STAIRS_WIDTH):
+def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m, tree_radius):
     """Precompute OSM prior for all grid cells in trajectory bbox + margin. Done once before scan loop."""
     gx_min = int(np.floor((xmin - margin) / grid_res))
     gx_max = int(np.floor((xmax + margin) / grid_res))
@@ -838,11 +836,11 @@ def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m,
         for gy in range(gy_min, gy_max + 1):
             cx = (gx + 0.5) * grid_res
             cy = (gy + 0.5) * grid_res
-            grid[(gx, gy)] = _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats, stairs_width)
+            grid[(gx, gy)] = _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats)
     return grid, idx_shapely
 
 
-def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed_grid=None, osm_index=None, stairs_width=_STAIRS_WIDTH):
+def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed_grid=None, osm_index=None):
     """Compute OSM prior for each point via grid lookup.
 
     If precomputed_grid is provided, only lookups are done (very fast).
@@ -862,7 +860,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
             else:
                 cx = (k[0] + 0.5) * grid_res
                 cy = (k[1] + 0.5) * grid_res
-                v = _compute_cell_prior(cx, cy, geom, osm_index, decay_m, tree_radius, cats, stairs_width)
+                v = _compute_cell_prior(cx, cy, geom, osm_index, decay_m, tree_radius, cats)
                 precomputed_grid[k] = v  # cache for reuse
                 osm_vecs[i] = v
         return osm_vecs
@@ -877,7 +875,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
         else:
             cx = (k[0] + 0.5) * grid_res
             cy = (k[1] + 0.5) * grid_res
-            v = _compute_cell_prior(cx, cy, geom, idx, decay_m, tree_radius, cats, stairs_width)
+            v = _compute_cell_prior(cx, cy, geom, idx, decay_m, tree_radius, cats)
             cache[k] = v
             osm_vecs[i] = v
     return osm_vecs
@@ -1007,36 +1005,6 @@ def build_cooccurrence(gt_labels, osm_vecs):
     return counts, class_totals
 
 
-def apply_height_filter(scan_data_list, height_matrix, num_bins, include_inferred=False):
-    """Apply height matrix to osm_vecs and concatenate. Returns (all_gt, effective_osm) or
-    (all_gt, effective_osm, all_inferred) if include_inferred and scan_data has 4-tuples."""
-    gt_list, osm_list = [], []
-    inf_list = [] if include_inferred else None
-    for item in scan_data_list:
-        if include_inferred and len(item) == 4:
-            map_pts, gt, osm, inf = item
-        else:
-            map_pts, gt, osm = item[:3]
-            inf = None
-        z = map_pts[:, 2]
-        min_z, max_z = z.min(), z.max()
-        z_range = max_z - min_z + 1e-6
-        bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
-        effective = osm.copy()
-        for i in range(len(gt)):
-            b = int(bins[i])
-            effective[i] = osm[i] * height_matrix[b]
-        gt_list.append(gt)
-        osm_list.append(effective)
-        if include_inferred and inf is not None:
-            inf_list.append(inf)
-    all_gt = np.concatenate(gt_list)
-    effective_osm = np.concatenate(osm_list)
-    if include_inferred and inf_list:
-        return all_gt, effective_osm, np.concatenate(inf_list)
-    return all_gt, effective_osm
-
-
 def build_cooccurrence_inferred(inferred_labels, gt_labels, osm_vecs):
     """Inferred-row co-occurrence with GT compatibility: row=inferred, weight by GT matching OSM.
     counts[inferred][j] += osm_vec[j] only when gt is in OSM_GT_COMPATIBLE[j] (correction signal)."""
@@ -1082,22 +1050,16 @@ def derive_matrix(counts, class_totals, positive_only=False):
     return matrix
 
 
-def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None):
+def build_cooccurrence_height(scan_data_list, num_bins=20):
     """Per-scan height bins: for each (bin, OSM_col), accumulate weighted counts.
-    scan_data_list: list of (map_pts, gt_common, osm_vecs) or 4-tuples with inferred.
-    counts_h[bin][col] = sum of osm_vec[col] weighted by compatibility (prior or binary).
+    scan_data_list: list of (map_pts, gt_common, osm_vecs). map_pts has (n, 3) with x,y,z.
+    counts_h[bin][col] = sum of osm_vec[col] where GT is compatible with OSM col.
     totals_h[bin][col] = sum of osm_vec[col] over all points in bin (with prior > threshold).
-
-    When prior_matrix is given: weight by max(0, prior_matrix[gt_row][col]) - height step
-    depends on prior, favoring (bin,col) where prior strongly boosts the correct class.
-    When prior_matrix is None: use binary OSM_GT_COMPATIBLE (original behavior).
     """
     counts_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
     totals_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
     osm_thresh = 0.01
-    use_prior = prior_matrix is not None and prior_matrix.shape >= (12, N_OSM)
-    for item in scan_data_list:
-        map_pts, gt, osm = item[:3]
+    for map_pts, gt, osm in scan_data_list:
         z = map_pts[:, 2]
         min_z = z.min()
         max_z = z.max()
@@ -1105,32 +1067,41 @@ def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None):
         bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
         for i in range(len(gt)):
             b = int(bins[i])
-            c = int(gt[i])
             for j in range(N_OSM):
                 if osm[i, j] < osm_thresh:
                     continue
                 totals_h[b, j] += osm[i, j]
-                if use_prior:
-                    if 1 <= c <= 12:
-                        w = max(0.0, prior_matrix[c - 1, j])
-                        counts_h[b, j] += osm[i, j] * w
-                    # unlabeled: do not add to counts (prior has no row for 0)
-                else:
-                    if c in OSM_GT_COMPATIBLE.get(j, set()):
-                        counts_h[b, j] += osm[i, j]
+                if int(gt[i]) in OSM_GT_COMPATIBLE.get(j, set()):
+                    counts_h[b, j] += osm[i, j]
     return counts_h, totals_h
 
 
-def derive_height_matrix(counts_h, totals_h, num_bins=20):
+def derive_height_matrix(counts_h, totals_h, num_bins=20, class_totals=None, total_points=None):
     """Derive height confusion matrix: matrix[bin][col] = trust multiplier in [0, 1].
-    When totals_h[bin][col] is negligible, use 1.0 (neutral)."""
+    When totals_h[bin][col] is negligible, use 1.0 (neutral).
+    If class_totals and total_points are provided, applies Bayesian smoothing toward
+    class-frequency prior: prior_precision[j] = P(compatible | col j) from class marginals.
+    """
     matrix = np.zeros((num_bins, N_OSM))
+    prior_precision = None
+    if class_totals is not None and total_points is not None and total_points > 0:
+        prior_precision = np.zeros(N_OSM, dtype=np.float64)
+        for j in range(N_OSM):
+            compat = OSM_GT_COMPATIBLE.get(j, set())
+            prior_precision[j] = sum(class_totals[c] for c in compat if 0 <= c < len(class_totals)) / total_points
+        prior_precision = np.clip(prior_precision, 1e-6, 1.0 - 1e-6)
+    k = 10.0 if prior_precision is not None else 0.0
     for b in range(num_bins):
         for j in range(N_OSM):
             if totals_h[b, j] < 1e-6:
-                matrix[b, j] = 1.0
+                matrix[b, j] = prior_precision[j] if prior_precision is not None else 1.0
             else:
-                matrix[b, j] = np.clip(counts_h[b, j] / totals_h[b, j], 0.0, 1.0)
+                raw = counts_h[b, j] / totals_h[b, j]
+                if prior_precision is not None:
+                    smoothed = (counts_h[b, j] + k * prior_precision[j]) / (totals_h[b, j] + k)
+                    matrix[b, j] = np.clip(smoothed, 0.0, 1.0)
+                else:
+                    matrix[b, j] = np.clip(raw, 0.0, 1.0)
     return matrix
 
 
@@ -1359,7 +1330,7 @@ def main():
     parser.add_argument("--max-scans", type=int, default=10000)
     parser.add_argument("--skip-frames", type=int, default=20)
     parser.add_argument("--decay", type=float, default=3.0)
-    parser.add_argument("--tree-radius", type=float, default=6.0)
+    parser.add_argument("--tree-radius", type=float, default=3.0)
     parser.add_argument("--grid-res", type=float, default=2.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
@@ -1384,12 +1355,6 @@ def main():
                         help="Number of per-scan height bins for osm_height_confusion_matrix (default: 20)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
-    parser.add_argument("--max-iters", type=int, default=10,
-                        help="Max iterations for alternating prior/height optimization (default: 10)")
-    parser.add_argument("--tol", type=float, default=1e-4,
-                        help="Convergence tolerance: stop when max abs change < tol (default: 1e-4)")
-    parser.add_argument("--stairs-width", type=float, default=1.5,
-                        help="Stairs polyline width (m) perpendicular to segment; matches ROS bkioctomap (default: 1.5)")
     args = parser.parse_args()
 
     print(f"Loading config from {args.config}")
@@ -1417,7 +1382,6 @@ def main():
     origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 3.0)
     tree_radius = args.tree_radius if args.tree_radius is not None else cfg.get("osm_tree_point_radius_meters", 4.0)
-    stairs_width = args.stairs_width
     skip_frames = args.skip_frames if args.skip_frames is not None else cfg.get("skip_frames", 0)
     max_range = cfg.get("max_range", 200.0)
     ds_resolution = cfg.get("ds_resolution", 1.0)
@@ -1514,10 +1478,9 @@ def main():
     print(f"OSM trim: kept {n_after}/{n_before} items in bbox [x:{xmin:.0f}..{xmax:.0f}, y:{ymin:.0f}..{ymax:.0f}] margin={margin:.0f}m")
     geom = geom_trimmed
 
-    print(f"OSM prior: decay={decay_m}m, tree_radius={tree_radius}m, stairs_width={stairs_width}m")
     print("Precomputing OSM prior grid (once for all scans)...")
     precomputed_grid, osm_index = precompute_osm_grid(
-        geom, xmin, xmax, ymin, ymax, margin, args.grid_res, decay_m, tree_radius, stairs_width
+        geom, xmin, xmax, ymin, ymax, margin, args.grid_res, decay_m, tree_radius
     )
     print(f"  Grid has {len(precomputed_grid)} cells (Shapely={'on' if osm_index else 'off'})")
 
@@ -1566,7 +1529,6 @@ def main():
         osm_vecs = build_osm_grid(
             map_pts[:, :2], geom, decay_m, tree_radius, args.grid_res,
             precomputed_grid=precomputed_grid, osm_index=osm_index,
-            stairs_width=stairs_width,
         )
 
         all_gt.append(gt_common)
@@ -1576,10 +1538,7 @@ def main():
         if all_map_pts is not None:
             all_map_pts.append(map_pts[:, :2])
         if scan_data_list is not None:
-            item = (map_pts.copy(), gt_common.copy(), osm_vecs.copy())
-            if all_inferred is not None and inferred_common is not None:
-                item = (*item, inferred_common.copy())
-            scan_data_list.append(item)
+            scan_data_list.append((map_pts.copy(), gt_common.copy(), osm_vecs.copy()))
 
     all_gt = np.concatenate(all_gt)
     all_osm = np.concatenate(all_osm)
@@ -1587,79 +1546,23 @@ def main():
         all_inferred = np.concatenate(all_inferred)
     print(f"\nTotal points: {len(all_gt)}")
 
-    use_iteration = (
-        scan_data_list is not None
-        and len(scan_data_list) > 0
-        and not args.no_height_matrix
-        and args.max_iters >= 1
-    )
-
-    if use_iteration:
-        # Iterative alternating optimization: prior <-> height until steady state
-        num_bins = args.height_bins
-        height_matrix = np.ones((num_bins, N_OSM), dtype=np.float64)
-        matrix = None
-        use_inferred = args.use_inferred_row and all_inferred is not None
-
-        for it in range(args.max_iters):
-            prev_matrix = matrix.copy() if matrix is not None else None
-            prev_height = height_matrix.copy()
-
-            # Step 1: Optimize prior matrix given current height
-            if use_inferred:
-                all_gt_eff, effective_osm, all_inf_eff = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=True
-                )
-                counts, class_totals = build_cooccurrence_inferred(
-                    all_inf_eff, all_gt_eff, effective_osm
-                )
-            else:
-                result = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=False
-                )
-                all_gt_eff, effective_osm = result
-                counts, class_totals = build_cooccurrence(all_gt_eff, effective_osm)
-            matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only)
-
-            # Step 2: Optimize height matrix given current prior (height depends on prior)
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=num_bins, prior_matrix=matrix
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=num_bins
-            )
-
-            # Convergence check
-            if prev_matrix is not None:
-                delta_prior = np.abs(matrix - prev_matrix).max()
-                delta_height = np.abs(height_matrix - prev_height).max()
-                delta = max(delta_prior, delta_height)
-                print(f"  Iter {it + 1}: max change prior={delta_prior:.2e} height={delta_height:.2e}")
-                if delta < args.tol:
-                    print(f"  Converged at iteration {it + 1} (tol={args.tol})")
-                    break
-        print(f"\nOSM height confusion matrix: {num_bins} bins x {N_OSM} cols")
+    if args.use_inferred_row and all_inferred is not None:
+        counts, class_totals = build_cooccurrence_inferred(all_inferred, all_gt, all_osm)
+        print("Co-occurrence: inferred-row with GT compatibility")
     else:
-        # Single-pass (no iteration)
-        if args.use_inferred_row and all_inferred is not None:
-            counts, class_totals = build_cooccurrence_inferred(
-                all_inferred, all_gt, all_osm
-            )
-            print("Co-occurrence: inferred-row with GT compatibility")
-        else:
-            counts, class_totals = build_cooccurrence(all_gt, all_osm)
-        matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only)
+        counts, class_totals = build_cooccurrence(all_gt, all_osm)
+    matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only)
 
-        height_matrix = None
-        if scan_data_list is not None and len(scan_data_list) > 0:
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=args.height_bins
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=args.height_bins
-            )
-            print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_OSM} cols")
-            print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
+    height_matrix = None
+    if scan_data_list is not None and len(scan_data_list) > 0:
+        counts_h, totals_h = build_cooccurrence_height(scan_data_list, num_bins=args.height_bins)
+        total_points = class_totals.sum()
+        height_matrix = derive_height_matrix(
+            counts_h, totals_h, num_bins=args.height_bins,
+            class_totals=class_totals, total_points=total_points,
+        )
+        print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_OSM} cols")
+        print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
 
     print("\nOptimized OSM confusion matrix:")
     header = "                " + "  ".join(f"{c:>7s}" for c in OSM_COLUMNS)

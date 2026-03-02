@@ -19,7 +19,7 @@
     # Dataset information
     input_data_prefix: kth_day_09/lidar_bin/data
     lidar_pose_file: kth_day_09/pose_inW.csv
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_refactored/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_height_filtering_optimized_NEW/
     query: true
     visualize: true
 
@@ -66,14 +66,14 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 5.0
+    osm_decay_meters: 3.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
     osm_origin_lon: 18.072069652
 
     # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
-    osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
+    osm_tree_point_radius_meters: 3.0 # m, 9.84 ft
 
     # OSM confusion matrix: semantic-OSM prior fusion.
     # Adds OSM-based bias to every BKI observation, maintaining constant influence.

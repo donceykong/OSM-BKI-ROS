@@ -112,6 +112,8 @@ namespace semantic_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
+        osm_height_min_z_ = lim_min.z();
+        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -300,6 +302,21 @@ namespace semantic_bki {
         osm_prior_strength_ = strength;
     }
 
+    void SemanticBKIOctoMap::set_osm_height_filter_enabled(bool enabled) {
+        use_osm_height_filter_ = enabled;
+    }
+
+    void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
+        osm_height_num_bins_ = std::min(static_cast<int>(matrix.size()), N_OSM_HEIGHT_BINS);
+        std::memset(osm_height_cm_, 0, sizeof(osm_height_cm_));
+        for (int r = 0; r < osm_height_num_bins_; ++r) {
+            int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
+            for (int c = 0; c < ncols; ++c)
+                osm_height_cm_[r][c] = matrix[r][c];
+        }
+        osm_height_cm_loaded_ = true;
+    }
+
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
                                                               float &grassland, float &tree, float &parking,
                                                               float &fence, float &stairs) const {
@@ -355,6 +372,15 @@ namespace semantic_bki {
 
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
+
+        // OSM height filter: multiply osm_vec by height confusion matrix row (per-scan relative bins)
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
+                osm_vec[c] *= osm_height_cm_[bin][c];
+        }
 
         // p_super[row] = sum_j(M[row][j] * osm_vec[j])
         // M values in [-1, 1]; negative decreases likelihood, positive increases.
@@ -618,6 +644,8 @@ namespace semantic_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
+        osm_height_min_z_ = lim_min.z();
+        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -894,6 +922,8 @@ namespace semantic_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
+        osm_height_min_z_ = lim_min.z();
+        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);

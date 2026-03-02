@@ -366,6 +366,10 @@ namespace semantic_bki {
                                       const std::vector<std::vector<int>> &row_to_labels);
         void set_osm_prior_strength(float strength);
 
+        /// OSM height filter: per-scan relative bins, multiply OSM priors by height confusion matrix.
+        void set_osm_height_filter_enabled(bool enabled);
+        void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
+
         /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
                                               float &tree, float &parking, float &fence, float &stairs) const;
@@ -479,6 +483,15 @@ namespace semantic_bki {
         float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
+
+        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][OSM_col]
+        static constexpr int N_OSM_HEIGHT_BINS = 20;
+        bool use_osm_height_filter_{false};
+        bool osm_height_cm_loaded_{false};
+        float osm_height_min_z_{0.f};
+        float osm_height_max_z_{0.f};
+        int osm_height_num_bins_{20};
+        float osm_height_cm_[N_OSM_HEIGHT_BINS][N_OSM_PRIOR_COLS]{};
     };
 
 }

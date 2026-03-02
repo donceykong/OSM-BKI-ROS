@@ -95,6 +95,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("uncertainty_min_weight", 0.1);
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
+    node->declare_parameter<bool>("osm_height_filtering", false);
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
@@ -415,6 +416,11 @@ int main(int argc, char **argv) {
         osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
       }
       mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
+
+      bool osm_height_filtering = false;
+      node->get_parameter<bool>("osm_height_filtering", osm_height_filtering);
+      mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
+
       if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
         std::string cm_path;
         size_t data_pos = dir.rfind("/data/");
@@ -430,6 +436,11 @@ int main(int argc, char **argv) {
         } else {
           RCLCPP_WARN_STREAM(node->get_logger(),
               "Failed to load OSM confusion matrix from " << cm_path);
+        }
+        if (osm_height_filtering && mcd_data.load_osm_height_confusion_matrix(cm_path)) {
+          RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM height confusion matrix from " << cm_path);
+        } else if (osm_height_filtering) {
+          RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM height confusion matrix; height filtering disabled");
         }
       }
     }
