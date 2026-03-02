@@ -84,7 +84,7 @@ def launch_setup(context):
     # install/<pkg>/share/<pkg> -> workspace root -> src/BKISemanticMapping
     pkg_share_dir = get_package_share_directory('semantic_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
-    pkg_src_dir = os.path.join(ws_root, 'src', 'BKISemanticMapping')
+    pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
     data_config_path = os.path.join(pkg_src_dir, 'config', 'datasets', f'{dataset}.yaml')

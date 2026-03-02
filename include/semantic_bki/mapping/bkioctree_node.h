@@ -24,23 +24,14 @@ namespace semantic_bki {
         /*
          * @brief Constructors and destructor.
          */
-        Semantics() : ms(std::vector<float>(num_class, prior)), state(State::UNKNOWN),
-                      osm_building(0.f), osm_road(0.f), osm_grassland(0.f), osm_tree(0.f), osm_parking(0.f), osm_fence(0.f), osm_stairs(0.f) { classified = false; }
+        Semantics() : ms(std::vector<float>(num_class, prior)), state(State::UNKNOWN) { classified = false; }
 
-        Semantics(const Semantics &other) : ms(other.ms), state(other.state), semantics(other.semantics),
-                      osm_building(other.osm_building), osm_road(other.osm_road), osm_grassland(other.osm_grassland), osm_tree(other.osm_tree), osm_parking(other.osm_parking), osm_fence(other.osm_fence), osm_stairs(other.osm_stairs) { }
+        Semantics(const Semantics &other) : ms(other.ms), state(other.state), semantics(other.semantics) { }
 
         Semantics &operator=(const Semantics &other) {
           ms = other.ms;
           state = other.state;
           semantics = other.semantics;
-          osm_building = other.osm_building;
-          osm_road = other.osm_road;
-          osm_grassland = other.osm_grassland;
-          osm_tree = other.osm_tree;
-          osm_parking = other.osm_parking;
-          osm_fence = other.osm_fence;
-          osm_stairs = other.osm_stairs;
           return *this;
         }
 
@@ -67,35 +58,12 @@ namespace semantic_bki {
 
         inline int get_semantics() const { return semantics; }
 
-        /// OSM prior values in [0,1]: building, road, grassland, tree, parking, fence, stairs (Euclidean signed-distance-based).
-        inline float get_osm_building() const { return osm_building; }
-        inline float get_osm_road() const { return osm_road; }
-        inline float get_osm_grassland() const { return osm_grassland; }
-        inline float get_osm_tree() const { return osm_tree; }
-        inline float get_osm_parking() const { return osm_parking; }
-        inline float get_osm_fence() const { return osm_fence; }
-        inline float get_osm_stairs() const { return osm_stairs; }
-        inline void set_osm_building(float v) { osm_building = v; }
-        inline void set_osm_road(float v) { osm_road = v; }
-        inline void set_osm_grassland(float v) { osm_grassland = v; }
-        inline void set_osm_tree(float v) { osm_tree = v; }
-        inline void set_osm_parking(float v) { osm_parking = v; }
-        inline void set_osm_fence(float v) { osm_fence = v; }
-        inline void set_osm_stairs(float v) { osm_stairs = v; }
-
         bool classified;
 
     private:
         std::vector<float> ms;
         State state;
         int semantics;
-        float osm_building;
-        float osm_road;
-        float osm_grassland;
-        float osm_tree;
-        float osm_parking;
-        float osm_fence;
-        float osm_stairs;
         static int num_class;   // number of classes
         
         static float sf2;

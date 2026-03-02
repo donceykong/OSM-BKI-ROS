@@ -47,7 +47,7 @@ namespace {
         }
     }
 
-    // Handler class for extracting buildings, roads, sidewalks, grasslands, trees, forests (ways + nodes + multipolygons) from OSM data using libosmium
+    // Handler class for extracting buildings, roads, sidewalks, cycleways, walls, water, pole points, etc. from OSM
     class OSMGeometryHandler : public osmium::handler::Handler {
     public:
         static constexpr double EARTH_RADIUS_M = 6378137.0;
@@ -56,6 +56,10 @@ namespace {
                           std::vector<semantic_bki::Geometry2D>& buildings,
                           std::vector<semantic_bki::Geometry2D>& roads,
                           std::vector<semantic_bki::Geometry2D>& sidewalks,
+                          std::vector<semantic_bki::Geometry2D>& cycleways,
+                          std::vector<semantic_bki::Geometry2D>& walls,
+                          std::vector<semantic_bki::Geometry2D>& water,
+                          std::vector<std::pair<float, float>>& pole_points,
                           std::vector<semantic_bki::Geometry2D>& parking,
                           std::vector<semantic_bki::Geometry2D>& fences,
                           std::vector<semantic_bki::Geometry2D>& stairs,
@@ -64,7 +68,9 @@ namespace {
                           std::vector<semantic_bki::Geometry2D>& forests,
                           std::vector<std::pair<float, float>>& tree_points)
             : origin_lat_(origin_lat), origin_lon_(origin_lon),
-              buildings_(buildings), roads_(roads), sidewalks_(sidewalks), parking_(parking), fences_(fences), stairs_(stairs),
+              buildings_(buildings), roads_(roads), sidewalks_(sidewalks), cycleways_(cycleways),
+              walls_(walls), water_(water), pole_points_(pole_points),
+              parking_(parking), fences_(fences), stairs_(stairs),
               grasslands_(grasslands), trees_(trees), forests_(forests), tree_points_(tree_points) {
             scale_ = std::cos(origin_lat * M_PI / 180.0);
             double origin_lon_rad = origin_lon * M_PI / 180.0;
@@ -82,17 +88,32 @@ namespace {
         }
 
         void node(const osmium::Node& node) {
-            // Single-point trees: natural=tree (node with one coordinate)
-            const char* natural_tag = node.tags()["natural"];
-            if (!natural_tag || std::string(natural_tag) != "tree") {
-                return;
-            }
             const osmium::Location& loc = node.location();
-            if (!loc.valid()) {
+            if (!loc.valid()) return;
+            auto xy = latlon_to_xy(loc.lat(), loc.lon());
+
+            // Single-point trees: natural=tree
+            const char* natural_tag = node.tags()["natural"];
+            if (natural_tag && std::string(natural_tag) == "tree") {
+                tree_points_.push_back(xy);
                 return;
             }
-            auto xy = latlon_to_xy(loc.lat(), loc.lon());
-            tree_points_.push_back(xy);
+
+            // Pole-like points: traffic signals, power poles, street cabinets, masts
+            const char* highway_tag = node.tags()["highway"];
+            if (highway_tag && std::string(highway_tag) == "traffic_signals") {
+                pole_points_.push_back(xy);
+                return;
+            }
+            const char* power_tag = node.tags()["power"];
+            if (power_tag && (std::string(power_tag) == "pole" || std::string(power_tag) == "tower")) {
+                pole_points_.push_back(xy);
+                return;
+            }
+            const char* man_made_tag = node.tags()["man_made"];
+            if (man_made_tag && (std::string(man_made_tag) == "street_cabinet" || std::string(man_made_tag) == "mast")) {
+                pole_points_.push_back(xy);
+            }
         }
 
         void way(const osmium::Way& way) {
@@ -129,10 +150,19 @@ namespace {
                 return;
             }
 
-            // --- FENCES (barrier=fence polylines) ---
+            // --- FENCES (barrier=fence) and WALLS (barrier=wall, man_made=wall) ---
             const char* barrier_tag = way.tags()["barrier"];
             if (barrier_tag && std::string(barrier_tag) == "fence") {
                 fences_.push_back(geom);
+                return;
+            }
+            if (barrier_tag && std::string(barrier_tag) == "wall") {
+                walls_.push_back(geom);
+                return;
+            }
+            const char* man_made_way_tag = way.tags()["man_made"];
+            if (man_made_way_tag && std::string(man_made_way_tag) == "wall") {
+                walls_.push_back(geom);
                 return;
             }
 
@@ -143,16 +173,43 @@ namespace {
                 return;
             }
 
-            // --- SIDEWALKS (separate geometries: highway=footway + footway=sidewalk) ---
+            // --- CYCLEWAYS (highway=cycleway or highway=path + bicycle=yes) ---
+            if (highway_tag && std::string(highway_tag) == "cycleway") {
+                cycleways_.push_back(geom);
+                return;
+            }
+            const char* bicycle_tag = way.tags()["bicycle"];
+            if (highway_tag && std::string(highway_tag) == "path" && bicycle_tag && std::string(bicycle_tag) == "yes") {
+                cycleways_.push_back(geom);
+                return;
+            }
+
+            // --- SIDEWALKS: highway=footway + footway=sidewalk, or highway=path/footway/pedestrian ---
             const char* footway_tag = way.tags()["footway"];
-            if (highway_tag && std::string(highway_tag) == "footway") {
-                if (footway_tag && std::string(footway_tag) == "sidewalk") {
+            if (highway_tag) {
+                std::string highway(highway_tag);
+                if (highway == "footway") {
+                    if (footway_tag && std::string(footway_tag) == "sidewalk") {
+                        sidewalks_.push_back(geom);
+                    } else {
+                        sidewalks_.push_back(geom);  // footway without sidewalk tag -> sidewalk
+                    }
+                    return;
+                }
+                if (highway == "path" || highway == "pedestrian" || highway == "foot") {
                     sidewalks_.push_back(geom);
                     return;
                 }
             }
 
-            // --- ROADS / PATHS ---
+            // --- WATER (natural=water ways) ---
+            const char* natural_way_tag = way.tags()["natural"];
+            if (natural_way_tag && std::string(natural_way_tag) == "water") {
+                water_.push_back(geom);
+                return;
+            }
+
+            // --- ROADS (exclude footway, path, pedestrian, cycleway - handled above) ---
             if (highway_tag) {
                 std::string highway(highway_tag);
                 if (highway == "motorway" || highway == "trunk" || highway == "primary" ||
@@ -161,11 +218,8 @@ namespace {
                     highway == "motorway_link" || highway == "trunk_link" ||
                     highway == "primary_link" || highway == "secondary_link" ||
                     highway == "tertiary_link" || highway == "living_street" ||
-                    highway == "service" || highway == "pedestrian" ||
-                    highway == "road" || highway == "cycleway" ||
-                    highway == "footway" || highway == "path" || highway == "foot") {
+                    highway == "service" || highway == "road") {
                     roads_.push_back(geom);
-                    // Sidewalks mapped as tags on road centerline (sidewalk=both/left/right)
                     const char* sidewalk_tag = way.tags()["sidewalk"];
                     if (sidewalk_tag) {
                         std::string sw(sidewalk_tag);
@@ -292,8 +346,12 @@ namespace {
                 }
             }
 
-            // Check for forest/wood areas (multipolygons) -> forests_
+            // Check for water (natural=water multipolygons)
             const char* natural_tag = area.tags()["natural"];
+            if (natural_tag && std::string(natural_tag) == "water") {
+                push_area_with_holes(area, water_);
+                return;
+            }
             if (natural_tag) {
                 std::string natural(natural_tag);
                 if (natural == "wood" || natural == "forest") {
@@ -318,6 +376,10 @@ namespace {
         std::vector<semantic_bki::Geometry2D>& buildings_;
         std::vector<semantic_bki::Geometry2D>& roads_;
         std::vector<semantic_bki::Geometry2D>& sidewalks_;
+        std::vector<semantic_bki::Geometry2D>& cycleways_;
+        std::vector<semantic_bki::Geometry2D>& walls_;
+        std::vector<semantic_bki::Geometry2D>& water_;
+        std::vector<std::pair<float, float>>& pole_points_;
         std::vector<semantic_bki::Geometry2D>& parking_;
         std::vector<semantic_bki::Geometry2D>& fences_;
         std::vector<semantic_bki::Geometry2D>& stairs_;
@@ -362,6 +424,10 @@ namespace semantic_bki {
         buildings_.clear();
         roads_.clear();
         sidewalks_.clear();
+        cycleways_.clear();
+        walls_.clear();
+        water_.clear();
+        pole_points_.clear();
         parking_.clear();
         fences_.clear();
         stairs_.clear();
@@ -383,8 +449,7 @@ namespace semantic_bki {
             osmium::handler::NodeLocationsForWays<osmium::index::map::SparseMemArray<osmium::unsigned_object_id_type, osmium::Location>> 
                 location_handler(index);
             
-            // Create handler to extract buildings, roads, sidewalks, grasslands, trees, forests (ways + point trees + multipolygons)
-            OSMGeometryHandler handler(origin_lat, origin_lon, buildings_, roads_, sidewalks_, parking_, fences_, stairs_, grasslands_, trees_, forests_, tree_points_);
+            OSMGeometryHandler handler(origin_lat, origin_lon, buildings_, roads_, sidewalks_, cycleways_, walls_, water_, pole_points_, parking_, fences_, stairs_, grasslands_, trees_, forests_, tree_points_);
             
             // MultipolygonManager to convert multipolygon relations (type=multipolygon) to areas
             // Filter: which relations to assemble. Each rule accepts relations with matching tags.
@@ -407,6 +472,7 @@ namespace semantic_bki {
             filter.add_rule(true, "leisure", "park");
             filter.add_rule(true, "leisure", "garden");
             filter.add_rule(true, "amenity", "parking");
+            filter.add_rule(true, "natural", "water");
             using MultipolygonManager = osmium::area::MultipolygonManager<osmium::area::Assembler>;
             MultipolygonManager mp_manager(assembler_config, filter);
             
@@ -436,7 +502,7 @@ namespace semantic_bki {
             
             // RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << buildings_.size() << " buildings, " << roads_.size() << " roads/sidewalks, " << grasslands_.size() << " grasslands, " << trees_.size() << " tree/forest polygons, " << tree_points_.size() << " tree points from OSM file using libosmium");
             
-            if (buildings_.empty() && roads_.empty() && sidewalks_.empty() && parking_.empty() && fences_.empty() && stairs_.empty() && grasslands_.empty() && trees_.empty() && forests_.empty() && tree_points_.empty()) {
+            if (buildings_.empty() && roads_.empty() && sidewalks_.empty() && cycleways_.empty() && walls_.empty() && water_.empty() && pole_points_.empty() && parking_.empty() && fences_.empty() && stairs_.empty() && grasslands_.empty() && trees_.empty() && forests_.empty() && tree_points_.empty()) {
                 // RCLCPP_WARN(node_->get_logger(), "WARNING: No buildings, roads, grasslands, or trees found in OSM file.");
             }
             
@@ -913,6 +979,96 @@ namespace semantic_bki {
         return marker;
     }
 
+    visualization_msgs::msg::Marker OSMVisualizer::createCyclewayMarker(const std::vector<Geometry2D>& cycleways) {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = frame_id_;
+        marker.header.stamp = node_->now();
+        marker.ns = "osm_cycleways";
+        marker.id = 11;
+        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.2;
+        marker.color.r = 0.0f; marker.color.g = 0.5f; marker.color.b = 1.0f; marker.color.a = 1.0f;
+        for (const auto& cw : cycleways) {
+            if (cw.coords.size() < 2) continue;
+            for (size_t i = 0; i < cw.coords.size() - 1; ++i) {
+                geometry_msgs::msg::Point p1, p2;
+                p1.x = cw.coords[i].first; p1.y = cw.coords[i].second; p1.z = 0.0;
+                p2.x = cw.coords[i + 1].first; p2.y = cw.coords[i + 1].second; p2.z = 0.0;
+                marker.points.push_back(p1); marker.points.push_back(p2);
+            }
+        }
+        return marker;
+    }
+
+    visualization_msgs::msg::Marker OSMVisualizer::createWallMarker(const std::vector<Geometry2D>& walls) {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = frame_id_;
+        marker.header.stamp = node_->now();
+        marker.ns = "osm_walls";
+        marker.id = 12;
+        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.3;
+        marker.color.r = 0.5f; marker.color.g = 0.5f; marker.color.b = 0.5f; marker.color.a = 1.0f;
+        for (const auto& w : walls) {
+            if (w.coords.size() < 2) continue;
+            for (size_t i = 0; i < w.coords.size() - 1; ++i) {
+                geometry_msgs::msg::Point p1, p2;
+                p1.x = w.coords[i].first; p1.y = w.coords[i].second; p1.z = 0.0;
+                p2.x = w.coords[i + 1].first; p2.y = w.coords[i + 1].second; p2.z = 0.0;
+                marker.points.push_back(p1); marker.points.push_back(p2);
+            }
+        }
+        return marker;
+    }
+
+    visualization_msgs::msg::Marker OSMVisualizer::createWaterMarker(const std::vector<Geometry2D>& water) {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = frame_id_;
+        marker.header.stamp = node_->now();
+        marker.ns = "osm_water";
+        marker.id = 13;
+        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.25;
+        marker.color.r = 0.0f; marker.color.g = 0.0f; marker.color.b = 1.0f; marker.color.a = 0.8f;
+        for (const auto& wa : water) {
+            addPolygonOutlineToMarker(wa, marker);
+        }
+        return marker;
+    }
+
+    visualization_msgs::msg::Marker OSMVisualizer::createPolePointsMarker() const {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = frame_id_;
+        marker.header.stamp = node_->now();
+        marker.ns = "osm_pole_points";
+        marker.id = 14;
+        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.2;
+        marker.color.r = 0.8f; marker.color.g = 0.4f; marker.color.b = 0.0f; marker.color.a = 1.0f;
+        const float r = 2.0f;  // radius for pole circles (matches bkioctomap default)
+        const int circle_segments = 16;
+        for (const auto& pt : pole_points_) {
+            if (std::isnan(pt.first) || std::isnan(pt.second) || std::isinf(pt.first) || std::isinf(pt.second)) continue;
+            for (int i = 0; i < circle_segments; ++i) {
+                float a1 = 2.0f * static_cast<float>(M_PI) * i / circle_segments;
+                float a2 = 2.0f * static_cast<float>(M_PI) * (i + 1) / circle_segments;
+                geometry_msgs::msg::Point p1, p2;
+                p1.x = pt.first + r * std::cos(a1); p1.y = pt.second + r * std::sin(a1); p1.z = 0.0;
+                p2.x = pt.first + r * std::cos(a2); p2.y = pt.second + r * std::sin(a2); p2.z = 0.0;
+                marker.points.push_back(p1); marker.points.push_back(p2);
+            }
+        }
+        return marker;
+    }
+
     void OSMVisualizer::publish() {
         // RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: publish() called, buildings_.size()=" << buildings_.size());
         
@@ -982,7 +1138,18 @@ namespace semantic_bki {
         if (!tree_points_.empty()) {
             auto marker = createTreePointsMarker();
             marker_array.markers.push_back(marker);
-            // RCLCPP_INFO_STREAM(node_->get_logger(), "OSM: Added " << tree_points_.size() << " tree points (single-node trees)");
+        }
+        if (!cycleways_.empty()) {
+            marker_array.markers.push_back(createCyclewayMarker(cycleways_));
+        }
+        if (!walls_.empty()) {
+            marker_array.markers.push_back(createWallMarker(walls_));
+        }
+        if (!water_.empty()) {
+            marker_array.markers.push_back(createWaterMarker(water_));
+        }
+        if (!pole_points_.empty()) {
+            marker_array.markers.push_back(createPolePointsMarker());
         }
         
         if (marker_array.markers.empty()) {
@@ -1188,6 +1355,20 @@ namespace semantic_bki {
             }
         }
         for (auto& pt : tree_points_) {
+            transformPoint(pt.first, pt.second);
+        }
+        for (auto& cw : cycleways_) {
+            for (auto& coord : cw.coords) transformPoint(coord.first, coord.second);
+        }
+        for (auto& w : walls_) {
+            for (auto& coord : w.coords) transformPoint(coord.first, coord.second);
+        }
+        for (auto& wa : water_) {
+            for (auto& coord : wa.coords) transformPoint(coord.first, coord.second);
+            for (auto& hole : wa.holes)
+                for (auto& coord : hole.coords) transformPoint(coord.first, coord.second);
+        }
+        for (auto& pt : pole_points_) {
             transformPoint(pt.first, pt.second);
         }
         

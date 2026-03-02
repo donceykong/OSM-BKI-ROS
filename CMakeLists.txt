@@ -265,9 +265,7 @@ install(DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config
 )
 
-install(DIRECTORY data/
-  DESTINATION share/${PROJECT_NAME}/data
-)
+# data/ is not installed (kept in source tree; use data_dir param or pkg_src_dir)
 
 install(DIRECTORY rviz/
   DESTINATION share/${PROJECT_NAME}/rviz

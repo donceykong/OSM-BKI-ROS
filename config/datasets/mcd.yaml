@@ -19,21 +19,33 @@
     # Dataset information
     input_data_prefix: kth_day_09/lidar_bin/data
     lidar_pose_file: kth_day_09/pose_inW.csv
-    evaluation_result_prefix: evaluations/osm_prior_evaluations/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_refactored/
     query: true
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_prefix
     gt_use_multiclass: false         # GT labels from gt_label_prefix
-    input_label_prefix: kth_day_09/inferred_labels/cenet_semkitti/multiclass_confidence_scores
+    input_label_prefix: kth_day_09/inferred_labels/cenet_kitti360_NEW/multiclass_confidence_scores
     gt_label_prefix: kth_day_09/gt_labels
-    inferred_labels_key: semkitti   # "mcd" or "semkitti" — *_to_common and learning_map_inv for inferred
-    gt_labels_key: mcd              # "mcd" or "semkitti" — *_to_common and learning_map_inv for GT
+    inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
-    # Options: semantic, osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
-    color_mode: semantic
+    # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
+    publish_osm_prior_map: false
+    osm_prior_map_color_mode: osm_blend
+    osm_prior_map_topic: /semantic_osm_prior_map
+
+    # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
+    publish_variance: false
+    variance_topic: /semantic_bki_variance
+
+    # Semantic uncertainty map: publish accumulated input observation uncertainty per voxel (like variance map).
+    # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.
+    publish_semantic_uncertainty: false
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+
     # Color configuration (matters if color_mode is set to 'semantic').
     # Uses common taxonomy colors from labels_common.yaml.
     colors_file: labels_common.yaml
@@ -46,15 +58,15 @@
     use_uncertainty_filter: false
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
-    uncertainty_drop_percent: 90.0  # for top_percent mode: discount this % of most uncertain points per scan
+    uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
     uncertainty_min_weight: 0.00     # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
-    confusion_matrix_file: confusion_matrix_mcd.yaml  # for confusion_matrix mode
+    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml  # for confusion_matrix mode
 
     # --------------------------------
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 3.0
+    osm_decay_meters: 5.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
@@ -66,10 +78,10 @@
     # OSM confusion matrix: semantic-OSM prior fusion.
     # Adds OSM-based bias to every BKI observation, maintaining constant influence.
     # Maps predicted semantic classes to OSM prior categories to bias predictions toward OSM-compatible classes.
-    osm_confusion_matrix_file: osm_confusion_matrix.yaml
-    osm_prior_strength: 1.5  # fraction of OSM influence per observation (0.0 = disabled)
-
-    # OSM height filter: scale OSM priors by height (z). Per-scan mean and std of z per OSM category
-    # are computed; priors apply only when voxel z is within [mean - k*std, mean + k*std].
-    use_osm_height_filter: false  # enable to restrict OSM priors to typical height ranges
-    osm_height_std_multiplier: 2.0  # k for mean ± k*std (e.g. 2.0 = ~95% of points within range)
+    # To generate an optimized matrix from GT co-occurrence, run:
+    #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
+    # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
+    # Then set osm_confusion_matrix_file to the output file.
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_height_filtering: true  # use height-based filtering for OSM priors

@@ -79,7 +79,6 @@ int main(int argc, char **argv) {
     node->declare_parameter<bool>("visualize", visualize);
     node->declare_parameter<std::string>("colors_file", "");
     node->declare_parameter<std::string>("calibration_file", "");
-    node->declare_parameter<std::string>("color_mode", "semantic");
     node->declare_parameter<std::string>("osm_file", "");
     node->declare_parameter<double>("osm_origin_lat", 0.0);
     node->declare_parameter<double>("osm_origin_lon", 0.0);
@@ -96,8 +95,13 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("uncertainty_min_weight", 0.1);
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
-    node->declare_parameter<bool>("use_osm_height_filter", false);
-    node->declare_parameter<double>("osm_height_std_multiplier", 2.0);
+    node->declare_parameter<bool>("publish_osm_prior_map", false);
+    node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
+    node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
+    node->declare_parameter<bool>("publish_variance", false);
+    node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
+    node->declare_parameter<bool>("publish_semantic_uncertainty", false);
+    node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -132,10 +136,6 @@ int main(int argc, char **argv) {
     std::string calibration_file;
     node->get_parameter<std::string>("calibration_file", calibration_file);
 
-    // Visualization color mode: "semantic" | "osm_building" | "osm_road" | "osm_grassland" | "osm_tree"
-    std::string color_mode_str;
-    node->get_parameter<std::string>("color_mode", color_mode_str);
-
     std::string osm_file;
     double osm_origin_lat, osm_origin_lon, osm_decay_meters, osm_tree_point_radius_meters;
     node->get_parameter<std::string>("osm_file", osm_file);
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
     node->get_parameter<double>("osm_decay_meters", osm_decay_meters);
     node->get_parameter<double>("osm_tree_point_radius_meters", osm_tree_point_radius_meters);
     
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: All parameters retrieved. dir=" << dir << ", lidar_pose_file=" << lidar_pose_file << ", calibration_file=" << calibration_file << ", color_mode=" << color_mode_str);
+    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: All parameters retrieved. dir=" << dir << ", lidar_pose_file=" << lidar_pose_file << ", calibration_file=" << calibration_file);
 
     RCLCPP_INFO_STREAM(node->get_logger(), "Parameters:" << std::endl <<
       "block_depth: " << block_depth << std::endl <<
@@ -243,9 +243,15 @@ int main(int argc, char **argv) {
     }
 
     // Multiclass setup: inferred and/or GT can use per-class scores (float16) instead of single uint32 labels.
-    // learning_map_inv is inferred from inferred_labels_key / gt_labels_key (labels_semkitti.yaml or labels_mcd.yaml).
+    // learning_map_inv is inferred from inferred_labels_key / gt_labels_key (labels_semkitti.yaml, labels_mcd.yaml, or labels_kitti360.yaml).
     auto resolve_label_config_path = [&](const std::string& labels_key) -> std::string {
-      std::string f = (labels_key == "mcd") ? "labels_mcd.yaml" : "labels_semkitti.yaml";
+      std::string f;
+      if (labels_key == "mcd")
+        f = "labels_mcd.yaml";
+      else if (labels_key == "kitti360")
+        f = "labels_kitti360.yaml";
+      else
+        f = "labels_semkitti.yaml";
       size_t dp = dir.rfind("/data/");
       if (dp != std::string::npos)
         return dir.substr(0, dp) + "/config/datasets/" + f;
@@ -325,24 +331,8 @@ int main(int argc, char **argv) {
     }
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Color loading completed");
 
-    // Set visualization color mode
-    if (color_mode_str == "osm_building") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMBuilding);
-    } else if (color_mode_str == "osm_road") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMRoad);
-    } else if (color_mode_str == "osm_grassland") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMGrassland);
-    } else if (color_mode_str == "osm_tree") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMTree);
-    } else if (color_mode_str == "osm_parking") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMParking);
-    } else if (color_mode_str == "osm_fence") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMFence);
-    } else if (color_mode_str == "osm_blend") {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::OSMBlend);
-    } else {
-      mcd_data.set_color_mode(semantic_bki::MapColorMode::Semantic);
-    }
+    // Main map always uses semantic colors
+    mcd_data.set_color_mode(semantic_bki::MapColorMode::Semantic);
 
     mcd_data.set_osm_decay_meters(static_cast<float>(osm_decay_meters));
     mcd_data.set_osm_tree_point_radius(static_cast<float>(osm_tree_point_radius_meters));
@@ -358,24 +348,27 @@ int main(int argc, char **argv) {
         osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
         mcd_data.set_osm_buildings(osm_vis.getBuildings());
         mcd_data.set_osm_roads(osm_vis.getRoads());
+        mcd_data.set_osm_sidewalks(osm_vis.getSidewalks());
+        mcd_data.set_osm_cycleways(osm_vis.getCycleways());
         mcd_data.set_osm_grasslands(osm_vis.getGrasslands());
         mcd_data.set_osm_trees(osm_vis.getTrees());
         mcd_data.set_osm_forests(osm_vis.getForests());
         mcd_data.set_osm_tree_points(osm_vis.getTreePoints());
         mcd_data.set_osm_parking(osm_vis.getParking());
         mcd_data.set_osm_fences(osm_vis.getFences());
+        mcd_data.set_osm_walls(osm_vis.getWalls());
         mcd_data.set_osm_stairs(osm_vis.getStairs());
+        mcd_data.set_osm_water(osm_vis.getWater());
+        mcd_data.set_osm_pole_points(osm_vis.getPolePoints());
         mcd_data.set_osm_stairs_width(osm_vis.getStairsWidth());
-        RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: " 
-            << osm_vis.getBuildings().size() << " buildings, " 
-            << osm_vis.getRoads().size() << " roads, "
-            << osm_vis.getParking().size() << " parking, "
-            << osm_vis.getFences().size() << " fences, "
-            << osm_vis.getStairs().size() << " stairs, "
-            << osm_vis.getGrasslands().size() << " grasslands, "
-            << osm_vis.getTrees().size() << " tree polygons, "
-            << osm_vis.getForests().size() << " forest polygons, "
-            << osm_vis.getTreePoints().size() << " tree points (decay=" << osm_decay_meters << " m)");
+        RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: "
+            << osm_vis.getBuildings().size() << " buildings, " << osm_vis.getRoads().size() << " roads, "
+            << osm_vis.getSidewalks().size() << " sidewalks, " << osm_vis.getCycleways().size() << " cycleways, "
+            << osm_vis.getParking().size() << " parking, " << osm_vis.getFences().size() << " fences, "
+            << osm_vis.getWalls().size() << " walls, " << osm_vis.getStairs().size() << " stairs, "
+            << osm_vis.getGrasslands().size() << " grasslands, " << osm_vis.getTrees().size() << " trees, "
+            << osm_vis.getForests().size() << " forests, " << osm_vis.getTreePoints().size() << " tree points, "
+            << osm_vis.getWater().size() << " water, " << osm_vis.getPolePoints().size() << " pole points (decay=" << osm_decay_meters << " m)");
       } else {
         RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM file for priors: " << full_osm_path);
       }
@@ -385,15 +378,43 @@ int main(int argc, char **argv) {
     {
       std::string osm_cm_file;
       double osm_prior_str;
-      bool use_osm_height_filter;
-      double osm_height_std_mult;
       node->get_parameter<std::string>("osm_confusion_matrix_file", osm_cm_file);
       node->get_parameter<double>("osm_prior_strength", osm_prior_str);
-      node->get_parameter<bool>("use_osm_height_filter", use_osm_height_filter);
-      node->get_parameter<double>("osm_height_std_multiplier", osm_height_std_mult);
+      bool publish_variance = false;
+      std::string variance_topic = "/semantic_bki_variance";
+      node->get_parameter<bool>("publish_variance", publish_variance);
+      node->get_parameter<std::string>("variance_topic", variance_topic);
+      mcd_data.set_publish_variance(publish_variance, variance_topic);
+      bool publish_semantic_uncertainty = false;
+      std::string semantic_uncertainty_topic = "/semantic_uncertainty_cloud";
+      node->get_parameter<bool>("publish_semantic_uncertainty", publish_semantic_uncertainty);
+      node->get_parameter<std::string>("semantic_uncertainty_topic", semantic_uncertainty_topic);
+      mcd_data.set_publish_semantic_uncertainty(publish_semantic_uncertainty, semantic_uncertainty_topic);
       mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
-      mcd_data.set_osm_height_filter_enabled(use_osm_height_filter);
-      mcd_data.set_osm_height_std_multiplier(static_cast<float>(osm_height_std_mult));
+
+      bool publish_osm_prior_map = false;
+      std::string osm_prior_map_color_mode_str = "osm_blend";
+      std::string osm_prior_map_topic = "/semantic_osm_prior_map";
+      node->get_parameter<bool>("publish_osm_prior_map", publish_osm_prior_map);
+      node->get_parameter<std::string>("osm_prior_map_color_mode", osm_prior_map_color_mode_str);
+      node->get_parameter<std::string>("osm_prior_map_topic", osm_prior_map_topic);
+      semantic_bki::MapColorMode osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
+      if (osm_prior_map_color_mode_str == "osm_building") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMBuilding;
+      } else if (osm_prior_map_color_mode_str == "osm_road") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMRoad;
+      } else if (osm_prior_map_color_mode_str == "osm_grassland") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMGrassland;
+      } else if (osm_prior_map_color_mode_str == "osm_tree") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMTree;
+      } else if (osm_prior_map_color_mode_str == "osm_parking") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMParking;
+      } else if (osm_prior_map_color_mode_str == "osm_fence") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMFence;
+      } else if (osm_prior_map_color_mode_str == "osm_blend") {
+        osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
+      }
+      mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
       if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
         std::string cm_path;
         size_t data_pos = dir.rfind("/data/");

@@ -87,6 +87,10 @@ namespace semantic_bki {
         const std::vector<Geometry2D>& getTrees() const { return trees_; }
         const std::vector<Geometry2D>& getForests() const { return forests_; }
         const std::vector<std::pair<float, float>>& getTreePoints() const { return tree_points_; }
+        const std::vector<Geometry2D>& getCycleways() const { return cycleways_; }
+        const std::vector<Geometry2D>& getWalls() const { return walls_; }
+        const std::vector<Geometry2D>& getWater() const { return water_; }
+        const std::vector<std::pair<float, float>>& getPolePoints() const { return pole_points_; }
 
     private:
         /**
@@ -149,6 +153,11 @@ namespace semantic_bki {
          */
         visualization_msgs::msg::Marker createTreePointsMarker() const;
 
+        visualization_msgs::msg::Marker createCyclewayMarker(const std::vector<Geometry2D>& cycleways);
+        visualization_msgs::msg::Marker createWallMarker(const std::vector<Geometry2D>& walls);
+        visualization_msgs::msg::Marker createWaterMarker(const std::vector<Geometry2D>& water);
+        visualization_msgs::msg::Marker createPolePointsMarker() const;
+
         rclcpp::Node::SharedPtr node_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_;
         rclcpp::TimerBase::SharedPtr publish_timer_;
@@ -165,6 +174,10 @@ namespace semantic_bki {
         std::vector<Geometry2D> trees_;           // landcover=trees, orchard, vineyard
         std::vector<Geometry2D> forests_;         // landuse=forest, natural=forest/wood
         std::vector<std::pair<float, float>> tree_points_;  // Single-point trees (natural=tree nodes)
+        std::vector<Geometry2D> cycleways_;
+        std::vector<Geometry2D> walls_;
+        std::vector<Geometry2D> water_;
+        std::vector<std::pair<float, float>> pole_points_;  // traffic_signals, power poles, etc.
         std::vector<std::pair<float, float>> path_;  // Lidar trajectory for debugging
         float tree_point_radius_meters_{5.0f};  // Radius for tree point circles (visualization and prior)
         float stairs_width_meters_{1.5f};       // Width of rectangle enclosing each stairs segment
