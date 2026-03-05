@@ -62,9 +62,9 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 0; 0; 0
-      Max Intensity: 89.6751480102539
+      Max Intensity: 159.00242614746094
       Min Color: 0; 0; 0
-      Min Intensity: -148.8285675048828
+      Min Intensity: -62.724613189697266
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
@@ -100,14 +100,18 @@ Visualization Manager:
       Name: OSM Data
       Namespaces:
         osm_buildings: true
+        osm_cycleways: true
         osm_fences: true
         osm_forests: true
         osm_grasslands: true
         osm_parking: true
+        osm_pole_points: true
         osm_roads: true
         osm_sidewalks: true
         osm_stairs: true
         osm_tree_points: true
+        osm_walls: true
+        osm_water: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -188,25 +192,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/XYOrbit
-      Distance: 438.2913818359375
+      Distance: 210.90457153320312
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 137.29171752929688
-        Y: 155.48106384277344
-        Z: 5.1689996325876564e-05
+        X: 34.53691864013672
+        Y: 13.087149620056152
+        Z: 6.799620314268395e-05
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: true
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.5697963237762451
+      Pitch: 1.164797067642212
       Target Frame: <Fixed Frame>
       Value: XYOrbit (rviz_default_plugins)
-      Yaw: 5.344856262207031
+      Yaw: 3.894854784011841
     Saved: ~
 Window Geometry:
   Displays:

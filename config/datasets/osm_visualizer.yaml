@@ -14,6 +14,8 @@
     # Stairs (highway=steps): each polyline segment drawn as rectangle with this width (meters) perpendicular to segment.
     stairs_width_meters: 10.0
 
-    # Optional: Transform OSM data to first pose origin (so both start at 0,0,0)
-    lidar_pose_file: kth_day_09/pose_inW.csv  # Pose file path (relative to data_dir or absolute)
+    # Optional: Transform OSM data to first pose origin (so both start at 0,0,0).
+    # Use sequence_name + lidar_pose_suffix (path = sequence_name/lidar_pose_suffix under data_dir).
+    sequence_name: kth_day_09
+    lidar_pose_suffix: pose_inW.csv
     data_dir: ""  # Data directory (if empty, will try package share/data/mcd/)

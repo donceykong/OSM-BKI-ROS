@@ -1,0 +1,15 @@
+# OSM Visualizer config for KITTI360 (poses from velodyne_poses.txt; OSM in sequence dir)
+/**:
+  ros__parameters:
+    # OSM file is in sequence dir: data_dir/sequence_name/map_XXXX.osm (data_dir set by launch)
+    osm_file: 2013_05_28_drive_0000_sync/map_0000.osm
+    osm_origin_lat: 48.9843445
+    osm_origin_lon: 8.4295857
+    publish_rate: 1.0
+    topic: /osm_geometries
+    tree_point_radius_meters: 6.0
+    stairs_width_meters: 10.0
+    sequence_name: 2013_05_28_drive_0000_sync
+    lidar_pose_suffix: velodyne_poses.txt
+    pose_format: kitti360   # frame_index + 12 or 16 floats (3x4/4x4), not MCD quaternion format
+    data_dir: ""

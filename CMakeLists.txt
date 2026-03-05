@@ -118,24 +118,6 @@ set(MAPPING_SOURCE_FILES
     src/mapping/bkioctree_node.cpp
     src/mapping/bkioctree.cpp)
 
-add_executable(toy_example_node
-  ${MAPPING_SOURCE_FILES}
-  ${COMMON_SOURCE_FILES}
-  src/toy_example_node.cpp
-)
-
-add_executable(kitti_node
-  ${MAPPING_SOURCE_FILES}
-  ${COMMON_SOURCE_FILES}
-  src/kitti_node.cpp
-)
-
-add_executable(semantickitti_node
-  ${MAPPING_SOURCE_FILES}
-  ${COMMON_SOURCE_FILES}
-  src/semantickitti_node.cpp
-)
-
 add_executable(mcd_node
   ${MAPPING_SOURCE_FILES}
   ${COMMON_SOURCE_FILES}
@@ -143,39 +125,16 @@ add_executable(mcd_node
   src/mcd_node.cpp
 )
 
+add_executable(kitti360_node
+  ${MAPPING_SOURCE_FILES}
+  ${COMMON_SOURCE_FILES}
+  src/common/osm_visualizer.cpp
+  src/kitti360_node.cpp
+)
+
 add_executable(osm_visualizer_node
   src/common/osm_visualizer.cpp
   src/osm_visualizer_node.cpp
-)
-
-ament_target_dependencies(toy_example_node
-  rclcpp
-  geometry_msgs
-  visualization_msgs
-  std_msgs
-  pcl_conversions
-)
-
-ament_target_dependencies(kitti_node
-  rclcpp
-  geometry_msgs
-  visualization_msgs
-  std_msgs
-  sensor_msgs
-  pcl_conversions
-  OpenCV
-)
-
-ament_target_dependencies(semantickitti_node
-  rclcpp
-  geometry_msgs
-  visualization_msgs
-  std_msgs
-  sensor_msgs
-  pcl_conversions
-  ament_index_cpp
-  OpenCV
-  yaml-cpp
 )
 
 ament_target_dependencies(mcd_node
@@ -194,23 +153,32 @@ ament_target_dependencies(mcd_node
   yaml-cpp
 )
 
-target_link_libraries(toy_example_node
-  ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
-)
-
-target_link_libraries(kitti_node
-  ${OpenCV_LIBRARIES}
-  ${PCL_LIBRARIES}
-)
-
-target_link_libraries(semantickitti_node
+target_link_libraries(mcd_node
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
   yaml-cpp
+  expat
+  bz2
+  z
 )
 
-target_link_libraries(mcd_node
+ament_target_dependencies(kitti360_node
+  rclcpp
+  geometry_msgs
+  visualization_msgs
+  std_msgs
+  sensor_msgs
+  nav_msgs
+  pcl_conversions
+  tf2_eigen
+  tf2_ros
+  Eigen3
+  ament_index_cpp
+  OpenCV
+  yaml-cpp
+)
+
+target_link_libraries(kitti360_node
   ${OpenCV_LIBRARIES}
   ${PCL_LIBRARIES}
   yaml-cpp
@@ -245,10 +213,8 @@ endif()
 #############
 
 install(TARGETS
-  toy_example_node
-  kitti_node
-  semantickitti_node
   mcd_node
+  kitti360_node
   osm_visualizer_node
   DESTINATION lib/${PROJECT_NAME}
 )

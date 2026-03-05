@@ -16,18 +16,23 @@
     max_range: 200.0  # Sensor max range (m)
     skip_frames: 50   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
 
-    # Dataset information
-    input_data_prefix: kth_day_09/lidar_bin/data
-    lidar_pose_file: kth_day_09/pose_inW.csv
+    # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
+    dataset_name: mcd
+    sequence_name: kth_day_09
+
+    # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
+    input_data_suffix: lidar_bin/data
+    lidar_pose_suffix: pose_inW.csv
+    input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
+    gt_label_suffix: gt_labels
+
     evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_02/
     query: true
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
-    inferred_use_multiclass: true   # inferred labels from input_label_prefix
-    gt_use_multiclass: false         # GT labels from gt_label_prefix
-    input_label_prefix: kth_day_09/inferred_labels/cenet_kitti360/multiclass_confidence_scores
-    gt_label_prefix: kth_day_09/gt_labels
+    inferred_use_multiclass: true   # inferred labels from input_label_suffix
+    gt_use_multiclass: false         # GT labels from gt_label_suffix
     inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 

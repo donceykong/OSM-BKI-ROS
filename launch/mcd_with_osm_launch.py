@@ -100,7 +100,12 @@ def launch_setup(context):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
-    data_config_path = os.path.join(pkg_src_dir, 'config', 'datasets', f'{dataset}.yaml')
+    # MCD config lives in config/methods/mcd.yaml; other datasets in config/datasets/
+    data_config_path = (
+        os.path.join(pkg_src_dir, 'config', 'methods', 'mcd.yaml')
+        if dataset == 'mcd'
+        else os.path.join(pkg_src_dir, 'config', 'datasets', f'{dataset}.yaml')
+    )
     osm_config_path = os.path.join(pkg_src_dir, 'config', 'datasets', f'{osm_dataset}.yaml')
     data_dir_path = os.path.join(pkg_src_dir, 'data', dataset)
     calib_file_path = os.path.join(pkg_src_dir, 'data', dataset, 'hhs_calib.yaml')
@@ -116,7 +121,7 @@ def launch_setup(context):
     )
     
     # MCD node (scan processing) - now with OSM prior support
-    # color_mode, osm_decay_meters, osm_file, osm_origin_* come from dataset config (mcd.yaml) by default
+    # color_mode, osm_decay_meters, osm_file, osm_origin_* come from dataset config (config/methods/mcd.yaml) by default
     mcd_params = [
         {'dir': data_dir_path},
         {'calibration_file': calib_file_path},

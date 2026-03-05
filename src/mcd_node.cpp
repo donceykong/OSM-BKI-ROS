@@ -70,6 +70,11 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("max_range", max_range);
     node->declare_parameter<int>("skip_frames", skip_frames);
     node->declare_parameter<std::string>("dir", dir);
+    node->declare_parameter<std::string>("sequence_name", "");
+    node->declare_parameter<std::string>("input_data_suffix", "");
+    node->declare_parameter<std::string>("input_label_suffix", "");
+    node->declare_parameter<std::string>("lidar_pose_suffix", "");
+    node->declare_parameter<std::string>("gt_label_suffix", "");
     node->declare_parameter<std::string>("input_data_prefix", input_data_prefix);
     node->declare_parameter<std::string>("input_label_prefix", input_label_prefix);
     node->declare_parameter<std::string>("lidar_pose_file", lidar_pose_file);
@@ -120,11 +125,24 @@ int main(int argc, char **argv) {
     node->get_parameter<double>("max_range", max_range);
     node->get_parameter<int>("skip_frames", skip_frames);
     node->get_parameter<std::string>("dir", dir);
+    std::string sequence_name, input_data_suffix, input_label_suffix, lidar_pose_suffix, gt_label_suffix;
+    node->get_parameter<std::string>("sequence_name", sequence_name);
+    node->get_parameter<std::string>("input_data_suffix", input_data_suffix);
+    node->get_parameter<std::string>("input_label_suffix", input_label_suffix);
+    node->get_parameter<std::string>("lidar_pose_suffix", lidar_pose_suffix);
+    node->get_parameter<std::string>("gt_label_suffix", gt_label_suffix);
     node->get_parameter<std::string>("input_data_prefix", input_data_prefix);
     node->get_parameter<std::string>("input_label_prefix", input_label_prefix);
     node->get_parameter<std::string>("lidar_pose_file", lidar_pose_file);
     node->get_parameter<std::string>("gt_label_prefix", gt_label_prefix);
     node->get_parameter<std::string>("evaluation_result_prefix", evaluation_result_prefix);
+    // Build paths from sequence_name + suffix when sequence-based config is used
+    if (!sequence_name.empty() && !input_data_suffix.empty()) {
+      input_data_prefix = sequence_name + "/" + input_data_suffix;
+      if (!lidar_pose_suffix.empty()) lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
+      if (!input_label_suffix.empty()) input_label_prefix = sequence_name + "/" + input_label_suffix;
+      if (!gt_label_suffix.empty()) gt_label_prefix = sequence_name + "/" + gt_label_suffix;
+    }
     node->get_parameter<bool>("query", query);
     node->get_parameter<bool>("visualize", visualize);
     
