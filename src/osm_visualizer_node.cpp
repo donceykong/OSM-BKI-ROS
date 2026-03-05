@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
     node->declare_parameter<std::string>("sequence_name", "");
     node->declare_parameter<std::string>("lidar_pose_suffix", "");
     node->declare_parameter<std::string>("pose_format", "mcd");  // "mcd" = num,timestamp,x,y,z,qx,qy,qz,qw; "kitti360" = frame_index + 12 or 16 floats (3x4/4x4)
+    node->declare_parameter<bool>("osm_in_sequence_dir", false);  // if true, OSM path is data_dir/sequence_name/osm_file
     node->declare_parameter<std::string>("data_dir", "");
 
     std::string osm_file;
@@ -51,6 +52,8 @@ int main(int argc, char** argv) {
     node->get_parameter("sequence_name", sequence_name);
     node->get_parameter("lidar_pose_suffix", lidar_pose_suffix);
     node->get_parameter("pose_format", pose_format);
+    bool osm_in_sequence_dir = false;
+    node->get_parameter("osm_in_sequence_dir", osm_in_sequence_dir);
     node->get_parameter("data_dir", data_dir);
     if (!sequence_name.empty() && !lidar_pose_suffix.empty()) {
         lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
@@ -66,7 +69,11 @@ int main(int argc, char** argv) {
         std::ifstream check(osm_file);
         if (!check.good()) {
             if (!data_dir.empty()) {
-                full_path = data_dir + "/" + osm_file;
+                if (osm_in_sequence_dir && !sequence_name.empty()) {
+                    full_path = data_dir + "/" + sequence_name + "/" + osm_file;
+                } else {
+                    full_path = data_dir + "/" + osm_file;
+                }
             } else {
                 try {
                     std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");

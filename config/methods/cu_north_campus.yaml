@@ -1,4 +1,4 @@
-# KITTI360 dataset config (mapping + OSM visualizer in one file)
+# North Campus dataset config (mapping + OSM visualizer in one file)
 
 /**:
   ros__parameters:
@@ -6,38 +6,45 @@
     data_root: ""
 
     # Map information
-    resolution: 0.3
+    resolution: 0.5
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 0.3      # Voxel DS size for pointcloud (before insertion)
+    ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
     num_class: 13
 
     # Information about range-finder data
-    scan_num: 10000   # How many scans to use
+    scan_num: 50000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 50   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    skip_frames: 30   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+
+    # No static TF (poses already in world frame, like KITTI360).
+    publish_static_tf: false
+    # Use pose row index (0,1,2,...) as scan file number. Lidar and inferred label files must be named 0000000000.bin, 0000000001.bin, ... in the same order as rows in poses.csv (see scripts/north_campus for alignment tools).
+    use_pose_index_as_scan_id: true
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
-    dataset_name: kitti360
-    sequence_name: 2013_05_28_drive_0000_sync
+    dataset_name: cu_north_campus
+    sequence_name: robot1
 
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
-    input_data_suffix: velodyne_points/data
-    lidar_pose_suffix: velodyne_poses.txt
-    input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
-    gt_label_suffix: gt_labels
+    input_data_suffix: lidar_bin/data
+    lidar_pose_suffix: poses.csv
+    input_label_suffix: inferred_labels/cenet_mcd/multiclass_confidence_scores
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360/
-    query: true
+    # Listing inferred twice because the GT is not available
+    gt_label_suffix: inferred_labels/cenet_mcd/multiclass_confidence_scores
+
+    evaluation_result_prefix: evaluations/
+    query: false # GT Data not available
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
-    gt_use_multiclass: false         # GT labels from gt_label_suffix
-    inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
-    gt_labels_key: kitti360              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
+    gt_use_multiclass: true         # GT labels from same as inferred
+    inferred_labels_key: mcd        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
     # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
@@ -74,11 +81,11 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 5.0
+    osm_decay_meters: 4.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
-    osm_file: map_0000.osm
-    osm_origin_lat: 48.9843445
-    osm_origin_lon: 8.4295857
+    osm_file: north_campus.osm
+    osm_origin_lat: 40.0086875500
+    osm_origin_lon: -105.2716580000
 
     # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
     osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
@@ -91,16 +98,16 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 0.3  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: false  # use height-based filtering for OSM priors
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
     # --------------------------------
     # If true, OSM file path is data_dir/sequence_name/osm_file; else data_dir/osm_file
-    osm_in_sequence_dir: true
-    # Pose file format for transforming OSM to first pose: "mcd" (num,timestamp,x,y,z,q) or "kitti360" (frame_index + 3x4/4x4)
-    pose_format: kitti360
+    osm_in_sequence_dir: false
+    # Pose file format: "mcd" (scan #,timestamp,x,y,z,qx,qy,qz,w) — matches poses.csv
+    pose_format: mcd
     publish_rate: 1.0
     topic: /osm_geometries
     tree_point_radius_meters: 6.0

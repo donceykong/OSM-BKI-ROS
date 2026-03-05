@@ -1,7 +1,10 @@
-# MCD dataset config
+# MCD dataset config (mapping + OSM visualizer in one file)
 
 /**:
   ros__parameters:
+    # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
+    data_root: ""
+
     # Map information
     resolution: 1.0
     # Sampling resolutions
@@ -90,3 +93,13 @@
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
     osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: false  # use height-based filtering for OSM priors
+
+    # --------------------------------
+    # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
+    # --------------------------------
+    osm_in_sequence_dir: false
+    pose_format: mcd
+    publish_rate: 1.0
+    topic: /osm_geometries
+    tree_point_radius_meters: 6.0
+    stairs_width_meters: 10.0

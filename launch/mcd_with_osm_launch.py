@@ -1,11 +1,29 @@
-"""Launch MCD node and OSM visualizer node together as independent nodes."""
+"""Launch MCD node and OSM visualizer. Config from mcd.yaml (mapping + OSM viz). data_root in config overrides local data dir."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import os
+import yaml
 from ament_index_python.packages import get_package_share_directory
+
+
+def _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override=None):
+    """Resolve data dir: data_root_override or data_root in config; if empty use pkg_src_dir/data/<dataset>."""
+    local_data_dir = os.path.join(pkg_src_dir, 'data', dataset)
+    data_root = (data_root_override or '').strip()
+    if not data_root and os.path.isfile(data_config_path):
+        try:
+            with open(data_config_path) as f:
+                raw = yaml.safe_load(f)
+            params = raw.get('/**', {}).get('ros__parameters', raw.get('ros__parameters', {}))
+            data_root = (params.get('data_root') or '').strip()
+        except Exception:
+            pass
+    if not data_root:
+        return local_data_dir
+    return os.path.join(data_root, dataset)
 
 
 def generate_launch_description():
@@ -27,13 +45,13 @@ def generate_launch_description():
         default_value='mcd',
         description='Dataset name'
     )
-    
-    osm_dataset_arg = DeclareLaunchArgument(
-        'osm_dataset',
-        default_value='osm_visualizer',
-        description='OSM visualizer config dataset name'
+
+    data_root_arg = DeclareLaunchArgument(
+        'data_root',
+        default_value='',
+        description='Root data directory; if empty, use data_root from config or else package data dir'
     )
-    
+
     color_mode_arg = DeclareLaunchArgument(
         'color_mode',
         default_value='semantic',
@@ -68,7 +86,7 @@ def generate_launch_description():
         pkg_arg,
         method_arg,
         dataset_arg,
-        osm_dataset_arg,
+        data_root_arg,
         color_mode_arg,
         osm_file_arg,
         osm_origin_lat_arg,
@@ -79,36 +97,31 @@ def generate_launch_description():
 
 
 def launch_setup(context):
-    # Get launch argument values
     method = context.launch_configurations.get('method', 'semantic_bki')
     dataset = context.launch_configurations.get('dataset', 'mcd')
-    osm_dataset = context.launch_configurations.get('osm_dataset', 'osm_visualizer')
+    data_root_override = context.launch_configurations.get('data_root', '')
     color_mode = context.launch_configurations.get('color_mode', 'semantic')
     osm_file = context.launch_configurations.get('osm_file', '')
     osm_origin_lat = context.launch_configurations.get('osm_origin_lat', '0.0')
     osm_origin_lon = context.launch_configurations.get('osm_origin_lon', '0.0')
     osm_decay_meters = context.launch_configurations.get('osm_decay_meters', '2.0')
-    
-    # Resolve the source package directory so data/config are read from src/,
-    # not from the installed share directory.
-    # Primary: navigate from install share dir up to workspace root.
-    # Fallback: use this file's location (works when running directly from src/).
+
     pkg_share_dir = get_package_share_directory('semantic_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
     pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     if not os.path.isdir(os.path.join(pkg_src_dir, 'config')):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    
+
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
-    # MCD config lives in config/methods/mcd.yaml; other datasets in config/datasets/
+    methods_datasets = ('mcd', 'cu_north_campus')
     data_config_path = (
-        os.path.join(pkg_src_dir, 'config', 'methods', 'mcd.yaml')
-        if dataset == 'mcd'
+        os.path.join(pkg_src_dir, 'config', 'methods', f'{dataset}.yaml')
+        if dataset in methods_datasets
         else os.path.join(pkg_src_dir, 'config', 'datasets', f'{dataset}.yaml')
     )
-    osm_config_path = os.path.join(pkg_src_dir, 'config', 'datasets', f'{osm_dataset}.yaml')
-    data_dir_path = os.path.join(pkg_src_dir, 'data', dataset)
-    calib_file_path = os.path.join(pkg_src_dir, 'data', dataset, 'hhs_calib.yaml')
+    data_dir_path = _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override)
+    # cu_north_campus (and kitti360) use identity calibration; no base-frame TF
+    calib_file_path = '' if dataset == 'cu_north_campus' else os.path.join(data_dir_path, 'hhs_calib.yaml')
     rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'mcd_node.rviz')
     
     # RViz node
@@ -144,17 +157,13 @@ def launch_setup(context):
         parameters=mcd_params
     )
     
-    # OSM visualizer node (independent, publishes OSM buildings/roads/etc. as markers)
-    # Pass data_dir so pose file can be found relative to it
+    # OSM visualizer uses same config (mcd.yaml) and data_dir from launch
     osm_node = Node(
         package='semantic_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',
-        parameters=[
-            osm_config_path,
-            {'data_dir': data_dir_path}
-        ]
+        parameters=[data_config_path, {'data_dir': data_dir_path}]
     )
     
     return [rviz_node, mcd_node, osm_node]

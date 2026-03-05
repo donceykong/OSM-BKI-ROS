@@ -270,6 +270,14 @@ class MCDData {
       return true;
     }
 
+    /// Overwrite scan_indices_ with 0,1,2,... so lidar/label files are expected as 0000000000.bin, 0000000001.bin, etc. in pose order.
+    /// Use when the pose file's first column does not match lidar filenames (e.g. cu_north_campus poses.csv has scan # 4,5,6... but lidar is named by timestamp).
+    void apply_pose_index_as_scan_id() {
+      for (size_t i = 0; i < scan_indices_.size(); ++i)
+        scan_indices_[i] = static_cast<int>(i);
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Applied pose index as scan ID: scan_indices_ are now 0.." << (scan_indices_.size() - 1) << " (expect 0000000000.bin, 0000000001.bin, ... in pose order)");
+    }
+
     /// Read KITTI-360 velodyne_poses.txt format (see scripts/kitti360/visualize_sem_map_KITTI360.py).
     /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major). Poses are made relative to first pose.
     bool read_lidar_poses_kitti360(const std::string& pose_path) {

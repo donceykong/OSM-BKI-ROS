@@ -1,4 +1,4 @@
-"""Launch KITTI360 node and OSM visualizer. Config from kitti360.yaml (mapping + OSM viz)."""
+"""Launch MCD node and OSM visualizer for CU North Campus. No GT; no static TF; pose index = scan id. Config from cu_north_campus.yaml."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -28,7 +28,7 @@ def _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_over
 def generate_launch_description():
     pkg_arg = DeclareLaunchArgument('pkg', default_value='semantic_bki', description='Package name')
     method_arg = DeclareLaunchArgument('method', default_value='semantic_bki', description='Method name')
-    dataset_arg = DeclareLaunchArgument('dataset', default_value='kitti360', description='Dataset name')
+    dataset_arg = DeclareLaunchArgument('dataset', default_value='cu_north_campus', description='Dataset name')
     data_root_arg = DeclareLaunchArgument(
         'data_root', default_value='',
         description='Root data directory; if empty, use data_root from config or else package data dir'
@@ -41,7 +41,7 @@ def generate_launch_description():
 
 def launch_setup(context):
     method = context.launch_configurations.get('method', 'semantic_bki')
-    dataset = context.launch_configurations.get('dataset', 'kitti360')
+    dataset = context.launch_configurations.get('dataset', 'cu_north_campus')
     data_root_override = context.launch_configurations.get('data_root', '')
 
     pkg_share_dir = get_package_share_directory('semantic_bki')
@@ -51,23 +51,24 @@ def launch_setup(context):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
-    data_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'kitti360.yaml')
+    data_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'cu_north_campus.yaml')
     data_dir_path = _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override)
-    rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'kitti360_node.rviz')
+    rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'cu_north_campus_node.rviz')
 
-    kitti360_params = [
+    # No calibration (identity); publish_static_tf and use_pose_index_as_scan_id come from config
+    mcd_params = [
         {'dir': data_dir_path},
         {'calibration_file': ''},
         method_config_path,
         data_config_path
     ]
 
-    kitti360_node = Node(
+    mcd_node = Node(
         package='semantic_bki',
-        executable='kitti360_node',
-        name='kitti360_node',
+        executable='mcd_node',
+        name='mcd_node',
         output='screen',
-        parameters=kitti360_params
+        parameters=mcd_params
     )
 
     rviz_node = Node(
@@ -78,7 +79,6 @@ def launch_setup(context):
         output='screen'
     )
 
-    # OSM visualizer uses same config (kitti360.yaml) and data_dir from launch
     osm_node = Node(
         package='semantic_bki',
         executable='osm_visualizer_node',
@@ -87,4 +87,4 @@ def launch_setup(context):
         parameters=[data_config_path, {'data_dir': data_dir_path}]
     )
 
-    return [rviz_node, kitti360_node, osm_node]
+    return [rviz_node, mcd_node, osm_node]
