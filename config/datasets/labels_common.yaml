@@ -128,7 +128,7 @@ kitti360_to_common:
   19: 8      # traffic light → traffic-sign
   20: 8      # traffic sign
   21: 9      # vegetation
-  22: 4       # terrain → other-ground
+  22: 9       # terrain → vegitation
   23: 0       # sky → unlabeled
   24: 12      # person → other-object
   25: 12      # rider → other-object
