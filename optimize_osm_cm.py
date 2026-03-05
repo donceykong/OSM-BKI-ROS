@@ -825,12 +825,17 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
         for i in range(n):
             k = (int(keys[i, 0]), int(keys[i, 1]))
             if k in precomputed_grid:
-                osm_vecs[i] = precomputed_grid[k]
+                v = precomputed_grid[k]
             else:
                 cx = (k[0] + 0.5) * grid_res
                 cy = (k[1] + 0.5) * grid_res
                 v = _compute_cell_prior(cx, cy, geom, osm_index, decay_m, tree_radius, cats)
                 precomputed_grid[k] = v  # cache for reuse
+            # Normalize so sum of priors (including 'none') is 1
+            s = float(v.sum())
+            if s > 1e-6:
+                osm_vecs[i] = v / s
+            else:
                 osm_vecs[i] = v
         return osm_vecs
 
@@ -840,12 +845,17 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
     for i in range(n):
         k = (int(keys[i, 0]), int(keys[i, 1]))
         if k in cache:
-            osm_vecs[i] = cache[k]
+            v = cache[k]
         else:
             cx = (k[0] + 0.5) * grid_res
             cy = (k[1] + 0.5) * grid_res
             v = _compute_cell_prior(cx, cy, geom, idx, decay_m, tree_radius, cats)
             cache[k] = v
+        # Normalize so sum of priors (including 'none') is 1
+        s = float(v.sum())
+        if s > 1e-6:
+            osm_vecs[i] = v / s
+        else:
             osm_vecs[i] = v
     return osm_vecs
 
@@ -1016,6 +1026,11 @@ def derive_matrix(counts, class_totals, positive_only=False):
                     matrix[ri][j] = max(0.0, raw)
                 else:
                     matrix[ri][j] = raw
+    # Normalize so each column sums to 1
+    for j in range(N_OSM):
+        col_sum = matrix[:, j].sum()
+        if col_sum > 1e-10:
+            matrix[:, j] /= col_sum
     return matrix
 
 
@@ -1087,9 +1102,10 @@ def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None):
     return counts_h, totals_h
 
 
-def derive_height_matrix(counts_h, totals_h, num_bins=20):
+def derive_height_matrix(counts_h, totals_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
     """Derive height confusion matrix: matrix[bin][col] = trust multiplier in [0, 1].
-    When totals_h[bin][col] is negligible, use 1.0 (neutral)."""
+    When totals_h[bin][col] is negligible, use 1.0 (neutral).
+    Outliers are removed by clipping each column to [low_percentile, high_percentile] of that column."""
     matrix = np.zeros((num_bins, N_OSM))
     for b in range(num_bins):
         for j in range(N_OSM):
@@ -1097,6 +1113,12 @@ def derive_height_matrix(counts_h, totals_h, num_bins=20):
                 matrix[b, j] = 1.0
             else:
                 matrix[b, j] = np.clip(counts_h[b, j] / totals_h[b, j], 0.0, 1.0)
+    # Remove outliers: per-column clip to percentile range
+    for j in range(N_OSM):
+        col = matrix[:, j]
+        lo = np.percentile(col, low_percentile)
+        hi = np.percentile(col, high_percentile)
+        matrix[:, j] = np.clip(col, lo, hi)
     return matrix
 
 
