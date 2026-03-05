@@ -1,12 +1,15 @@
-# MCD dataset config
+# KITTI360 dataset config (mapping + OSM visualizer in one file)
 
 /**:
   ros__parameters:
+    # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
+    data_root: ""
+
     # Map information
-    resolution: 1.0
+    resolution: 0.3
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 1.0      # Voxel DS size for pointcloud (before insertion)
+    ds_resolution: 0.3      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
     num_class: 13
@@ -16,20 +19,25 @@
     max_range: 200.0  # Sensor max range (m)
     skip_frames: 50   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
 
-    # Dataset information
-    input_data_prefix: kth_day_09/lidar_bin/data
-    lidar_pose_file: kth_day_09/pose_inW.csv
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_02/
+    # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
+    dataset_name: kitti360
+    sequence_name: 2013_05_28_drive_0000_sync
+
+    # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
+    input_data_suffix: velodyne_points/data
+    lidar_pose_suffix: velodyne_poses.txt
+    input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
+    gt_label_suffix: gt_labels
+
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360/
     query: true
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
-    inferred_use_multiclass: true   # inferred labels from input_label_prefix
-    gt_use_multiclass: false         # GT labels from gt_label_prefix
-    input_label_prefix: kth_day_09/inferred_labels/cenet_kitti360/multiclass_confidence_scores
-    gt_label_prefix: kth_day_09/gt_labels
+    inferred_use_multiclass: true   # inferred labels from input_label_suffix
+    gt_use_multiclass: false         # GT labels from gt_label_suffix
     inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
-    gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
+    gt_labels_key: kitti360              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
     # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
@@ -68,9 +76,9 @@
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
     osm_decay_meters: 5.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
-    osm_file: kth_large.osm
-    osm_origin_lat: 59.347671416
-    osm_origin_lon: 18.072069652
+    osm_file: map_0000.osm
+    osm_origin_lat: 48.9843445
+    osm_origin_lon: 8.4295857
 
     # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
     osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
@@ -83,5 +91,17 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 0.3  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: false  # use height-based filtering for OSM priors
+
+    # --------------------------------
+    # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
+    # --------------------------------
+    # If true, OSM file path is data_dir/sequence_name/osm_file; else data_dir/osm_file
+    osm_in_sequence_dir: true
+    # Pose file format for transforming OSM to first pose: "mcd" (num,timestamp,x,y,z,q) or "kitti360" (frame_index + 3x4/4x4)
+    pose_format: kitti360
+    publish_rate: 1.0
+    topic: /osm_geometries
+    tree_point_radius_meters: 6.0
+    stairs_width_meters: 10.0

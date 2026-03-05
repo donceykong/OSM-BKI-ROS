@@ -21,7 +21,7 @@ Usage:
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
 
-Defaults are read from config/datasets/mcd.yaml relative to this script.
+Defaults are read from config/methods/mcd.yaml relative to this script.
 """
 
 import argparse
@@ -1223,7 +1223,7 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data.")
-    parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/datasets/mcd.yaml"))
+    parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/mcd.yaml"))
     parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized.yaml"))
     parser.add_argument("--max-scans", type=int, default=200)
     parser.add_argument("--skip-frames", type=int, default=None)
@@ -1260,22 +1260,34 @@ def main():
     elif "ros__parameters" in cfg:
         cfg = cfg["ros__parameters"]
 
+    # Resolve paths from sequence_name + suffix when present (matches config/methods/mcd.yaml)
+    seq = cfg.get("sequence_name")
+    if seq:
+        if cfg.get("lidar_pose_suffix"):
+            cfg["lidar_pose_file"] = f"{seq}/{cfg['lidar_pose_suffix']}"
+        if cfg.get("input_data_suffix"):
+            cfg["input_data_prefix"] = f"{seq}/{cfg['input_data_suffix']}"
+        if cfg.get("gt_label_suffix"):
+            cfg["gt_label_prefix"] = f"{seq}/{cfg['gt_label_suffix']}"
+        if cfg.get("input_label_suffix"):
+            cfg["input_label_prefix"] = f"{seq}/{cfg['input_label_suffix']}"
+
     data_dir = os.path.join(SCRIPT_DIR, "data", "mcd")
     pose_file = os.path.join(data_dir, cfg["lidar_pose_file"])
     gt_label_dir = os.path.join(data_dir, cfg.get("gt_label_prefix", "kth_day_09/gt_labels"))
     gt_labels_key = cfg.get("gt_labels_key", "mcd")
     scan_dir = os.path.join(data_dir, cfg.get("input_data_prefix", "kth_day_09/lidar_bin/data"))
     inferred_label_prefix = args.inferred_prefix if args.inferred_prefix else cfg.get(
-        "input_label_prefix", "kth_day_09/inferred_labels/cenet_kitti360/multiclass_confidence_scores"
+        "input_label_prefix", "kth_day_09/inferred_labels/cenet_semkitti/multiclass_confidence_scores"
     )
-    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "kitti360")
+    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "semkitti")
     inferred_use_multiclass = cfg.get("inferred_use_multiclass", True)
     calib_file = os.path.join(data_dir, "hhs_calib.yaml")
     osm_file = os.path.join(data_dir, cfg.get("osm_file", "kth_large.osm"))
     origin_lat = cfg.get("osm_origin_lat", 0.0)
     origin_lon = cfg.get("osm_origin_lon", 0.0)
-    decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 3.0)
-    tree_radius = args.tree_radius if args.tree_radius is not None else cfg.get("osm_tree_point_radius_meters", 4.0)
+    decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
+    tree_radius = args.tree_radius if args.tree_radius is not None else cfg.get("osm_tree_point_radius_meters", 5.0)
     skip_frames = args.skip_frames if args.skip_frames is not None else cfg.get("skip_frames", 0)
     max_range = cfg.get("max_range", 200.0)
     ds_resolution = cfg.get("ds_resolution", 1.0)

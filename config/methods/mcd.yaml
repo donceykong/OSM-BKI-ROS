@@ -1,0 +1,105 @@
+# MCD dataset config (mapping + OSM visualizer in one file)
+
+/**:
+  ros__parameters:
+    # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
+    data_root: ""
+
+    # Map information
+    resolution: 1.0
+    # Sampling resolutions
+    free_resolution: 100.0  # Free space sampling resolution
+    ds_resolution: 1.0      # Voxel DS size for pointcloud (before insertion)
+    # num_class: number of common taxonomy classes (see labels_common.yaml).
+    # All raw labels are mapped to [0, num_class-1] at ingestion time.
+    num_class: 13
+
+    # Information about range-finder data
+    scan_num: 10000   # How many scans to use
+    max_range: 200.0  # Sensor max range (m)
+    skip_frames: 50   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+
+    # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
+    dataset_name: mcd
+    sequence_name: kth_day_09
+
+    # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
+    input_data_suffix: lidar_bin/data
+    lidar_pose_suffix: pose_inW.csv
+    input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
+    gt_label_suffix: gt_labels
+
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_02/
+    query: true
+    visualize: true
+
+    # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
+    inferred_use_multiclass: true   # inferred labels from input_label_suffix
+    gt_use_multiclass: false         # GT labels from gt_label_suffix
+    inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
+
+    # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
+    # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
+    publish_osm_prior_map: false
+    osm_prior_map_color_mode: osm_blend
+    osm_prior_map_topic: /semantic_osm_prior_map
+
+    # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
+    publish_variance: false
+    variance_topic: /semantic_bki_variance
+
+    # Semantic uncertainty map: publish accumulated input observation uncertainty per voxel (like variance map).
+    # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.
+    publish_semantic_uncertainty: false
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+
+    # Color configuration (matters if color_mode is set to 'semantic').
+    # Uses common taxonomy colors from labels_common.yaml.
+    colors_file: labels_common.yaml
+
+    # --------------------------------
+    # Uncertainty filtering configuration 
+    # --------------------------------
+    # Uncertainty filtering: build running confusion matrix from GT labels,
+    # compute per-class precision, drop uncertain points for low-precision classes.
+    use_uncertainty_filter: false
+    # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
+    uncertainty_filter_mode: top_percent
+    uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
+    uncertainty_min_weight: 0.00     # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
+    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml  # for confusion_matrix mode
+
+    # --------------------------------
+    # OSM prior configuration 
+    # --------------------------------
+    # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
+    osm_decay_meters: 5.0
+    # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
+    osm_file: kth_large.osm
+    osm_origin_lat: 59.347671416
+    osm_origin_lon: 18.072069652
+
+    # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
+    osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
+
+    # OSM confusion matrix: semantic-OSM prior fusion.
+    # Adds OSM-based bias to every BKI observation, maintaining constant influence.
+    # Maps predicted semantic classes to OSM prior categories to bias predictions toward OSM-compatible classes.
+    # To generate an optimized matrix from GT co-occurrence, run:
+    #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
+    # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
+    # Then set osm_confusion_matrix_file to the output file.
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_height_filtering: false  # use height-based filtering for OSM priors
+
+    # --------------------------------
+    # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
+    # --------------------------------
+    osm_in_sequence_dir: false
+    pose_format: mcd
+    publish_rate: 1.0
+    topic: /osm_geometries
+    tree_point_radius_meters: 6.0
+    stairs_width_meters: 10.0

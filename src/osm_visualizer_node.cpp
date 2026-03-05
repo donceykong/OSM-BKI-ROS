@@ -24,6 +24,10 @@ int main(int argc, char** argv) {
     node->declare_parameter<double>("tree_point_radius_meters", 5.0);
     node->declare_parameter<double>("stairs_width_meters", 1.5);
     node->declare_parameter<std::string>("lidar_pose_file", "");
+    node->declare_parameter<std::string>("sequence_name", "");
+    node->declare_parameter<std::string>("lidar_pose_suffix", "");
+    node->declare_parameter<std::string>("pose_format", "mcd");  // "mcd" = num,timestamp,x,y,z,qx,qy,qz,qw; "kitti360" = frame_index + 12 or 16 floats (3x4/4x4)
+    node->declare_parameter<bool>("osm_in_sequence_dir", false);  // if true, OSM path is data_dir/sequence_name/osm_file
     node->declare_parameter<std::string>("data_dir", "");
 
     std::string osm_file;
@@ -33,6 +37,8 @@ int main(int argc, char** argv) {
     double tree_point_radius_meters;
     double stairs_width_meters;
     std::string lidar_pose_file;
+    std::string sequence_name;
+    std::string lidar_pose_suffix;
     std::string data_dir;
     node->get_parameter("osm_file", osm_file);
     node->get_parameter("osm_origin_lat", osm_origin_lat);
@@ -41,8 +47,17 @@ int main(int argc, char** argv) {
     node->get_parameter("topic", topic);
     node->get_parameter("tree_point_radius_meters", tree_point_radius_meters);
     node->get_parameter("stairs_width_meters", stairs_width_meters);
+    std::string pose_format;
     node->get_parameter("lidar_pose_file", lidar_pose_file);
+    node->get_parameter("sequence_name", sequence_name);
+    node->get_parameter("lidar_pose_suffix", lidar_pose_suffix);
+    node->get_parameter("pose_format", pose_format);
+    bool osm_in_sequence_dir = false;
+    node->get_parameter("osm_in_sequence_dir", osm_in_sequence_dir);
     node->get_parameter("data_dir", data_dir);
+    if (!sequence_name.empty() && !lidar_pose_suffix.empty()) {
+        lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
+    }
 
     if (osm_file.empty()) {
         RCLCPP_ERROR(node->get_logger(), "osm_file parameter is required. Set it in config or as launch argument.");
@@ -54,7 +69,11 @@ int main(int argc, char** argv) {
         std::ifstream check(osm_file);
         if (!check.good()) {
             if (!data_dir.empty()) {
-                full_path = data_dir + "/" + osm_file;
+                if (osm_in_sequence_dir && !sequence_name.empty()) {
+                    full_path = data_dir + "/" + sequence_name + "/" + osm_file;
+                } else {
+                    full_path = data_dir + "/" + osm_file;
+                }
             } else {
                 try {
                     std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");
@@ -91,71 +110,67 @@ int main(int argc, char** argv) {
             }
         }
         
-        RCLCPP_INFO_STREAM(node->get_logger(), "Reading poses from: " << full_pose_path);
+        RCLCPP_INFO_STREAM(node->get_logger(), "Reading poses from: " << full_pose_path << " (format: " << pose_format << ")");
         
         std::ifstream fPoses(full_pose_path);
         if (!fPoses.is_open()) {
             RCLCPP_WARN_STREAM(node->get_logger(), "Warning: Cannot open pose file " << full_pose_path << ". OSM data will not be transformed and no path will be drawn.");
         } else {
-            // Skip header line if present
-            std::string header_line;
-            std::getline(fPoses, header_line);
-            
-            bool has_header = (header_line.find("num") != std::string::npos ||
-                             header_line.find("timestamp") != std::string::npos ||
-                             header_line.find("x") != std::string::npos);
-            
-            if (!has_header) {
-                fPoses.close();
-                fPoses.open(full_pose_path);
-            }
-            
-            // Read all poses
             std::vector<Eigen::Matrix4d> poses;
-            while (!fPoses.eof()) {
-                std::string s;
-                std::getline(fPoses, s);
-                
-                if (s.empty() || s[0] == '#') {
-                    continue;
-                }
-                
-                std::stringstream ss(s);
-                std::string token;
-                std::vector<double> values;
-                
-                char delimiter = ',';
-                if (s.find(',') == std::string::npos) {
-                    delimiter = ' ';
-                }
-                
-                while (std::getline(ss, token, delimiter)) {
-                    try {
-                        double val = std::stod(token);
-                        values.push_back(val);
-                    } catch (...) {
-                        continue;
+            if (pose_format == "kitti360") {
+                // KITTI360: each line = frame_index (int) + 12 or 16 floats (3x4 or 4x4 row-major), same as scripts/kitti360/visualize_sem_map_KITTI360.py
+                std::string line;
+                while (std::getline(fPoses, line)) {
+                    std::istringstream ss(line);
+                    std::vector<double> values;
+                    int frame_index = -1;
+                    if (!(ss >> frame_index)) continue;
+                    double v;
+                    while (ss >> v) values.push_back(v);
+                    if (values.size() == 12u) {
+                        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+                        T.block<3, 4>(0, 0) = Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(values.data());
+                        poses.push_back(T);
+                    } else if (values.size() == 16u) {
+                        Eigen::Matrix4d T = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(values.data());
+                        poses.push_back(T);
                     }
                 }
-                
-                if (values.size() >= 8) {
-                    double x = values[2];
-                    double y = values[3];
-                    double z = values[4];
-                    double qx = values[5];
-                    double qy = values[6];
-                    double qz = values[7];
-                    double qw = values.size() > 8 ? values[8] : 1.0;
-                    
-                    Eigen::Quaterniond quat(qw, qx, qy, qz);
-                    quat.normalize();
-                    
-                    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-                    T.block<3, 3>(0, 0) = quat.toRotationMatrix();
-                    T(0, 3) = x;
-                    T(1, 3) = y;
-                    T(2, 3) = z;
-                    poses.push_back(T);
+            } else {
+                // MCD format: optional header, then num,timestamp,x,y,z,qx,qy,qz,qw per line
+                std::string header_line;
+                std::getline(fPoses, header_line);
+                bool has_header = (header_line.find("num") != std::string::npos ||
+                                 header_line.find("timestamp") != std::string::npos ||
+                                 header_line.find("x") != std::string::npos);
+                if (!has_header) {
+                    fPoses.close();
+                    fPoses.open(full_pose_path);
+                }
+                while (!fPoses.eof()) {
+                    std::string s;
+                    std::getline(fPoses, s);
+                    if (s.empty() || s[0] == '#') continue;
+                    std::stringstream ss(s);
+                    std::string token;
+                    std::vector<double> values;
+                    char delimiter = (s.find(',') != std::string::npos) ? ',' : ' ';
+                    while (std::getline(ss, token, delimiter)) {
+                        try {
+                            values.push_back(std::stod(token));
+                        } catch (...) {}
+                    }
+                    if (values.size() >= 8) {
+                        double x = values[2], y = values[3], z = values[4];
+                        double qx = values[5], qy = values[6], qz = values[7];
+                        double qw = values.size() > 8 ? values[8] : 1.0;
+                        Eigen::Quaterniond quat(qw, qx, qy, qz);
+                        quat.normalize();
+                        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+                        T.block<3, 3>(0, 0) = quat.toRotationMatrix();
+                        T(0, 3) = x; T(1, 3) = y; T(2, 3) = z;
+                        poses.push_back(T);
+                    }
                 }
             }
             fPoses.close();

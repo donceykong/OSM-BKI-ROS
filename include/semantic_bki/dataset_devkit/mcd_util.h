@@ -269,6 +269,56 @@ class MCDData {
       
       return true;
     }
+
+    /// Overwrite scan_indices_ with 0,1,2,... so lidar/label files are expected as 0000000000.bin, 0000000001.bin, etc. in pose order.
+    /// Use when the pose file's first column does not match lidar filenames (e.g. cu_north_campus poses.csv has scan # 4,5,6... but lidar is named by timestamp).
+    void apply_pose_index_as_scan_id() {
+      for (size_t i = 0; i < scan_indices_.size(); ++i)
+        scan_indices_[i] = static_cast<int>(i);
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Applied pose index as scan ID: scan_indices_ are now 0.." << (scan_indices_.size() - 1) << " (expect 0000000000.bin, 0000000001.bin, ... in pose order)");
+    }
+
+    /// Read KITTI-360 velodyne_poses.txt format (see scripts/kitti360/visualize_sem_map_KITTI360.py).
+    /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major). Poses are made relative to first pose.
+    bool read_lidar_poses_kitti360(const std::string& pose_path) {
+      std::ifstream f(pose_path);
+      if (!f.is_open()) {
+        RCLCPP_ERROR_STREAM(node_->get_logger(), "Cannot open KITTI360 pose file: " << pose_path);
+        return false;
+      }
+      lidar_poses_.clear();
+      scan_indices_.clear();
+      std::string line;
+      while (std::getline(f, line)) {
+        std::istringstream ss(line);
+        std::vector<double> values;
+        int frame_index = -1;
+        if (!(ss >> frame_index)) continue;
+        double v;
+        while (ss >> v) values.push_back(v);
+        if (values.size() == 12u) {
+          Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+          T.block<3, 4>(0, 0) = Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(values.data());
+          lidar_poses_.push_back(T);
+          scan_indices_.push_back(frame_index);
+        } else if (values.size() == 16u) {
+          Eigen::Matrix4d T = Eigen::Map<Eigen::Matrix<double, 4, 4, Eigen::RowMajor>>(values.data());
+          lidar_poses_.push_back(T);
+          scan_indices_.push_back(frame_index);
+        }
+      }
+      f.close();
+      if (lidar_poses_.empty()) {
+        RCLCPP_ERROR_STREAM(node_->get_logger(), "No valid poses in " << pose_path);
+        return false;
+      }
+      original_first_pose_ = lidar_poses_[0];
+      Eigen::Matrix4d first_inv = lidar_poses_[0].inverse();
+      for (size_t i = 0; i < lidar_poses_.size(); ++i)
+        lidar_poses_[i] = first_inv * lidar_poses_[i];
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << lidar_poses_.size() << " KITTI360 poses from " << pose_path << " (relative to first pose)");
+      return true;
+    }
     
     // Get the original first pose (before transformation to origin)
     // This is needed to align OSM data with the same coordinate frame
@@ -1115,13 +1165,16 @@ class MCDData {
     bool load_calibration_from_params() {
       // Load body-to-lidar transform from ROS parameters
       // Expected path: body/os_sensor/T (from hhs_calib.yaml)
-      // Format: T is a list of 4 lists, each containing 4 doubles
-      
+      // If calibration_file is empty (e.g. KITTI360), use identity (no body-to-lidar transform).
       RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: load_calibration_from_params: Starting");
       try {
-        // First, try to load from calibration_file parameter (YAML file path)
         std::string calib_file;
         if (node_->get_parameter("calibration_file", calib_file)) {
+          if (calib_file.empty()) {
+            body_to_lidar_tf_ = Eigen::Matrix4d::Identity();
+            RCLCPP_INFO_STREAM(node_->get_logger(), "No calibration file (empty); using identity body-to-lidar transform.");
+            return true;
+          }
           RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: Found calibration_file parameter: " << calib_file);
           RCLCPP_INFO_STREAM(node_->get_logger(), "Loading calibration from YAML file: " << calib_file);
           bool result = load_calibration_from_yaml(calib_file);
@@ -1130,14 +1183,12 @@ class MCDData {
         }
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: calibration_file parameter not found");
         
-        // Fallback: try to get body parameter directly from ROS parameters
         if (node_->has_parameter("body")) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "Calibration loading from ROS parameters not fully implemented. Please use calibration_file parameter.");
           return false;
         }
         
         RCLCPP_ERROR_STREAM(node_->get_logger(), "ERROR: 'calibration_file' parameter not found in ROS parameter server!");
-        RCLCPP_ERROR_STREAM(node_->get_logger(), "Make sure calibration_file parameter is set in the launch file pointing to hhs_calib.yaml.");
         return false;
       } catch (const std::exception& e) {
         RCLCPP_ERROR_STREAM(node_->get_logger(), "Error loading calibration: " << e.what());

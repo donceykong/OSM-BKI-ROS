@@ -70,6 +70,11 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("max_range", max_range);
     node->declare_parameter<int>("skip_frames", skip_frames);
     node->declare_parameter<std::string>("dir", dir);
+    node->declare_parameter<std::string>("sequence_name", "");
+    node->declare_parameter<std::string>("input_data_suffix", "");
+    node->declare_parameter<std::string>("input_label_suffix", "");
+    node->declare_parameter<std::string>("lidar_pose_suffix", "");
+    node->declare_parameter<std::string>("gt_label_suffix", "");
     node->declare_parameter<std::string>("input_data_prefix", input_data_prefix);
     node->declare_parameter<std::string>("input_label_prefix", input_label_prefix);
     node->declare_parameter<std::string>("lidar_pose_file", lidar_pose_file);
@@ -102,6 +107,8 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
+    node->declare_parameter<bool>("publish_static_tf", true);
+    node->declare_parameter<bool>("use_pose_index_as_scan_id", false);
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -120,11 +127,24 @@ int main(int argc, char **argv) {
     node->get_parameter<double>("max_range", max_range);
     node->get_parameter<int>("skip_frames", skip_frames);
     node->get_parameter<std::string>("dir", dir);
+    std::string sequence_name, input_data_suffix, input_label_suffix, lidar_pose_suffix, gt_label_suffix;
+    node->get_parameter<std::string>("sequence_name", sequence_name);
+    node->get_parameter<std::string>("input_data_suffix", input_data_suffix);
+    node->get_parameter<std::string>("input_label_suffix", input_label_suffix);
+    node->get_parameter<std::string>("lidar_pose_suffix", lidar_pose_suffix);
+    node->get_parameter<std::string>("gt_label_suffix", gt_label_suffix);
     node->get_parameter<std::string>("input_data_prefix", input_data_prefix);
     node->get_parameter<std::string>("input_label_prefix", input_label_prefix);
     node->get_parameter<std::string>("lidar_pose_file", lidar_pose_file);
     node->get_parameter<std::string>("gt_label_prefix", gt_label_prefix);
     node->get_parameter<std::string>("evaluation_result_prefix", evaluation_result_prefix);
+    // Build paths from sequence_name + suffix when sequence-based config is used
+    if (!sequence_name.empty() && !input_data_suffix.empty()) {
+      input_data_prefix = sequence_name + "/" + input_data_suffix;
+      if (!lidar_pose_suffix.empty()) lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
+      if (!input_label_suffix.empty()) input_label_prefix = sequence_name + "/" + input_label_suffix;
+      if (!gt_label_suffix.empty()) gt_label_prefix = sequence_name + "/" + gt_label_suffix;
+    }
     node->get_parameter<bool>("query", query);
     node->get_parameter<bool>("visualize", visualize);
     
@@ -174,28 +194,29 @@ int main(int argc, char **argv) {
       );
 
     
-    // Publish static transform for "map" frame (required for RViz visualization)
-    // This ensures the map frame exists even before any scans are processed
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: About to publish static transform");
-    try {
-        tf2_ros::StaticTransformBroadcaster static_tf_broadcaster(node);
-        geometry_msgs::msg::TransformStamped static_transform;
-        static_transform.header.stamp = node->now();
-        static_transform.header.frame_id = "map";
-        static_transform.child_frame_id = "odom";  // Common base frame, or use "base_link" if preferred
-        static_transform.transform.translation.x = 0.0;
-        static_transform.transform.translation.y = 0.0;
-        static_transform.transform.translation.z = 0.0;
-        static_transform.transform.rotation.x = 0.0;
-        static_transform.transform.rotation.y = 0.0;
-        static_transform.transform.rotation.z = 0.0;
-        static_transform.transform.rotation.w = 1.0;
-        static_tf_broadcaster.sendTransform(static_transform);
-        RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Static transform published successfully");
-        RCLCPP_INFO(node->get_logger(), "Published static transform: map -> odom (identity)");
-    } catch (const std::exception& e) {
-        RCLCPP_WARN_STREAM(node->get_logger(), "WARNING: Exception publishing static transform: " << e.what());
-        RCLCPP_ERROR_STREAM(node->get_logger(), "Exception publishing static transform: " << e.what());
+    bool publish_static_tf = true;
+    node->get_parameter<bool>("publish_static_tf", publish_static_tf);
+    if (publish_static_tf) {
+        try {
+            tf2_ros::StaticTransformBroadcaster static_tf_broadcaster(node);
+            geometry_msgs::msg::TransformStamped static_transform;
+            static_transform.header.stamp = node->now();
+            static_transform.header.frame_id = "map";
+            static_transform.child_frame_id = "odom";
+            static_transform.transform.translation.x = 0.0;
+            static_transform.transform.translation.y = 0.0;
+            static_transform.transform.translation.z = 0.0;
+            static_transform.transform.rotation.x = 0.0;
+            static_transform.transform.rotation.y = 0.0;
+            static_transform.transform.rotation.z = 0.0;
+            static_transform.transform.rotation.w = 1.0;
+            static_tf_broadcaster.sendTransform(static_transform);
+            RCLCPP_INFO(node->get_logger(), "Published static transform: map -> odom (identity)");
+        } catch (const std::exception& e) {
+            RCLCPP_WARN_STREAM(node->get_logger(), "WARNING: Exception publishing static transform: " << e.what());
+        }
+    } else {
+        RCLCPP_INFO(node->get_logger(), "Skipping static TF (publish_static_tf=false).");
     }
     
     ///////// Build Map /////////////////////
@@ -208,6 +229,10 @@ int main(int argc, char **argv) {
         RCLCPP_WARN_STREAM(node->get_logger(), "WARNING: Failed to read lidar poses!");
         return 1;
     }
+    bool use_pose_index_as_scan_id = false;
+    node->get_parameter<bool>("use_pose_index_as_scan_id", use_pose_index_as_scan_id);
+    if (use_pose_index_as_scan_id)
+        mcd_data.apply_pose_index_as_scan_id();
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Lidar poses read successfully");
     
     // Load body-to-lidar calibration from hhs_calib.yaml (if provided via ROS parameters)
