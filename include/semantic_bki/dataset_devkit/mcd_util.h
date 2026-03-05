@@ -587,6 +587,10 @@ class MCDData {
       if (map_) map_->set_osm_prior_strength(strength);
     }
 
+    void set_osm_height_filter_enabled(bool enabled) {
+      if (map_) map_->set_osm_height_filter_enabled(enabled);
+    }
+
     /// Enable OSM prior map on a separate topic. Priors computed on-the-fly (not stored in octree).
     void set_publish_osm_prior_map(bool enabled, const std::string& topic, semantic_bki::MapColorMode osm_color_mode) {
       publish_osm_prior_map_ = enabled;
@@ -644,6 +648,38 @@ class MCDData {
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
             "Failed to load OSM confusion matrix: " << e.what());
+        return false;
+      }
+    }
+
+    /// Load OSM height confusion matrix (rows=height bins, cols=OSM categories). Optional; used when osm_height_filtering enabled.
+    bool load_osm_height_confusion_matrix(const std::string &yaml_path) {
+      if (!map_) return false;
+      try {
+        YAML::Node root = YAML::LoadFile(yaml_path);
+        if (!root["osm_height_confusion_matrix"]) return false;
+
+        auto cm_node = root["osm_height_confusion_matrix"];
+        static constexpr int N_OSM_COLS = 14;
+        int max_bin = 0;
+        for (auto it = cm_node.begin(); it != cm_node.end(); ++it)
+          max_bin = std::max(max_bin, it->first.as<int>());
+        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(N_OSM_COLS, 0.f));
+        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
+          int bin_idx = it->first.as<int>();
+          if (bin_idx < 1 || bin_idx > max_bin) continue;
+          auto vals = it->second;
+          for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
+            matrix[bin_idx - 1][c] = vals[c].as<float>();
+        }
+        if (matrix.empty()) return false;
+        map_->set_osm_height_confusion_matrix(matrix);
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << N_OSM_COLS << " cols");
+        return true;
+      } catch (const std::exception &e) {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load OSM height confusion matrix: " << e.what());
         return false;
       }
     }

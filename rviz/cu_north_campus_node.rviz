@@ -82,6 +82,13 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /osm_geometries
       Value: true
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 30
+      Name: Axes
+      Radius: 3
+      Reference Frame: lidar
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
@@ -128,25 +135,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 334.7626037597656
+      Distance: 653.7283935546875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -110.95012664794922
-        Y: 44.18918228149414
-        Z: -76.8783950805664
+        X: -63.334503173828125
+        Y: 125.65447998046875
+        Z: -141.19992065429688
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9497969746589661
+      Pitch: 0.6797971725463867
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 1.6440476179122925
+      Yaw: 5.6022419929504395
     Saved: ~
 Window Geometry:
   Displays:
