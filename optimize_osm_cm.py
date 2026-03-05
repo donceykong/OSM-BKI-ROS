@@ -1266,9 +1266,9 @@ def main():
     gt_labels_key = cfg.get("gt_labels_key", "mcd")
     scan_dir = os.path.join(data_dir, cfg.get("input_data_prefix", "kth_day_09/lidar_bin/data"))
     inferred_label_prefix = args.inferred_prefix if args.inferred_prefix else cfg.get(
-        "input_label_prefix", "kth_day_09/inferred_labels/cenet_semkitti/multiclass_confidence_scores"
+        "input_label_prefix", "kth_day_09/inferred_labels/cenet_kitti360/multiclass_confidence_scores"
     )
-    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "semkitti")
+    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "kitti360")
     inferred_use_multiclass = cfg.get("inferred_use_multiclass", True)
     calib_file = os.path.join(data_dir, "hhs_calib.yaml")
     osm_file = os.path.join(data_dir, cfg.get("osm_file", "kth_large.osm"))
