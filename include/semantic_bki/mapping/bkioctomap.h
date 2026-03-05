@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <unordered_map>
 #include <vector>
 #include <pcl/point_cloud.h>
@@ -31,9 +32,12 @@ namespace semantic_bki {
             point3f first;
             float second;
             float weight;
-            GPPointType() : first(), second(0), weight(1.0f) {}
-            GPPointType(const point3f& p, float label, float w = 1.0f)
-                : first(p), second(label), weight(w) {}
+            /// Optional soft (multiclass probability) label for counting sensor model; size = num_class.
+            std::shared_ptr<std::vector<float>> soft_probs;
+            GPPointType() : first(), second(0), weight(1.0f), soft_probs() {}
+            GPPointType(const point3f& p, float label, float w = 1.0f,
+                        std::shared_ptr<std::vector<float>> soft = nullptr)
+                : first(p), second(label), weight(w), soft_probs(std::move(soft)) {}
         };
         typedef std::vector<GPPointType> GPPointCloud;
         typedef RTree<GPPointType *, float, 3, float> MyRTree;
@@ -100,6 +104,13 @@ namespace semantic_bki {
         void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
                                float free_res, float max_range,
                                const std::vector<float> &point_weights);
+
+        /// Weighted + soft labels: when multiclass_probs is non-null and matches cloud size,
+        /// uses counting sensor model with soft counts (train_soft + predict_csm).
+        void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs);
 
         /// Get bounding box of the map.
         void get_bbox(point3f &lim_min, point3f &lim_max) const;
@@ -451,6 +462,12 @@ namespace semantic_bki {
         void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
                                float free_resolution, float max_range, GPPointCloud &xy,
                                const std::vector<float> &point_weights) const;
+
+        /// Weighted + soft labels: like above but attaches mean soft probs per voxel for counting sensor model.
+        void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_resolution, float max_range, GPPointCloud &xy,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs) const;
 
         float resolution;
         float block_size;

@@ -6,18 +6,19 @@
     data_root: ""
 
     # Map information
-    resolution: 0.5
+    resolution: 0.6
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
-    # num_class: number of common taxonomy classes (see labels_common.yaml).
-    # All raw labels are mapped to [0, num_class-1] at ingestion time.
+    ds_resolution: 0.1      # Voxel DS size for pointcloud (before insertion)
+    # num_class: when use_common_taxonomy true = common taxonomy size (13). When false = network n_classes (e.g. 29 for MCD).
     num_class: 13
+    # use_common_taxonomy: false = use network class indices and raw softmax (no mapping). Set num_class = network n_classes.
+    use_common_taxonomy: true
 
     # Information about range-finder data
     scan_num: 50000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 100   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    skip_frames: 25   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
 
     # No static TF (poses already in world frame, like KITTI360).
     publish_static_tf: false
@@ -37,7 +38,7 @@
     gt_label_suffix: inferred_labels/cenet_mcd/multiclass_confidence_scores
 
     evaluation_result_prefix: evaluations/
-    query: false # GT Data not available
+    query: true # GT Data not available
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
@@ -75,7 +76,7 @@
     uncertainty_filter_mode: top_percent
     uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
     uncertainty_min_weight: 0.00     # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
-    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml  # for confusion_matrix mode
+    confusion_matrix_file: confusion_matrix_optimized.yaml  # for confusion_matrix mode
 
     # --------------------------------
     # OSM prior configuration 
@@ -98,7 +99,7 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 3.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------

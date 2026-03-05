@@ -912,11 +912,130 @@ namespace semantic_bki {
         }
     }
 
+    void SemanticBKIOctoMap::get_training_data(const PCLPointCloud &cloud, const point3f &origin,
+                                      float ds_resolution, float free_resolution, float max_range,
+                                      GPPointCloud &xy, const std::vector<float> &point_weights,
+                                      const std::vector<std::vector<float>> *multiclass_probs) const {
+        xy.clear();
+        bool use_soft = (multiclass_probs != nullptr && !multiclass_probs->empty() &&
+                         multiclass_probs->size() == cloud.size());
+        int nc = use_soft ? static_cast<int>((*multiclass_probs)[0].size()) : 0;
+
+        struct VoxelDataSoft {
+            double sx, sy, sz;
+            uint32_t label;
+            float best_w;
+            double w_sum;
+            int count;
+            std::vector<double> prob_sum;
+        };
+
+        float inv_res = (ds_resolution > 0) ? (1.0f / ds_resolution) : 0.0f;
+        auto voxel_key = [inv_res](float x, float y, float z) -> int64_t {
+            int64_t ix = static_cast<int64_t>(std::floor(x * inv_res));
+            int64_t iy = static_cast<int64_t>(std::floor(y * inv_res));
+            int64_t iz = static_cast<int64_t>(std::floor(z * inv_res));
+            return (ix * 73856093) ^ (iy * 19349669) ^ (iz * 83492791);
+        };
+
+        std::unordered_map<int64_t, VoxelDataSoft> voxels;
+        PCLPointCloud frees;
+        frees.height = 1;
+        frees.width = 0;
+
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            point3f p(cloud[i].x, cloud[i].y, cloud[i].z);
+            if (max_range > 0 && (p - origin).norm() > max_range)
+                continue;
+
+            float w = (i < point_weights.size()) ? point_weights[i] : 1.0f;
+
+            if (ds_resolution > 0) {
+                int64_t key = voxel_key(cloud[i].x, cloud[i].y, cloud[i].z);
+                auto it = voxels.find(key);
+                if (it == voxels.end()) {
+                    VoxelDataSoft v;
+                    v.sx = cloud[i].x; v.sy = cloud[i].y; v.sz = cloud[i].z;
+                    v.label = cloud[i].label; v.best_w = w; v.w_sum = w; v.count = 1;
+                    if (use_soft && nc > 0) {
+                        v.prob_sum.resize(static_cast<size_t>(nc), 0.0);
+                        for (int c = 0; c < nc; ++c)
+                            v.prob_sum[static_cast<size_t>(c)] = (*multiclass_probs)[i][static_cast<size_t>(c)];
+                    }
+                    voxels[key] = std::move(v);
+                } else {
+                    auto &v = it->second;
+                    v.sx += cloud[i].x; v.sy += cloud[i].y; v.sz += cloud[i].z;
+                    if (w > v.best_w) { v.label = cloud[i].label; v.best_w = w; }
+                    v.w_sum += w;
+                    v.count++;
+                    if (use_soft && nc > 0 && v.prob_sum.size() == static_cast<size_t>(nc)) {
+                        for (int c = 0; c < nc; ++c)
+                            v.prob_sum[static_cast<size_t>(c)] += (*multiclass_probs)[i][static_cast<size_t>(c)];
+                    }
+                }
+            } else {
+                std::shared_ptr<std::vector<float>> soft;
+                if (use_soft && i < multiclass_probs->size())
+                    soft = std::make_shared<std::vector<float>>((*multiclass_probs)[i]);
+                xy.emplace_back(p, cloud[i].label, w, std::move(soft));
+            }
+
+            PointCloud frees_n;
+            beam_sample(p, origin, frees_n, free_resolution);
+            PCLPointType p_origin;
+            p_origin.x = origin.x(); p_origin.y = origin.y(); p_origin.z = origin.z();
+            p_origin.label = 0;
+            frees.push_back(p_origin);
+            for (auto fp = frees_n.begin(); fp != frees_n.end(); ++fp) {
+                PCLPointType pf;
+                pf.x = fp->x(); pf.y = fp->y(); pf.z = fp->z(); pf.label = 0;
+                frees.push_back(pf);
+                frees.width++;
+            }
+        }
+
+        if (ds_resolution > 0) {
+            for (auto &kv : voxels) {
+                auto &v = kv.second;
+                float cx = static_cast<float>(v.sx / v.count);
+                float cy = static_cast<float>(v.sy / v.count);
+                float cz = static_cast<float>(v.sz / v.count);
+                float avg_w = static_cast<float>(v.w_sum / v.count);
+                std::shared_ptr<std::vector<float>> soft;
+                if (use_soft && v.prob_sum.size() == static_cast<size_t>(nc)) {
+                    soft = std::make_shared<std::vector<float>>(static_cast<size_t>(nc));
+                    for (int c = 0; c < nc; ++c)
+                        (*soft)[static_cast<size_t>(c)] = static_cast<float>(v.prob_sum[static_cast<size_t>(c)] / v.count);
+                }
+                xy.emplace_back(point3f(cx, cy, cz), v.label, avg_w, std::move(soft));
+            }
+        }
+
+        PCLPointCloud sampled_frees;
+        downsample(frees, sampled_frees, ds_resolution);
+        for (auto it = sampled_frees.begin(); it != sampled_frees.end(); ++it) {
+            xy.emplace_back(point3f(it->x, it->y, it->z), 0.0f, 1.0f, nullptr);
+        }
+    }
+
     void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin,
                                       float ds_resolution, float free_res, float max_range,
                                       const std::vector<float> &point_weights) {
+        insert_pointcloud(cloud, origin, ds_resolution, free_res, max_range, point_weights, nullptr);
+    }
+
+    void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin,
+                                      float ds_resolution, float free_res, float max_range,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<std::vector<float>> *multiclass_probs) {
+        bool use_soft = (multiclass_probs != nullptr && !multiclass_probs->empty() &&
+                         multiclass_probs->size() == cloud.size());
         GPPointCloud xy;
-        get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights);
+        if (use_soft)
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights, multiclass_probs);
+        else
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights);
 
         if (xy.size() == 0) return;
 
@@ -933,6 +1052,7 @@ namespace semantic_bki {
             rtree.Insert(p, p, const_cast<GPPointType *>(&*it));
         }
 
+        int nc = SemanticOcTreeNode::num_class;
         vector<BlockHashKey> test_blocks;
         std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
 #ifdef OPENMP
@@ -952,16 +1072,31 @@ namespace semantic_bki {
             if (block_xy.size() < 1) continue;
 
             vector<float> block_x, block_y, block_w;
+            std::vector<std::vector<float>> block_y_soft;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
                 block_w.push_back(it->weight);
+                if (use_soft) {
+                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc))
+                        block_y_soft.push_back(*it->soft_probs);
+                    else {
+                        // Free-space points (soft_probs == nullptr): use zero vector so they do not
+                        // swamp the semantic counts; otherwise class 0 would dominate and all voxels
+                        // would get semantics=0 (e.g. all blue). Hit points with label 0 have soft_probs.
+                        std::vector<float> zero_vec(static_cast<size_t>(nc), 0.f);
+                        block_y_soft.push_back(std::move(zero_vec));
+                    }
+                }
             }
 
-            SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
-            bgk->train(block_x, block_y, block_w);
+            SemanticBKI3f *bgk = new SemanticBKI3f(nc, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
+            if (use_soft && block_y_soft.size() == block_xy.size())
+                bgk->train_soft(block_x, block_y_soft, block_w);
+            else
+                bgk->train(block_x, block_y, block_w);
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -994,7 +1129,10 @@ namespace semantic_bki {
                 auto bgk = bgk_arr.find(*block_it);
                 if (bgk == bgk_arr.end()) continue;
                 vector<vector<float>> ybars;
-                bgk->second->predict(xs, ybars);
+                if (use_soft)
+                    bgk->second->predict_csm(xs, ybars);
+                else
+                    bgk->second->predict(xs, ybars);
                 int j = 0;
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();

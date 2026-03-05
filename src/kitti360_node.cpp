@@ -101,6 +101,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
+    node->declare_parameter<bool>("use_common_taxonomy", true);
 
     node->get_parameter<std::string>("map_topic", map_topic);
     node->get_parameter<int>("block_depth", block_depth);
@@ -166,7 +167,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    {
+    bool use_common_taxonomy = true;
+    node->get_parameter<bool>("use_common_taxonomy", use_common_taxonomy);
+    if (use_common_taxonomy) {
         std::string inferred_labels_key, gt_labels_key;
         node->get_parameter<std::string>("inferred_labels_key", inferred_labels_key);
         node->get_parameter<std::string>("gt_labels_key", gt_labels_key);
@@ -180,6 +183,8 @@ int main(int argc, char **argv) {
             RCLCPP_FATAL_STREAM(node->get_logger(), "Failed to load common label config from " << common_label_path);
             return 1;
         }
+    } else {
+        RCLCPP_INFO(node->get_logger(), "use_common_taxonomy=false: using network class indices (set num_class to network n_classes)");
     }
 
     auto resolve_label_config_path = [&](const std::string& labels_key) -> std::string {

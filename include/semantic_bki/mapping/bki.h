@@ -34,6 +34,7 @@ namespace semantic_bki {
             MatrixYType _y = Eigen::Map<const MatrixYType>(y.data(), y.size(), 1);
             this->y_vec = y;
             this->w_vec.clear();
+            this->y_soft.clear();
             train(_x, _y);
         }
 
@@ -44,6 +45,7 @@ namespace semantic_bki {
             MatrixYType _y = Eigen::Map<const MatrixYType>(y.data(), y.size(), 1);
             this->y_vec = y;
             this->w_vec = w;
+            this->y_soft.clear();
             train(_x, _y);
         }
 
@@ -55,6 +57,38 @@ namespace semantic_bki {
         void train(const MatrixXType &x, const MatrixYType &y) {
             this->x = MatrixXType(x);
             this->y = MatrixYType(y);
+            this->y_soft.clear();
+            trained = true;
+        }
+
+        /// Train with soft (multiclass probability) labels for counting sensor model.
+        /// y_soft is (n_points x nc); when non-empty, predict_csm uses these instead of one-hot from y_vec.
+        void train_soft(const std::vector<T> &x, const std::vector<std::vector<T>> &y_soft) {
+            assert(x.size() % dim == 0);
+            size_t n = x.size() / dim;
+            assert(y_soft.size() == n);
+            for (size_t i = 0; i < n; ++i)
+                assert((int)y_soft[i].size() == nc);
+            MatrixXType _x = Eigen::Map<const MatrixXType>(x.data(), n, dim);
+            this->x = _x;
+            this->y_vec.clear();
+            this->w_vec.clear();
+            this->y_soft = y_soft;
+            trained = true;
+        }
+
+        /// Train with soft labels and per-point weights (soft count = prob * weight).
+        void train_soft(const std::vector<T> &x, const std::vector<std::vector<T>> &y_soft, const std::vector<T> &w) {
+            assert(x.size() % dim == 0);
+            size_t n = x.size() / dim;
+            assert(y_soft.size() == n && w.size() == n);
+            for (size_t i = 0; i < n; ++i)
+                assert((int)y_soft[i].size() == nc);
+            MatrixXType _x = Eigen::Map<const MatrixXType>(x.data(), n, dim);
+            this->x = _x;
+            this->y_vec.clear();
+            this->w_vec = w;
+            this->y_soft = y_soft;
             trained = true;
         }
 
@@ -101,18 +135,20 @@ namespace semantic_bki {
           for (int r = 0; r < _xs.rows(); ++r)
             ybars[r].resize(nc);
 
-            MatrixYType _y_vec = Eigen::Map<const MatrixYType>(y_vec.data(), y_vec.size(), 1);
-            for (int k = 0; k < nc; ++k) {
-              for (int i = 0; i < y_vec.size(); ++i) {
-                if (y_vec[i] == k)
-                  _y_vec(i, 0) = 1;
-                else
-                  _y_vec(i, 0) = 0;
+          bool use_soft = !y_soft.empty();
+          bool has_weights = !w_vec.empty();
+          MatrixYType _y_vec(use_soft ? y_soft.size() : y_vec.size(), 1);
+          for (int k = 0; k < nc; ++k) {
+            if (use_soft) {
+              for (size_t i = 0; i < y_soft.size(); ++i)
+                _y_vec(i, 0) = has_weights ? (y_soft[i][k] * w_vec[i]) : y_soft[i][k];
+            } else {
+              for (size_t i = 0; i < y_vec.size(); ++i) {
+                _y_vec(i, 0) = (y_vec[i] == k) ? static_cast<T>(1) : static_cast<T>(0);
               }
-            
+            }
             MatrixYType _ybar;
             _ybar = (Ks * _y_vec);
-            
             for (int r = 0; r < _ybar.rows(); ++r)
               ybars[r][k] = _ybar(r, 0);
           }
@@ -178,6 +214,7 @@ namespace semantic_bki {
         MatrixYType y;   // temporary storage of training labels
         std::vector<T> y_vec;
         std::vector<T> w_vec;  // per-point weights (empty = all 1.0)
+        std::vector<std::vector<T>> y_soft;  // soft labels (n x nc); when non-empty, predict_csm uses these
 
         bool trained;    // true if bgkinference stored training data
     };

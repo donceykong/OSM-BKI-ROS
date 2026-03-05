@@ -43,6 +43,10 @@ static constexpr int N_COMMON = 13;
 struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
   std::vector<float> variances;
+  /// Per-point probability distribution for soft counting (one row per point).
+  /// If common_label_config_loaded_: size N_COMMON (mapped from network softmax).
+  /// Else: size n_classes (raw network softmax). Set config num_class = n_classes when not using common.
+  std::vector<std::vector<float>> common_probs;
   int n_classes = 0;
 };
 
@@ -762,6 +766,7 @@ class MCDData {
           std::string mc_name = inferred_multiclass_dir_ + "/" + std::string(scan_id_c) + ".bin";
           MulticlassResult mc_result = mcd2pcl_multiclass(scan_name, mc_name);
           cloud = mc_result.cloud;
+          scan_common_probs_ = mc_result.common_probs;
           if (publish_semantic_uncertainty_ && mc_result.n_classes > 1 && !mc_result.variances.empty()) {
             orig_cloud_for_unc = mc_result.cloud;
             orig_variances_copy = mc_result.variances;  // copy: mc_result is destroyed at block end
@@ -825,6 +830,8 @@ class MCDData {
               // Labels are already in common taxonomy after ingestion.
               pcl::PointCloud<pcl::PointXYZL>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZL>);
               filtered->points.reserve(n_pts);
+              std::vector<std::vector<float>> filtered_common_probs;
+              if (!scan_common_probs_.empty()) filtered_common_probs.reserve(n_pts);
               int n_dropped = 0;
 
               for (size_t pi = 0; pi < n_pts; ++pi) {
@@ -833,6 +840,8 @@ class MCDData {
                     ? class_precision_[pred_common] : 1.0f;
                 if (uncertainties[pi] <= precision || pred_common == 0) {
                   filtered->points.push_back(cloud->points[pi]);
+                  if (pi < scan_common_probs_.size())
+                    filtered_common_probs.push_back(scan_common_probs_[pi]);
                 } else {
                   n_dropped++;
                 }
@@ -854,11 +863,13 @@ class MCDData {
               filtered->is_dense = false;
               cloud = filtered;
               scan_point_weights_.clear();
+              scan_common_probs_ = std::move(filtered_common_probs);
             }
           } else {
             scan_point_weights_.clear();
           }
         } else {
+          scan_common_probs_.clear();
           std::string label_name = input_label_dir + "/" + std::string(scan_id_c) + ".bin";
           cloud = mcd2pcl(scan_name, label_name);
         }
@@ -957,7 +968,10 @@ class MCDData {
         origin.z() = transform(2, 3);
         
         try {
-          if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
+          if (!scan_common_probs_.empty() && scan_common_probs_.size() == cloud->points.size()) {
+            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                    scan_point_weights_, &scan_common_probs_);
+          } else if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
             map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
           } else {
             map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
@@ -1429,6 +1443,8 @@ class MCDData {
     int total_points_processed_;
     int total_points_filtered_;
     std::vector<float> scan_point_weights_;
+    /// Per-point common-class probabilities for soft counting (same size as cloud when multiclass + common config).
+    std::vector<std::vector<float>> scan_common_probs_;
 
     pcl::PointCloud<pcl::PointXYZL>::Ptr mcd2pcl(std::string fn, std::string fn_label, bool use_gt_mapping = false) {
       // Open scan file
@@ -1604,7 +1620,9 @@ class MCDData {
       pc->height = 1;
       pc->is_dense = false;
       result.variances.reserve(n_points);
+      result.common_probs.reserve(static_cast<size_t>(n_points));
 
+      std::vector<float> raw_vals(static_cast<size_t>(n_classes));
       for (int i = 0; i < n_points; i++) {
         pcl::PointXYZL point;
         float intensity;
@@ -1618,10 +1636,12 @@ class MCDData {
         // Convert float16 → float32, find argmax, and compute variance
         int best_class = 0;
         float best_val = half_to_float(row_ptr[0]);
+        raw_vals[0] = best_val;
         float sum = best_val;
         float sum_sq = best_val * best_val;
         for (int c = 1; c < n_classes; c++) {
           float v = half_to_float(row_ptr[c]);
+          raw_vals[static_cast<size_t>(c)] = v;
           sum += v;
           sum_sq += v * v;
           if (v > best_val) {
@@ -1634,19 +1654,66 @@ class MCDData {
         if (variance < 0.0f) variance = 0.0f;
         result.variances.push_back(variance);
 
-        // Network class index → raw label (via learning_map_inv) → common class
-        int raw_label = best_class;
-        if (!learning_map_inv_.empty()) {
-          auto it_inv = learning_map_inv_.find(best_class);
-          if (it_inv != learning_map_inv_.end()) raw_label = it_inv->second;
+        // Softmax over network classes (used for both common and native paths)
+        float max_val = raw_vals[0];
+        for (int c = 1; c < n_classes; c++) {
+          if (raw_vals[static_cast<size_t>(c)] > max_val)
+            max_val = raw_vals[static_cast<size_t>(c)];
         }
-        int common_label = raw_label;
+        float softmax_sum = 0.f;
+        std::vector<float> softmax_net(static_cast<size_t>(n_classes));
+        for (int c = 0; c < n_classes; c++) {
+          float v = std::exp(raw_vals[static_cast<size_t>(c)] - max_val);
+          softmax_net[static_cast<size_t>(c)] = v;
+          softmax_sum += v;
+        }
+        if (softmax_sum > 1e-10f) {
+          for (int c = 0; c < n_classes; c++)
+            softmax_net[static_cast<size_t>(c)] /= softmax_sum;
+        }
+
         if (common_label_config_loaded_) {
+          // Map to common taxonomy: point label and soft counts in common space
+          int raw_label = best_class;
+          if (!learning_map_inv_.empty()) {
+            auto it_inv = learning_map_inv_.find(best_class);
+            if (it_inv != learning_map_inv_.end()) raw_label = it_inv->second;
+          }
+          int common_label = raw_label;
           auto it_c = inferred_to_common_.find(raw_label);
           if (it_c != inferred_to_common_.end()) common_label = it_c->second;
           else common_label = 0;
+          point.label = static_cast<uint32_t>(common_label);
+          std::vector<float> common_probs_row(static_cast<size_t>(N_COMMON), 0.f);
+          std::vector<int> common_count(static_cast<size_t>(N_COMMON), 0);
+          for (int k = 0; k < n_classes; k++) {
+            int r = k;
+            if (!learning_map_inv_.empty()) {
+              auto it_inv = learning_map_inv_.find(k);
+              if (it_inv != learning_map_inv_.end()) r = it_inv->second;
+            }
+            it_c = inferred_to_common_.find(r);
+            if (it_c == inferred_to_common_.end()) continue;
+            int c_common = it_c->second;
+            if (c_common >= 0 && c_common < N_COMMON) {
+              common_probs_row[static_cast<size_t>(c_common)] += softmax_net[static_cast<size_t>(k)];
+              common_count[static_cast<size_t>(c_common)] += 1;
+            }
+          }
+          for (int c = 0; c < N_COMMON; ++c) {
+            if (common_count[static_cast<size_t>(c)] > 0)
+              common_probs_row[static_cast<size_t>(c)] /= static_cast<float>(common_count[static_cast<size_t>(c)]);
+          }
+          float row_sum = 0.f;
+          for (int c = 0; c < N_COMMON; ++c) row_sum += common_probs_row[static_cast<size_t>(c)];
+          if (row_sum > 1e-10f)
+            for (int c = 0; c < N_COMMON; ++c) common_probs_row[static_cast<size_t>(c)] /= row_sum;
+          result.common_probs.push_back(std::move(common_probs_row));
+        } else {
+          // No common taxonomy: use network class indices and raw softmax directly
+          point.label = static_cast<uint32_t>(best_class);
+          result.common_probs.push_back(softmax_net);
         }
-        point.label = static_cast<uint32_t>(common_label);
         pc->points.push_back(point);
       }
 

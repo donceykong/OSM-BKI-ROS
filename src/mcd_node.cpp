@@ -110,6 +110,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
     node->declare_parameter<bool>("publish_static_tf", true);
     node->declare_parameter<bool>("use_pose_index_as_scan_id", false);
+    node->declare_parameter<bool>("use_common_taxonomy", true);
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -246,8 +247,12 @@ int main(int argc, char **argv) {
     }
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Calibration loaded successfully");
 
-    // Load common taxonomy label mappings (raw labels → common class indices)
-    {
+    // Load common taxonomy label mappings (raw labels → common class indices).
+    // When use_common_taxonomy is false, skip loading and use network class indices directly;
+    // set num_class in config to the network's number of classes (e.g. 29 for MCD).
+    bool use_common_taxonomy = true;
+    node->get_parameter<bool>("use_common_taxonomy", use_common_taxonomy);
+    if (use_common_taxonomy) {
       std::string inferred_labels_key, gt_labels_key;
       node->get_parameter<std::string>("inferred_labels_key", inferred_labels_key);
       node->get_parameter<std::string>("gt_labels_key", gt_labels_key);
@@ -266,6 +271,8 @@ int main(int argc, char **argv) {
             << ". Cannot proceed without label mappings.");
         return 1;
       }
+    } else {
+      RCLCPP_INFO(node->get_logger(), "use_common_taxonomy=false: using network class indices (set num_class to network n_classes)");
     }
 
     // Multiclass setup: inferred and/or GT can use per-class scores (float16) instead of single uint32 labels.
