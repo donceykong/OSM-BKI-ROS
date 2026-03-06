@@ -10,7 +10,7 @@ and ground-truth labels.
 
 Usage:
     python3 optimize_osm_cm.py [--config CONFIG_YAML] [--output OUTPUT_YAML]
-                               [--max-scans N] [--skip-frames K]
+                               [--data-dir DATA_DIR] [--max-scans N] [--skip-frames K]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
                                [--height-bins N] [--no-height-matrix]
@@ -25,6 +25,9 @@ Usage:
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
+
+    --data-dir DIR        Root directory for dataset (lidar, poses, labels, OSM). If not set,
+                          uses data_root from config; if that is empty, uses <script_dir>/data/<dataset_name>.
 
 Defaults are read from config/methods/mcd.yaml relative to this script.
 """
@@ -1344,11 +1347,13 @@ def main():
     parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data.")
     parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/mcd.yaml"))
     parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized.yaml"))
-    parser.add_argument("--max-scans", type=int, default=200)
-    parser.add_argument("--skip-frames", type=int, default=None)
+    parser.add_argument("--data-dir", type=str, default=None,
+                        help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
+    parser.add_argument("--max-scans", type=int, default=50000)
+    parser.add_argument("--skip-frames", type=int, default=2)
     parser.add_argument("--decay", type=float, default=0.5)
-    parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--grid-res", type=float, default=0.5,
+    parser.add_argument("--tree-radius", type=float, default=3.0)
+    parser.add_argument("--grid-res", type=float, default=0.2,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
@@ -1401,7 +1406,17 @@ def main():
         if cfg.get("input_label_suffix"):
             cfg["input_label_prefix"] = f"{seq}/{cfg['input_label_suffix']}"
 
-    data_dir = os.path.join(SCRIPT_DIR, "data", "mcd")
+    # Data directory: --data-dir override, else data_root from config, else package data/<dataset_name>
+    if args.data_dir is not None and args.data_dir.strip():
+        data_dir = os.path.abspath(args.data_dir.strip())
+    else:
+        data_root = (cfg.get("data_root") or "").strip()
+        dataset_name = cfg.get("dataset_name", "mcd")
+        if data_root:
+            data_dir = os.path.join(data_root, dataset_name)
+        else:
+            data_dir = os.path.join(SCRIPT_DIR, "data", dataset_name)
+    print(f"Using data directory: {data_dir}")
     pose_file = os.path.join(data_dir, cfg["lidar_pose_file"])
     gt_label_dir = os.path.join(data_dir, cfg.get("gt_label_prefix", "kth_day_09/gt_labels"))
     gt_labels_key = cfg.get("gt_labels_key", "mcd")

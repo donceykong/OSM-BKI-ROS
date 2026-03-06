@@ -173,12 +173,9 @@ int main(int argc, char **argv) {
         std::string inferred_labels_key, gt_labels_key;
         node->get_parameter<std::string>("inferred_labels_key", inferred_labels_key);
         node->get_parameter<std::string>("gt_labels_key", gt_labels_key);
-        std::string common_label_path;
-        size_t dp = dir.rfind("/data/");
-        if (dp != std::string::npos)
-            common_label_path = dir.substr(0, dp) + "/config/datasets/labels_common.yaml";
-        else
-            common_label_path = ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/labels_common.yaml";
+        // Config always from package root (config/datasets/)
+        std::string common_label_path =
+            ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/labels_common.yaml";
         if (!mcd_data.load_common_label_config(common_label_path, inferred_labels_key, gt_labels_key)) {
             RCLCPP_FATAL_STREAM(node->get_logger(), "Failed to load common label config from " << common_label_path);
             return 1;
@@ -187,12 +184,11 @@ int main(int argc, char **argv) {
         RCLCPP_INFO(node->get_logger(), "use_common_taxonomy=false: using network class indices (set num_class to network n_classes)");
     }
 
+    const std::string pkg_config_datasets =
+        ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/";
     auto resolve_label_config_path = [&](const std::string& labels_key) -> std::string {
         std::string f = (labels_key == "mcd") ? "labels_mcd.yaml" : (labels_key == "kitti360") ? "labels_kitti360.yaml" : "labels_semkitti.yaml";
-        size_t dp = dir.rfind("/data/");
-        if (dp != std::string::npos)
-            return dir.substr(0, dp) + "/config/datasets/" + f;
-        return ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/" + f;
+        return pkg_config_datasets + f;
     };
 
     bool inferred_use_multiclass = false, gt_use_multiclass = false;
@@ -218,8 +214,7 @@ int main(int argc, char **argv) {
         mcd_data.set_uncertainty_filter(use_uncertainty_filter, inferred_labels_key_val, uncertainty_filter_mode,
                                         static_cast<float>(uncertainty_drop_percent), static_cast<float>(uncertainty_min_weight));
         if (use_uncertainty_filter && !confusion_matrix_file.empty()) {
-            size_t dp = dir.rfind("/data/");
-            std::string cm_path = (dp != std::string::npos) ? dir.substr(0, dp) + "/config/datasets/" + confusion_matrix_file : confusion_matrix_file;
+            std::string cm_path = pkg_config_datasets + confusion_matrix_file;
             if (!mcd_data.load_confusion_matrix(cm_path)) {
                 RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load confusion matrix.");
             }
@@ -234,12 +229,7 @@ int main(int argc, char **argv) {
     }
 
     if (!colors_file.empty()) {
-        std::string colors_file_path;
-        size_t dp = dir.rfind("/data/");
-        if (dp != std::string::npos)
-            colors_file_path = dir.substr(0, dp) + "/config/datasets/" + colors_file;
-        else
-            colors_file_path = ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/" + colors_file;
+        std::string colors_file_path = pkg_config_datasets + colors_file;
         if (!mcd_data.load_colors_from_yaml(colors_file_path)) {
             RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load colors from " << colors_file_path);
         }
@@ -314,12 +304,7 @@ int main(int argc, char **argv) {
         else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = semantic_bki::MapColorMode::OSMFence;
         mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
         if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
-            std::string cm_path;
-            size_t data_pos = dir.rfind("/data/");
-            if (data_pos != std::string::npos)
-                cm_path = dir.substr(0, data_pos) + "/config/datasets/" + osm_cm_file;
-            else
-                cm_path = osm_cm_file;
+            std::string cm_path = pkg_config_datasets + osm_cm_file;
             if (mcd_data.load_osm_confusion_matrix(cm_path)) {
                 RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM confusion matrix from " << cm_path);
             } else {
