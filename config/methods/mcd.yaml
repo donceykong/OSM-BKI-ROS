@@ -29,7 +29,7 @@
     input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_height_strength_1_5/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_height_new_optimized2/
     query: true
     visualize: true
 
@@ -74,7 +74,7 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 5.0
+    osm_decay_meters: 2.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
@@ -91,7 +91,7 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 1.5  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------
