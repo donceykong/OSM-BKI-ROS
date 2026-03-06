@@ -6,10 +6,10 @@
     data_root: ""
 
     # Map information
-    resolution: 1.0
+    resolution: 0.5
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 1.0      # Voxel DS size for pointcloud (before insertion)
+    ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
     num_class: 13
@@ -17,7 +17,7 @@
     # Information about range-finder data
     scan_num: 10000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 50   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    skip_frames: 25   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
@@ -29,7 +29,7 @@
     input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_k360_02/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_height_strength_1_5/
     query: true
     visualize: true
 
@@ -91,8 +91,8 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 0.0  # fraction of OSM influence per observation (0.0 = disabled)
-    osm_height_filtering: false  # use height-based filtering for OSM priors
+    osm_prior_strength: 1.5  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch

@@ -1346,9 +1346,9 @@ def main():
     parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized.yaml"))
     parser.add_argument("--max-scans", type=int, default=200)
     parser.add_argument("--skip-frames", type=int, default=None)
-    parser.add_argument("--decay", type=float, default=3.0)
+    parser.add_argument("--decay", type=float, default=0.5)
     parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--grid-res", type=float, default=2.0,
+    parser.add_argument("--grid-res", type=float, default=0.5,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
