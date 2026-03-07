@@ -562,6 +562,30 @@ class MCDData {
       if (map_) map_->set_osm_tree_point_radius(radius_m);
     }
 
+    void set_osm_road_width(float width_m) {
+      if (map_) map_->set_osm_road_width(width_m);
+    }
+
+    void set_osm_sidewalk_width(float width_m) {
+      if (map_) map_->set_osm_sidewalk_width(width_m);
+    }
+
+    void set_osm_cycleway_width(float width_m) {
+      if (map_) map_->set_osm_cycleway_width(width_m);
+    }
+
+    void set_osm_fence_width(float width_m) {
+      if (map_) map_->set_osm_fence_width(width_m);
+    }
+
+    void set_osm_wall_width(float width_m) {
+      if (map_) map_->set_osm_wall_width(width_m);
+    }
+
+    void set_osm_pole_point_radius(float radius_m) {
+      if (map_) map_->set_osm_pole_point_radius(radius_m);
+    }
+
     void set_osm_parking(const std::vector<semantic_bki::Geometry2D> &parking) {
       if (map_) map_->set_osm_parking(parking);
     }
@@ -602,6 +626,55 @@ class MCDData {
       if (enabled && !osm_prior_map_pub_) {
         osm_prior_map_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
         RCLCPP_INFO_STREAM(node_->get_logger(), "OSM prior map visualization enabled on topic: " << topic);
+      }
+    }
+
+    /// Load optional geometry parameters used by OSM priors/visualization.
+    /// Expected node:
+    ///   osm_geometry_parameters:
+    ///     road_width_meters: ...
+    ///     sidewalk_width_meters: ...
+    ///     cycleway_width_meters: ...
+    ///     fence_width_meters: ...
+    ///     wall_width_meters: ...
+    ///     stairs_width_meters: ...
+    ///     tree_point_radius_meters: ...
+    ///     pole_point_radius_meters: ...
+    ///     osm_decay_meters: ...
+    bool load_osm_geometry_parameters(const std::string &yaml_path) {
+      if (!map_) return false;
+      try {
+        YAML::Node root = YAML::LoadFile(yaml_path);
+        if (!root["osm_geometry_parameters"]) return false;
+
+        auto p = root["osm_geometry_parameters"];
+        bool loaded_any = false;
+        auto load_float = [&](const char *key, auto setter) {
+          if (p[key]) {
+            setter(p[key].as<float>());
+            loaded_any = true;
+          }
+        };
+
+        load_float("road_width_meters", [&](float v) { map_->set_osm_road_width(v); });
+        load_float("sidewalk_width_meters", [&](float v) { map_->set_osm_sidewalk_width(v); });
+        load_float("cycleway_width_meters", [&](float v) { map_->set_osm_cycleway_width(v); });
+        load_float("fence_width_meters", [&](float v) { map_->set_osm_fence_width(v); });
+        load_float("wall_width_meters", [&](float v) { map_->set_osm_wall_width(v); });
+        load_float("stairs_width_meters", [&](float v) { map_->set_osm_stairs_width(v); });
+        load_float("tree_point_radius_meters", [&](float v) { map_->set_osm_tree_point_radius(v); });
+        load_float("pole_point_radius_meters", [&](float v) { map_->set_osm_pole_point_radius(v); });
+        load_float("osm_decay_meters", [&](float v) { map_->set_osm_decay_meters(v); });
+
+        if (loaded_any) {
+          RCLCPP_INFO_STREAM(node_->get_logger(),
+              "Loaded OSM geometry parameters from " << yaml_path);
+        }
+        return loaded_any;
+      } catch (const std::exception &e) {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load OSM geometry parameters: " << e.what());
+        return false;
       }
     }
 

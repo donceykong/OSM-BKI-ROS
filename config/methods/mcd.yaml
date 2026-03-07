@@ -29,9 +29,9 @@
     input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_new_conf/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_square_new_conf/
     query: true
-    visualize: false
+    visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
@@ -74,14 +74,11 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 5.0
+    osm_decay_meters: 4.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
     osm_origin_lon: 18.072069652
-
-    # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
-    osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
 
     # OSM confusion matrix: semantic-OSM prior fusion.
     # Adds OSM-based bias to every BKI observation, maintaining constant influence.
@@ -90,7 +87,7 @@
     #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
-    osm_confusion_matrix_file: osm_confusion_matrix_optimized_no_none.yaml
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
     osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
@@ -101,5 +98,3 @@
     pose_format: mcd
     publish_rate: 1.0
     topic: /osm_geometries
-    tree_point_radius_meters: 6.0
-    stairs_width_meters: 20.0

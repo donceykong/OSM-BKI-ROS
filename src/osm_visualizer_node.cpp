@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 #include <Eigen/Dense>
+#include <yaml-cpp/yaml.h>
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
@@ -23,6 +24,14 @@ int main(int argc, char** argv) {
     node->declare_parameter<std::string>("topic", "/osm_geometries");
     node->declare_parameter<double>("tree_point_radius_meters", 5.0);
     node->declare_parameter<double>("stairs_width_meters", 1.5);
+    node->declare_parameter<double>("road_width_meters", 6.0);
+    node->declare_parameter<double>("sidewalk_width_meters", 2.0);
+    node->declare_parameter<double>("cycleway_width_meters", 2.0);
+    node->declare_parameter<double>("fence_width_meters", 0.6);
+    node->declare_parameter<double>("wall_width_meters", 0.8);
+    node->declare_parameter<double>("pole_point_radius_meters", 2.0);
+    node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
+    node->declare_parameter<std::string>("config_datasets_dir", "");
     node->declare_parameter<std::string>("lidar_pose_file", "");
     node->declare_parameter<std::string>("sequence_name", "");
     node->declare_parameter<std::string>("lidar_pose_suffix", "");
@@ -36,6 +45,13 @@ int main(int argc, char** argv) {
     std::string topic;
     double tree_point_radius_meters;
     double stairs_width_meters;
+    double road_width_meters;
+    double sidewalk_width_meters;
+    double cycleway_width_meters;
+    double fence_width_meters;
+    double wall_width_meters;
+    double pole_point_radius_meters;
+    std::string osm_confusion_matrix_file;
     std::string lidar_pose_file;
     std::string sequence_name;
     std::string lidar_pose_suffix;
@@ -47,6 +63,15 @@ int main(int argc, char** argv) {
     node->get_parameter("topic", topic);
     node->get_parameter("tree_point_radius_meters", tree_point_radius_meters);
     node->get_parameter("stairs_width_meters", stairs_width_meters);
+    node->get_parameter("road_width_meters", road_width_meters);
+    node->get_parameter("sidewalk_width_meters", sidewalk_width_meters);
+    node->get_parameter("cycleway_width_meters", cycleway_width_meters);
+    node->get_parameter("fence_width_meters", fence_width_meters);
+    node->get_parameter("wall_width_meters", wall_width_meters);
+    node->get_parameter("pole_point_radius_meters", pole_point_radius_meters);
+    node->get_parameter("osm_confusion_matrix_file", osm_confusion_matrix_file);
+    std::string config_datasets_dir;
+    node->get_parameter("config_datasets_dir", config_datasets_dir);
     std::string pose_format;
     node->get_parameter("lidar_pose_file", lidar_pose_file);
     node->get_parameter("sequence_name", sequence_name);
@@ -88,7 +113,42 @@ int main(int argc, char** argv) {
 
     semantic_bki::OSMVisualizer visualizer(node, topic);
     visualizer.setTreePointRadius(static_cast<float>(tree_point_radius_meters));
+    visualizer.setPolePointRadius(static_cast<float>(pole_point_radius_meters));
+    visualizer.setRoadWidth(static_cast<float>(road_width_meters));
+    visualizer.setSidewalkWidth(static_cast<float>(sidewalk_width_meters));
+    visualizer.setCyclewayWidth(static_cast<float>(cycleway_width_meters));
+    visualizer.setFenceWidth(static_cast<float>(fence_width_meters));
+    visualizer.setWallWidth(static_cast<float>(wall_width_meters));
     visualizer.setStairsWidth(static_cast<float>(stairs_width_meters));
+
+    if (!osm_confusion_matrix_file.empty()) {
+        try {
+            std::string cm_path = osm_confusion_matrix_file;
+            if (osm_confusion_matrix_file[0] != '/') {
+                if (!config_datasets_dir.empty()) {
+                    cm_path = config_datasets_dir + (config_datasets_dir.back() == '/' ? "" : "/") + osm_confusion_matrix_file;
+                } else {
+                    std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");
+                    cm_path = pkg_share + "/config/datasets/" + osm_confusion_matrix_file;
+                }
+            }
+            YAML::Node root = YAML::LoadFile(cm_path);
+            if (root["osm_geometry_parameters"]) {
+                auto p = root["osm_geometry_parameters"];
+                if (p["tree_point_radius_meters"]) visualizer.setTreePointRadius(p["tree_point_radius_meters"].as<float>());
+                if (p["pole_point_radius_meters"]) visualizer.setPolePointRadius(p["pole_point_radius_meters"].as<float>());
+                if (p["road_width_meters"]) visualizer.setRoadWidth(p["road_width_meters"].as<float>());
+                if (p["sidewalk_width_meters"]) visualizer.setSidewalkWidth(p["sidewalk_width_meters"].as<float>());
+                if (p["cycleway_width_meters"]) visualizer.setCyclewayWidth(p["cycleway_width_meters"].as<float>());
+                if (p["fence_width_meters"]) visualizer.setFenceWidth(p["fence_width_meters"].as<float>());
+                if (p["wall_width_meters"]) visualizer.setWallWidth(p["wall_width_meters"].as<float>());
+                if (p["stairs_width_meters"]) visualizer.setStairsWidth(p["stairs_width_meters"].as<float>());
+                RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometry parameters from " << cm_path);
+            }
+        } catch (const std::exception& e) {
+            RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM geometry parameters: " << e.what());
+        }
+    }
     if (!visualizer.loadFromOSM(full_path, osm_origin_lat, osm_origin_lon)) {
         RCLCPP_ERROR(node->get_logger(), "Failed to load OSM file.");
         return 1;

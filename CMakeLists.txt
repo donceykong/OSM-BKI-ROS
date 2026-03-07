@@ -194,10 +194,12 @@ ament_target_dependencies(osm_visualizer_node
   std_msgs
   ament_index_cpp
   OpenCV
+  yaml-cpp
 )
 
 target_link_libraries(osm_visualizer_node
   ${OpenCV_LIBRARIES}
+  yaml-cpp
   expat
   bz2
   z

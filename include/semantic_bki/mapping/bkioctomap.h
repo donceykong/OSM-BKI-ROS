@@ -364,6 +364,12 @@ namespace semantic_bki {
         void set_osm_stairs(const std::vector<Geometry2D> &stairs);
         void set_osm_water(const std::vector<Geometry2D> &water);
         void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points);
+        void set_osm_road_width(float width_m);
+        void set_osm_sidewalk_width(float width_m);
+        void set_osm_cycleway_width(float width_m);
+        void set_osm_fence_width(float width_m);
+        void set_osm_wall_width(float width_m);
+        void set_osm_pole_point_radius(float radius_m);
         void set_osm_stairs_width(float width_m);
         void set_osm_decay_meters(float decay_m);
 
@@ -491,6 +497,11 @@ namespace semantic_bki {
         std::vector<Geometry2D> osm_water_;
         std::vector<std::pair<float, float>> osm_pole_points_;
         float osm_pole_point_radius_{2.0f};  // Radius (m) for pole/traffic-sign points
+        float osm_road_width_{6.0f};         // Width (m) for road polyline bands
+        float osm_sidewalk_width_{2.0f};     // Width (m) for sidewalk polyline bands
+        float osm_cycleway_width_{2.0f};     // Width (m) for cycleway polyline bands
+        float osm_fence_width_{0.6f};        // Width (m) for fence polyline bands
+        float osm_wall_width_{0.8f};         // Width (m) for wall polyline bands
         float osm_stairs_width_{1.5f};  // Width (m) for stairs polylines; prior = 1 inside width band, decays outside
         float osm_decay_meters_;
 

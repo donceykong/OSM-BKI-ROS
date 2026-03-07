@@ -47,6 +47,46 @@ namespace {
         }
     }
 
+    /// Add a rectangle outline for each segment of a polyline (width band rendering).
+    void addPolylineBandOutlineToMarker(const std::vector<std::pair<float, float>>& coords,
+                                        float width_m,
+                                        visualization_msgs::msg::Marker& marker) {
+        if (coords.size() < 2) return;
+        const float hw = std::max(0.1f, width_m) * 0.5f;
+        const float eps = 1e-6f;
+
+        auto addLine = [&](float ax, float ay, float bx, float by) {
+            geometry_msgs::msg::Point p1, p2;
+            p1.x = ax; p1.y = ay; p1.z = 0.0;
+            p2.x = bx; p2.y = by; p2.z = 0.0;
+            marker.points.push_back(p1);
+            marker.points.push_back(p2);
+        };
+
+        for (size_t i = 0; i + 1 < coords.size(); ++i) {
+            float x1 = coords[i].first;
+            float y1 = coords[i].second;
+            float x2 = coords[i + 1].first;
+            float y2 = coords[i + 1].second;
+            float dx = x2 - x1;
+            float dy = y2 - y1;
+            float L = std::sqrt(dx * dx + dy * dy);
+            if (L < eps) continue;
+            float nx = -dy / L;
+            float ny = dx / L;
+
+            float c1x = x1 + hw * nx, c1y = y1 + hw * ny;
+            float c2x = x1 - hw * nx, c2y = y1 - hw * ny;
+            float c3x = x2 - hw * nx, c3y = y2 - hw * ny;
+            float c4x = x2 + hw * nx, c4y = y2 + hw * ny;
+
+            addLine(c1x, c1y, c2x, c2y);
+            addLine(c2x, c2y, c3x, c3y);
+            addLine(c3x, c3y, c4x, c4y);
+            addLine(c4x, c4y, c1x, c1y);
+        }
+    }
+
     // Handler class for extracting buildings, roads, sidewalks, cycleways, walls, water, pole points, etc. from OSM
     class OSMGeometryHandler : public osmium::handler::Handler {
     public:
@@ -336,15 +376,15 @@ namespace {
                 }
             }
 
-            // Check for leisure=park, leisure=garden (multipolygons) -> grasslands
-            const char* leisure_tag = area.tags()["leisure"];
-            if (leisure_tag) {
-                std::string leisure(leisure_tag);
-                if (leisure == "park" || leisure == "garden") {
-                    push_area_with_holes(area, grasslands_);
-                    return;
-                }
-            }
+            // // Check for leisure=park, leisure=garden (multipolygons) -> grasslands
+            // const char* leisure_tag = area.tags()["leisure"];
+            // if (leisure_tag) {
+            //     std::string leisure(leisure_tag);
+            //     if (leisure == "park" || leisure == "garden") {
+            //         push_area_with_holes(area, grasslands_);
+            //         return;
+            //     }
+            // }
 
             // Check for water (natural=water multipolygons)
             const char* natural_tag = area.tags()["natural"];
@@ -571,7 +611,7 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST; // Use LINE_LIST for road polylines
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.3; // Line width in meters (thinner than buildings)
+        marker.scale.x = 0.15; // Outline stroke width (polygon band width handled geometrically)
         marker.color.r = 1.0;
         marker.color.g = 0.0;
         marker.color.b = 0.0;
@@ -594,21 +634,7 @@ namespace semantic_bki {
                 continue;
             }
             
-            // Draw polyline by connecting consecutive points
-            for (size_t i = 0; i < road.coords.size() - 1; ++i) {
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = road.coords[i].first;
-                p1.y = road.coords[i].second;
-                p1.z = 0.0;
-                
-                p2.x = road.coords[i + 1].first;
-                p2.y = road.coords[i + 1].second;
-                p2.z = 0.0;
-                
-                // Add line segment: p1 -> p2
-                marker.points.push_back(p1);
-                marker.points.push_back(p2);
-            }
+            addPolylineBandOutlineToMarker(road.coords, road_width_meters_, marker);
         }
 
         return marker;
@@ -623,7 +649,7 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST;
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.25;
+        marker.scale.x = 0.12;
         marker.color.r = 0.0f;
         marker.color.g = 1.0f;
         marker.color.b = 1.0f;
@@ -640,17 +666,7 @@ namespace semantic_bki {
                 }
             }
             if (has_invalid) continue;
-            for (size_t i = 0; i < sidewalk.coords.size() - 1; ++i) {
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = sidewalk.coords[i].first;
-                p1.y = sidewalk.coords[i].second;
-                p1.z = 0.0;
-                p2.x = sidewalk.coords[i + 1].first;
-                p2.y = sidewalk.coords[i + 1].second;
-                p2.z = 0.0;
-                marker.points.push_back(p1);
-                marker.points.push_back(p2);
-            }
+            addPolylineBandOutlineToMarker(sidewalk.coords, sidewalk_width_meters_, marker);
         }
         return marker;
     }
@@ -705,7 +721,7 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST;
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.2;
+        marker.scale.x = 0.12;
         marker.color.r = 0.5f;
         marker.color.g = 0.45f;
         marker.color.b = 0.4f;
@@ -722,17 +738,7 @@ namespace semantic_bki {
                 }
             }
             if (has_invalid) continue;
-            for (size_t i = 0; i < fence.coords.size() - 1; ++i) {
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = fence.coords[i].first;
-                p1.y = fence.coords[i].second;
-                p1.z = 0.0;
-                p2.x = fence.coords[i + 1].first;
-                p2.y = fence.coords[i + 1].second;
-                p2.z = 0.0;
-                marker.points.push_back(p1);
-                marker.points.push_back(p2);
-            }
+            addPolylineBandOutlineToMarker(fence.coords, fence_width_meters_, marker);
         }
         return marker;
     }
@@ -746,14 +752,11 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST;
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.25;
+        marker.scale.x = 0.12;
         marker.color.r = 0.6f;
         marker.color.g = 0.4f;
         marker.color.b = 0.2f;
         marker.color.a = 1.0f;  // Brown/tan for stairs
-
-        const float hw = stairs_width_meters_ * 0.5f;
-        const float eps = 1e-6f;
 
         for (const auto& stair : stairs) {
             if (stair.coords.size() < 2) continue;
@@ -766,34 +769,7 @@ namespace semantic_bki {
                 }
             }
             if (has_invalid) continue;
-
-            for (size_t i = 0; i < stair.coords.size() - 1; ++i) {
-                float x1 = stair.coords[i].first;
-                float y1 = stair.coords[i].second;
-                float x2 = stair.coords[i + 1].first;
-                float y2 = stair.coords[i + 1].second;
-                float dx = x2 - x1;
-                float dy = y2 - y1;
-                float L = std::sqrt(dx * dx + dy * dy);
-                if (L < eps) continue;
-                float nx = -dy / L;
-                float ny = dx / L;
-                float c1x = x1 + hw * nx, c1y = y1 + hw * ny;
-                float c2x = x1 - hw * nx, c2y = y1 - hw * ny;
-                float c3x = x2 - hw * nx, c3y = y2 - hw * ny;
-                float c4x = x2 + hw * nx, c4y = y2 + hw * ny;
-                auto addLine = [&marker](float ax, float ay, float bx, float by) {
-                    geometry_msgs::msg::Point p1, p2;
-                    p1.x = ax; p1.y = ay; p1.z = 0.0;
-                    p2.x = bx; p2.y = by; p2.z = 0.0;
-                    marker.points.push_back(p1);
-                    marker.points.push_back(p2);
-                };
-                addLine(c1x, c1y, c2x, c2y);
-                addLine(c2x, c2y, c3x, c3y);
-                addLine(c3x, c3y, c4x, c4y);
-                addLine(c4x, c4y, c1x, c1y);
-            }
+            addPolylineBandOutlineToMarker(stair.coords, stairs_width_meters_, marker);
         }
         return marker;
     }
@@ -988,16 +964,11 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST;
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.2;
+        marker.scale.x = 0.12;
         marker.color.r = 0.0f; marker.color.g = 0.5f; marker.color.b = 1.0f; marker.color.a = 1.0f;
         for (const auto& cw : cycleways) {
             if (cw.coords.size() < 2) continue;
-            for (size_t i = 0; i < cw.coords.size() - 1; ++i) {
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = cw.coords[i].first; p1.y = cw.coords[i].second; p1.z = 0.0;
-                p2.x = cw.coords[i + 1].first; p2.y = cw.coords[i + 1].second; p2.z = 0.0;
-                marker.points.push_back(p1); marker.points.push_back(p2);
-            }
+            addPolylineBandOutlineToMarker(cw.coords, cycleway_width_meters_, marker);
         }
         return marker;
     }
@@ -1011,16 +982,11 @@ namespace semantic_bki {
         marker.type = visualization_msgs::msg::Marker::LINE_LIST;
         marker.action = visualization_msgs::msg::Marker::ADD;
         marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.3;
+        marker.scale.x = 0.12;
         marker.color.r = 0.5f; marker.color.g = 0.5f; marker.color.b = 0.5f; marker.color.a = 1.0f;
         for (const auto& w : walls) {
             if (w.coords.size() < 2) continue;
-            for (size_t i = 0; i < w.coords.size() - 1; ++i) {
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = w.coords[i].first; p1.y = w.coords[i].second; p1.z = 0.0;
-                p2.x = w.coords[i + 1].first; p2.y = w.coords[i + 1].second; p2.z = 0.0;
-                marker.points.push_back(p1); marker.points.push_back(p2);
-            }
+            addPolylineBandOutlineToMarker(w.coords, wall_width_meters_, marker);
         }
         return marker;
     }
@@ -1053,7 +1019,7 @@ namespace semantic_bki {
         marker.pose.orientation.w = 1.0;
         marker.scale.x = 0.2;
         marker.color.r = 0.8f; marker.color.g = 0.4f; marker.color.b = 0.0f; marker.color.a = 1.0f;
-        const float r = 2.0f;  // radius for pole circles (matches bkioctomap default)
+        const float r = pole_point_radius_meters_;
         const int circle_segments = 16;
         for (const auto& pt : pole_points_) {
             if (std::isnan(pt.first) || std::isnan(pt.second) || std::isinf(pt.first) || std::isinf(pt.second)) continue;

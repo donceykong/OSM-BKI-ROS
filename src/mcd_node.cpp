@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("uncertainty_filter_mode", "confusion_matrix");
     node->declare_parameter<double>("uncertainty_drop_percent", 10.0);
     node->declare_parameter<double>("uncertainty_min_weight", 0.1);
+    node->declare_parameter<std::string>("config_datasets_dir", "");
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
     node->declare_parameter<bool>("osm_height_filtering", false);
@@ -153,6 +154,9 @@ int main(int argc, char **argv) {
     // Color configuration
     std::string colors_file;
     node->get_parameter<std::string>("colors_file", colors_file);
+
+    std::string config_datasets_dir;
+    node->get_parameter<std::string>("config_datasets_dir", config_datasets_dir);
     
     // Calibration file
     std::string calibration_file;
@@ -252,14 +256,21 @@ int main(int argc, char **argv) {
     // set num_class in config to the network's number of classes (e.g. 29 for MCD).
     bool use_common_taxonomy = true;
     node->get_parameter<bool>("use_common_taxonomy", use_common_taxonomy);
+    // Prefer config from source (config_datasets_dir); else use install share
+    std::string pkg_config_datasets;
+    if (!config_datasets_dir.empty()) {
+      pkg_config_datasets = config_datasets_dir;
+      if (pkg_config_datasets.back() != '/') pkg_config_datasets += '/';
+    } else {
+      pkg_config_datasets = ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/";
+    }
+
     if (use_common_taxonomy) {
       std::string inferred_labels_key, gt_labels_key;
       node->get_parameter<std::string>("inferred_labels_key", inferred_labels_key);
       node->get_parameter<std::string>("gt_labels_key", gt_labels_key);
 
-      // Config always from package root (config/datasets/)
-      std::string common_label_path =
-          ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/labels_common.yaml";
+      std::string common_label_path = pkg_config_datasets + "labels_common.yaml";
       if (!mcd_data.load_common_label_config(common_label_path, inferred_labels_key, gt_labels_key)) {
         RCLCPP_FATAL_STREAM(node->get_logger(),
             "Failed to load common label config from " << common_label_path
@@ -272,8 +283,6 @@ int main(int argc, char **argv) {
 
     // Multiclass setup: inferred and/or GT can use per-class scores (float16) instead of single uint32 labels.
     // learning_map_inv is inferred from inferred_labels_key / gt_labels_key (labels_semkitti.yaml, labels_mcd.yaml, or labels_kitti360.yaml).
-    const std::string pkg_config_datasets =
-        ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/";
     auto resolve_label_config_path = [&](const std::string& labels_key) -> std::string {
       std::string f;
       if (labels_key == "mcd")
@@ -376,6 +385,12 @@ int main(int argc, char **argv) {
         mcd_data.set_osm_stairs(osm_vis.getStairs());
         mcd_data.set_osm_water(osm_vis.getWater());
         mcd_data.set_osm_pole_points(osm_vis.getPolePoints());
+        mcd_data.set_osm_road_width(osm_vis.getRoadWidth());
+        mcd_data.set_osm_sidewalk_width(osm_vis.getSidewalkWidth());
+        mcd_data.set_osm_cycleway_width(osm_vis.getCyclewayWidth());
+        mcd_data.set_osm_fence_width(osm_vis.getFenceWidth());
+        mcd_data.set_osm_wall_width(osm_vis.getWallWidth());
+        mcd_data.set_osm_pole_point_radius(osm_vis.getPolePointRadius());
         mcd_data.set_osm_stairs_width(osm_vis.getStairsWidth());
         RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: "
             << osm_vis.getBuildings().size() << " buildings, " << osm_vis.getRoads().size() << " roads, "
@@ -434,6 +449,10 @@ int main(int argc, char **argv) {
         osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
       }
       mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
+      if (!osm_cm_file.empty()) {
+        std::string cm_path = pkg_config_datasets + osm_cm_file;
+        mcd_data.load_osm_geometry_parameters(cm_path);
+      }
       if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
         std::string cm_path = pkg_config_datasets + osm_cm_file;
         if (mcd_data.load_osm_confusion_matrix(cm_path)) {

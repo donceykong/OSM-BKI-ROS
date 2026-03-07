@@ -88,9 +88,6 @@
     osm_origin_lat: 40.0086875500
     osm_origin_lon: -105.2716580000
 
-    # Tree points (natural=tree nodes): prior projected as 2D circles with this radius (meters). Same as osm_visualizer tree_point_radius_meters.
-    osm_tree_point_radius_meters: 4.0 # m, 9.84 ft
-
     # OSM confusion matrix: semantic-OSM prior fusion.
     # Adds OSM-based bias to every BKI observation, maintaining constant influence.
     # Maps predicted semantic classes to OSM prior categories to bias predictions toward OSM-compatible classes.
@@ -111,5 +108,3 @@
     pose_format: mcd
     publish_rate: 1.0
     topic: /osm_geometries
-    tree_point_radius_meters: 6.0
-    stairs_width_meters: 10.0

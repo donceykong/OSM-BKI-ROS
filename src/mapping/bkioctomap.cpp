@@ -290,6 +290,30 @@ namespace semantic_bki {
         osm_pole_points_ = pole_points;
     }
 
+    void SemanticBKIOctoMap::set_osm_road_width(float width_m) {
+        osm_road_width_ = std::max(0.1f, width_m);
+    }
+
+    void SemanticBKIOctoMap::set_osm_sidewalk_width(float width_m) {
+        osm_sidewalk_width_ = std::max(0.1f, width_m);
+    }
+
+    void SemanticBKIOctoMap::set_osm_cycleway_width(float width_m) {
+        osm_cycleway_width_ = std::max(0.1f, width_m);
+    }
+
+    void SemanticBKIOctoMap::set_osm_fence_width(float width_m) {
+        osm_fence_width_ = std::max(0.1f, width_m);
+    }
+
+    void SemanticBKIOctoMap::set_osm_wall_width(float width_m) {
+        osm_wall_width_ = std::max(0.1f, width_m);
+    }
+
+    void SemanticBKIOctoMap::set_osm_pole_point_radius(float radius_m) {
+        osm_pole_point_radius_ = std::max(0.1f, radius_m);
+    }
+
     void SemanticBKIOctoMap::set_osm_stairs_width(float width_m) {
         osm_stairs_width_ = std::max(0.1f, width_m);
     }
@@ -420,12 +444,13 @@ namespace semantic_bki {
 
     float SemanticBKIOctoMap::compute_osm_road_prior(float x, float y) const {
         if (osm_roads_.empty()) return 0.f;
-        float min_d = std::numeric_limits<float>::max();
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &road : osm_roads_) {
-            float d = distance_to_polyline(x, y, road);
-            if (d < min_d) min_d = d;
+            float signed_d = distance_to_polyline_band_signed(x, y, road, osm_road_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        return osm_prior_from_distance(min_d, osm_decay_meters_);
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_grassland_prior(float x, float y) const {
@@ -508,42 +533,46 @@ namespace semantic_bki {
 
     float SemanticBKIOctoMap::compute_osm_fence_prior(float x, float y) const {
         if (osm_fences_.empty()) return 0.f;
-        float min_d = std::numeric_limits<float>::max();
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &fence : osm_fences_) {
-            float d = distance_to_polyline(x, y, fence);
-            if (d < min_d) min_d = d;
+            float signed_d = distance_to_polyline_band_signed(x, y, fence, osm_fence_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        return osm_prior_from_distance(min_d, osm_decay_meters_);
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_sidewalk_prior(float x, float y) const {
         if (osm_sidewalks_.empty()) return 0.f;
-        float min_d = std::numeric_limits<float>::max();
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &sw : osm_sidewalks_) {
-            float d = distance_to_polyline(x, y, sw);
-            if (d < min_d) min_d = d;
+            float signed_d = distance_to_polyline_band_signed(x, y, sw, osm_sidewalk_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        return osm_prior_from_distance(min_d, osm_decay_meters_);
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_cycleway_prior(float x, float y) const {
         if (osm_cycleways_.empty()) return 0.f;
-        float min_d = std::numeric_limits<float>::max();
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &cw : osm_cycleways_) {
-            float d = distance_to_polyline(x, y, cw);
-            if (d < min_d) min_d = d;
+            float signed_d = distance_to_polyline_band_signed(x, y, cw, osm_cycleway_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        return osm_prior_from_distance(min_d, osm_decay_meters_);
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_wall_prior(float x, float y) const {
         if (osm_walls_.empty()) return 0.f;
-        float min_d = std::numeric_limits<float>::max();
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &wall : osm_walls_) {
-            float d = distance_to_polyline(x, y, wall);
-            if (d < min_d) min_d = d;
+            float signed_d = distance_to_polyline_band_signed(x, y, wall, osm_wall_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        return osm_prior_from_distance(min_d, osm_decay_meters_);
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     float SemanticBKIOctoMap::compute_osm_water_prior(float x, float y) const {
@@ -570,59 +599,13 @@ namespace semantic_bki {
 
     float SemanticBKIOctoMap::compute_osm_stairs_prior(float x, float y) const {
         if (osm_stairs_.empty()) return 0.f;
-        float max_prior = 0.f;
-        float min_positive_d = std::numeric_limits<float>::max();
-        const float hw = osm_stairs_width_ * 0.5f;
-        const float eps = 1e-6f;
-        
-        // Convert each stair polyline segment into a rectangle polygon and check if point is inside
+        float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &stair : osm_stairs_) {
-            if (stair.coords.size() < 2) continue;
-            
-            // For each segment in the polyline, create a rectangle
-            for (size_t i = 0; i < stair.coords.size() - 1; ++i) {
-                float x1 = stair.coords[i].first;
-                float y1 = stair.coords[i].second;
-                float x2 = stair.coords[i + 1].first;
-                float y2 = stair.coords[i + 1].second;
-                float dx = x2 - x1;
-                float dy = y2 - y1;
-                float L = std::sqrt(dx * dx + dy * dy);
-                if (L < eps) continue;
-                
-                // Compute rectangle corners (perpendicular to segment)
-                float nx = -dy / L;
-                float ny = dx / L;
-                float c1x = x1 + hw * nx, c1y = y1 + hw * ny;
-                float c2x = x1 - hw * nx, c2y = y1 - hw * ny;
-                float c3x = x2 - hw * nx, c3y = y2 - hw * ny;
-                float c4x = x2 + hw * nx, c4y = y2 + hw * ny;
-                
-                // Create rectangle polygon (closed: 4 corners + first corner again)
-                Geometry2D rect;
-                rect.coords.push_back({c1x, c1y});
-                rect.coords.push_back({c2x, c2y});
-                rect.coords.push_back({c3x, c3y});
-                rect.coords.push_back({c4x, c4y});
-                rect.coords.push_back({c1x, c1y});  // Close the polygon
-                
-                // Check if point is inside this rectangle
-                float signed_d = distance_to_polygon_boundary(x, y, rect);
-                if (signed_d <= 0.f) {
-                    max_prior = 1.f;  // Inside rectangle, max prior
-                    break;
-                }
-                if (signed_d < min_positive_d) min_positive_d = signed_d;
-            }
-            if (max_prior >= 1.f) break;  // Already found inside, no need to check more
+            float signed_d = distance_to_polyline_band_signed(x, y, stair, osm_stairs_width_);
+            if (signed_d <= 0.f) return 1.f;
+            if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
-        
-        if (max_prior >= 1.f) return 1.f;
-        if (min_positive_d < std::numeric_limits<float>::max()) {
-            float poly_prior = osm_prior_from_signed_distance(min_positive_d, osm_decay_meters_);
-            if (poly_prior > max_prior) max_prior = poly_prior;
-        }
-        return max_prior;
+        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
     }
 
     void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,

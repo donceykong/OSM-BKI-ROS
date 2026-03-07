@@ -124,6 +124,14 @@ namespace semantic_bki {
         return std::sqrt(min_d_sq);
     }
 
+    /// Signed distance from (px,py) to a polyline "band" of given width:
+    /// negative = inside the width band, positive = outside.
+    inline float distance_to_polyline_band_signed(float px, float py, const Geometry2D& polyline, float width) {
+        float d = distance_to_polyline(px, py, polyline);
+        float half_w = std::max(0.f, width) * 0.5f;
+        return d - half_w;
+    }
+
     /// Signed distance from (px,py) to circle: negative = inside, positive = outside.
     /// Returns d - radius where d = distance from (px,py) to circle center.
     inline float distance_to_circle_signed(float px, float py, float cx, float cy, float radius) {

@@ -67,6 +67,9 @@ namespace semantic_bki {
 
         float getTreePointRadius() const { return tree_point_radius_meters_; }
 
+        void setPolePointRadius(float radius_meters) { pole_point_radius_meters_ = std::max(0.1f, radius_meters); }
+        float getPolePointRadius() const { return pole_point_radius_meters_; }
+
         /**
          * Set width (meters) for stairs (highway=steps). Each polyline segment is drawn as a rectangle
          * with this width perpendicular to the segment.
@@ -75,6 +78,16 @@ namespace semantic_bki {
         void setStairsWidth(float width_meters) { stairs_width_meters_ = std::max(0.1f, width_meters); }
 
         float getStairsWidth() const { return stairs_width_meters_; }
+        void setRoadWidth(float width_meters) { road_width_meters_ = std::max(0.1f, width_meters); }
+        float getRoadWidth() const { return road_width_meters_; }
+        void setSidewalkWidth(float width_meters) { sidewalk_width_meters_ = std::max(0.1f, width_meters); }
+        float getSidewalkWidth() const { return sidewalk_width_meters_; }
+        void setCyclewayWidth(float width_meters) { cycleway_width_meters_ = std::max(0.1f, width_meters); }
+        float getCyclewayWidth() const { return cycleway_width_meters_; }
+        void setFenceWidth(float width_meters) { fence_width_meters_ = std::max(0.1f, width_meters); }
+        float getFenceWidth() const { return fence_width_meters_; }
+        void setWallWidth(float width_meters) { wall_width_meters_ = std::max(0.1f, width_meters); }
+        float getWallWidth() const { return wall_width_meters_; }
 
         /// Return OSM geometries (after transform if applied). Used to set voxel OSM priors.
         const std::vector<Geometry2D>& getBuildings() const { return buildings_; }
@@ -180,6 +193,12 @@ namespace semantic_bki {
         std::vector<std::pair<float, float>> pole_points_;  // traffic_signals, power poles, etc.
         std::vector<std::pair<float, float>> path_;  // Lidar trajectory for debugging
         float tree_point_radius_meters_{5.0f};  // Radius for tree point circles (visualization and prior)
+        float pole_point_radius_meters_{2.0f};  // Radius for pole point circles (visualization and prior)
+        float road_width_meters_{6.0f};         // Width for road polyline rectangles
+        float sidewalk_width_meters_{2.0f};     // Width for sidewalk polyline rectangles
+        float cycleway_width_meters_{2.0f};     // Width for cycleway polyline rectangles
+        float fence_width_meters_{0.6f};        // Width for fence polyline rectangles
+        float wall_width_meters_{0.8f};         // Width for wall polyline rectangles
         float stairs_width_meters_{1.5f};       // Width of rectangle enclosing each stairs segment
 
         bool transformed_; // Flag to track if data has already been transformed

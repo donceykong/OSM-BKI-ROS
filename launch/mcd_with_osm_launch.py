@@ -120,6 +120,7 @@ def launch_setup(context):
         else os.path.join(pkg_src_dir, 'config', 'datasets', f'{dataset}.yaml')
     )
     data_dir_path = _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override)
+    config_datasets_dir = os.path.join(pkg_src_dir, 'config', 'datasets')
     # cu_north_campus (and kitti360) use identity calibration; no base-frame TF
     calib_file_path = '' if dataset == 'cu_north_campus' else os.path.join(data_dir_path, 'hhs_calib.yaml')
     rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'mcd_node.rviz')
@@ -138,6 +139,7 @@ def launch_setup(context):
     mcd_params = [
         {'dir': data_dir_path},
         {'calibration_file': calib_file_path},
+        {'config_datasets_dir': config_datasets_dir},
         method_config_path,
         data_config_path
     ]
@@ -157,13 +159,13 @@ def launch_setup(context):
         parameters=mcd_params
     )
     
-    # OSM visualizer uses same config (mcd.yaml) and data_dir from launch
+    # OSM visualizer uses same config (mcd.yaml) and data_dir from launch; config from src
     osm_node = Node(
         package='semantic_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',
-        parameters=[data_config_path, {'data_dir': data_dir_path}]
+        parameters=[data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
     )
     
     return [rviz_node, mcd_node, osm_node]
