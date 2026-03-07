@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -502,13 +503,12 @@ namespace semantic_bki {
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
 
         // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][OSM_col]
-        static constexpr int N_OSM_HEIGHT_BINS = 20;
         bool use_osm_height_filter_{false};
         bool osm_height_cm_loaded_{false};
         float osm_height_min_z_{0.f};
         float osm_height_max_z_{0.f};
-        int osm_height_num_bins_{20};
-        float osm_height_cm_[N_OSM_HEIGHT_BINS][N_OSM_PRIOR_COLS]{};
+        int osm_height_num_bins_{0};
+        std::vector<std::array<float, N_OSM_PRIOR_COLS>> osm_height_cm_{};
     };
 
 }

@@ -307,14 +307,17 @@ namespace semantic_bki {
     }
 
     void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
-        osm_height_num_bins_ = std::min(static_cast<int>(matrix.size()), N_OSM_HEIGHT_BINS);
-        std::memset(osm_height_cm_, 0, sizeof(osm_height_cm_));
+        osm_height_num_bins_ = static_cast<int>(matrix.size());
+        osm_height_cm_.clear();
+        osm_height_cm_.resize(static_cast<size_t>(osm_height_num_bins_));
+        for (auto &row : osm_height_cm_) row.fill(0.f);
+
         for (int r = 0; r < osm_height_num_bins_; ++r) {
             int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
             for (int c = 0; c < ncols; ++c)
-                osm_height_cm_[r][c] = matrix[r][c];
+                osm_height_cm_[static_cast<size_t>(r)][static_cast<size_t>(c)] = matrix[r][c];
         }
-        osm_height_cm_loaded_ = true;
+        osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
     }
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,

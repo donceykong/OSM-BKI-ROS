@@ -17,7 +17,7 @@
     # Information about range-finder data
     scan_num: 10000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 5   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    skip_frames: 25   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
@@ -29,9 +29,9 @@
     input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations/
+    evaluation_result_prefix: evaluations/osm_prior_evaluations_new_conf/
     query: true
-    visualize: true
+    visualize: false
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
@@ -63,7 +63,7 @@
     # --------------------------------
     # Uncertainty filtering: build running confusion matrix from GT labels,
     # compute per-class precision, drop uncertain points for low-precision classes.
-    use_uncertainty_filter: false
+    use_uncertainty_filter: true
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
     uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
@@ -74,7 +74,7 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 2.0
+    osm_decay_meters: 5.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
@@ -102,4 +102,4 @@
     publish_rate: 1.0
     topic: /osm_geometries
     tree_point_radius_meters: 6.0
-    stairs_width_meters: 10.0
+    stairs_width_meters: 20.0

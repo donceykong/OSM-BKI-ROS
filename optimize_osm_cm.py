@@ -1351,9 +1351,9 @@ def main():
                         help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
     parser.add_argument("--max-scans", type=int, default=50000)
     parser.add_argument("--skip-frames", type=int, default=2)
-    parser.add_argument("--decay", type=float, default=0.5)
+    parser.add_argument("--decay", type=float, default=2.0)
     parser.add_argument("--tree-radius", type=float, default=3.0)
-    parser.add_argument("--grid-res", type=float, default=0.2,
+    parser.add_argument("--grid-res", type=float, default=1.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
@@ -1373,7 +1373,7 @@ def main():
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
     parser.add_argument("--positive-only", action="store_true",
                         help="Output matrix with values in [0, 1] only (boost, no suppression)")
-    parser.add_argument("--height-bins", type=int, default=20,
+    parser.add_argument("--height-bins", type=int, default=100,
                         help="Number of per-scan height bins for osm_height_confusion_matrix (default: 20)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
