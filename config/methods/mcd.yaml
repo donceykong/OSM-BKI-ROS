@@ -26,10 +26,10 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
     lidar_pose_suffix: pose_inW.csv
-    input_label_suffix: inferred_labels/cenet_kitti360/multiclass_confidence_scores
+    input_label_suffix: inferred_labels/cenet_kitti360_NEW/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_evaluations_square_new_conf/
+    evaluation_result_prefix: evaluations/osm_prior_4_0/
     query: true
     visualize: true
 
@@ -63,7 +63,7 @@
     # --------------------------------
     # Uncertainty filtering: build running confusion matrix from GT labels,
     # compute per-class precision, drop uncertain points for low-precision classes.
-    use_uncertainty_filter: true
+    use_uncertainty_filter: false
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
     uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
@@ -74,7 +74,7 @@
     # OSM prior configuration 
     # --------------------------------
     # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 4.0
+    osm_decay_meters: 3.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
@@ -88,7 +88,7 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
-    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_prior_strength: 4.0  # fraction of OSM influence per observation (0.0 = disabled)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------
