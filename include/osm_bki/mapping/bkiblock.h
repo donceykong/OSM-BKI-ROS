@@ -7,7 +7,7 @@
 #include "bkioctree_node.h"
 #include "bkioctree.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// Hask key to index Block given block's center.
     typedef int64_t BlockHashKey;

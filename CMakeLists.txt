@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(semantic_bki)
+project(osm_bki)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -12,7 +12,7 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
-find_package(OpenMP)
+find_package(OpenMP REQUIRED)
 if (OPENMP_FOUND)
   set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
   set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
@@ -100,9 +100,9 @@ endif()
 ###########
 
 include_directories(
-  include/semantic_bki/common
-  include/semantic_bki/mapping
-  include/semantic_bki/dataset_devkit
+  include/osm_bki/common
+  include/osm_bki/mapping
+  include/osm_bki/dataset_devkit
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
@@ -194,10 +194,12 @@ ament_target_dependencies(osm_visualizer_node
   std_msgs
   ament_index_cpp
   OpenCV
+  yaml-cpp
 )
 
 target_link_libraries(osm_visualizer_node
   ${OpenCV_LIBRARIES}
+  yaml-cpp
   expat
   bz2
   z

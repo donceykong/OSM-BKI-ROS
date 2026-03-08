@@ -26,8 +26,8 @@ def _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_over
 
 
 def generate_launch_description():
-    pkg_arg = DeclareLaunchArgument('pkg', default_value='semantic_bki', description='Package name')
-    method_arg = DeclareLaunchArgument('method', default_value='semantic_bki', description='Method name')
+    pkg_arg = DeclareLaunchArgument('pkg', default_value='osm_bki', description='Package name')
+    method_arg = DeclareLaunchArgument('method', default_value='osm_bki', description='Method name')
     dataset_arg = DeclareLaunchArgument('dataset', default_value='kitti360', description='Dataset name')
     data_root_arg = DeclareLaunchArgument(
         'data_root', default_value='',
@@ -40,11 +40,11 @@ def generate_launch_description():
 
 
 def launch_setup(context):
-    method = context.launch_configurations.get('method', 'semantic_bki')
+    method = context.launch_configurations.get('method', 'osm_bki')
     dataset = context.launch_configurations.get('dataset', 'kitti360')
     data_root_override = context.launch_configurations.get('data_root', '')
 
-    pkg_share_dir = get_package_share_directory('semantic_bki')
+    pkg_share_dir = get_package_share_directory('osm_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
     pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     if not os.path.isdir(os.path.join(pkg_src_dir, 'config')):
@@ -53,17 +53,19 @@ def launch_setup(context):
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
     data_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'kitti360.yaml')
     data_dir_path = _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override)
+    config_datasets_dir = os.path.join(pkg_src_dir, 'config', 'datasets')
     rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'kitti360_node.rviz')
 
     kitti360_params = [
         {'dir': data_dir_path},
         {'calibration_file': ''},
+        {'config_datasets_dir': config_datasets_dir},
         method_config_path,
         data_config_path
     ]
 
     kitti360_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='kitti360_node',
         name='kitti360_node',
         output='screen',
@@ -78,13 +80,13 @@ def launch_setup(context):
         output='screen'
     )
 
-    # OSM visualizer uses same config (kitti360.yaml) and data_dir from launch
+    # OSM visualizer uses same config (kitti360.yaml) and data_dir from launch; config from src
     osm_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',
-        parameters=[data_config_path, {'data_dir': data_dir_path}]
+        parameters=[data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
     )
 
     return [rviz_node, kitti360_node, osm_node]

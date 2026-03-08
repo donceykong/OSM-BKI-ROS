@@ -95,7 +95,7 @@ mcd_to_common:
   17: 5      # shelter → building
   18: 2      # sidewalk
   19: 4      # stairs → other-ground
-  20: 12     # structure-other → other-object
+  20: 12    # structure-other → other-object
   21: 8      # traffic-cone → traffic-sign
   22: 8      # traffic-sign
   23: 12     # trashbin → other-object

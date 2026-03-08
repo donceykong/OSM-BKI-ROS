@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// 2D polygon (list of (x,y) vertices; same convention as OSMVisualizer).
     /// Optional holes (inner rings): points inside a hole are considered outside the filled polygon.
@@ -122,6 +122,14 @@ namespace semantic_bki {
             if (d_sq < min_d_sq) min_d_sq = d_sq;
         }
         return std::sqrt(min_d_sq);
+    }
+
+    /// Signed distance from (px,py) to a polyline "band" of given width:
+    /// negative = inside the width band, positive = outside.
+    inline float distance_to_polyline_band_signed(float px, float py, const Geometry2D& polyline, float width) {
+        float d = distance_to_polyline(px, py, polyline);
+        float half_w = std::max(0.f, width) * 0.5f;
+        return d - half_w;
     }
 
     /// Signed distance from (px,py) to circle: negative = inside, positive = outside.

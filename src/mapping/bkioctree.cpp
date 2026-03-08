@@ -2,7 +2,7 @@
 
 #include "bkioctree.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     unsigned short SemanticOcTree::max_depth = 0;
 
@@ -48,24 +48,41 @@ namespace semantic_bki {
             if (other.node_arr[i] != nullptr) {
                 int n = (int) pow(8, i);
                 node_arr[i] = new SemanticOcTreeNode[n]();
-                std::copy(node_arr[i], node_arr[i] + n, other.node_arr[i]);
+                std::copy(other.node_arr[i], other.node_arr[i] + n, node_arr[i]);
             } else
                 node_arr[i] = nullptr;
         }
     }
 
     SemanticOcTree &SemanticOcTree::operator=(const SemanticOcTree &other) {
-        SemanticOcTreeNode **local_node_arr = new SemanticOcTreeNode *[max_depth]();
-        for (unsigned short i = 0; i < max_depth; ++i) {
-            if (local_node_arr[i] != nullptr) {
-                int n = (int) pow(8, i);
-                local_node_arr[i] = new SemanticOcTreeNode[n]();
-                std::copy(local_node_arr[i], local_node_arr[i] + n, other.node_arr[i]);
-            } else
-                local_node_arr[i] = nullptr;
+        if (this == &other)
+            return *this;
+
+        if (node_arr != nullptr) {
+            for (unsigned short i = 0; i < max_depth; ++i) {
+                if (node_arr[i] != nullptr)
+                    delete[] node_arr[i];
+            }
+            delete[] node_arr;
+            node_arr = nullptr;
         }
 
-        node_arr = local_node_arr;
+        if (other.node_arr == nullptr) {
+            node_arr = nullptr;
+            return *this;
+        }
+
+        node_arr = new SemanticOcTreeNode *[max_depth]();
+        for (unsigned short i = 0; i < max_depth; ++i) {
+            if (other.node_arr[i] != nullptr) {
+                int n = (int) pow(8, i);
+                node_arr[i] = new SemanticOcTreeNode[n]();
+                std::copy(other.node_arr[i], other.node_arr[i] + n, node_arr[i]);
+            } else {
+                node_arr[i] = nullptr;
+            }
+        }
+
         return *this;
     }
 

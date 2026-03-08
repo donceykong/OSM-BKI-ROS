@@ -3,7 +3,7 @@
 #include <iostream>
 #include <math.h>
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /*!
      * \brief This class represents a three-dimensional vector
@@ -266,7 +266,7 @@ namespace semantic_bki {
     };
 
     //! user friendly output in format (x y z)
-    std::ostream &operator<<(std::ostream &out, semantic_bki::Vector3 const &v);
+    std::ostream &operator<<(std::ostream &out, osm_bki::Vector3 const &v);
 
     typedef Vector3 point3f;
 

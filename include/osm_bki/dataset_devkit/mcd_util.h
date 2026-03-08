@@ -43,6 +43,10 @@ static constexpr int N_COMMON = 13;
 struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
   std::vector<float> variances;
+  /// Per-point probability distribution for soft counting (one row per point).
+  /// If common_label_config_loaded_: size N_COMMON (mapped from network softmax).
+  /// Else: size n_classes (raw network softmax). Set config num_class = n_classes when not using common.
+  std::vector<std::vector<float>> common_probs;
   int n_classes = 0;
 };
 
@@ -104,7 +108,7 @@ class MCDData {
           RCLCPP_WARN_STREAM(rclcpp::get_logger("mcd_util"), "WARNING: MCDData constructor: node_ is null!");
         }
         RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: MCDData constructor: Creating octomap");
-        map_ = new semantic_bki::SemanticBKIOctoMap(resolution, block_depth, num_class, sf2, ell, prior, var_thresh, free_thresh, occupied_thresh);
+        map_ = new osm_bki::SemanticBKIOctoMap(resolution, block_depth, num_class, sf2, ell, prior, var_thresh, free_thresh, occupied_thresh);
         if (!map_) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Failed to create SemanticBKIOctoMap!");
         } else {
@@ -112,7 +116,7 @@ class MCDData {
         }
         
         RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: Creating MarkerArrayPub");
-        m_pub_ = new semantic_bki::MarkerArrayPub(node_, map_topic, resolution);
+        m_pub_ = new osm_bki::MarkerArrayPub(node_, map_topic, resolution);
         if (!m_pub_) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Failed to create MarkerArrayPub!");
         } else {
@@ -279,7 +283,9 @@ class MCDData {
     }
 
     /// Read KITTI-360 velodyne_poses.txt format (see scripts/kitti360/visualize_sem_map_KITTI360.py).
-    /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major). Poses are made relative to first pose.
+    /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major).
+    /// Poses are shifted so the first pose's translation is at origin (translation-only,
+    /// no rotation applied — matching the Python visualize_sem_map_KITTI360.py convention).
     bool read_lidar_poses_kitti360(const std::string& pose_path) {
       std::ifstream f(pose_path);
       if (!f.is_open()) {
@@ -312,11 +318,19 @@ class MCDData {
         RCLCPP_ERROR_STREAM(node_->get_logger(), "No valid poses in " << pose_path);
         return false;
       }
-      original_first_pose_ = lidar_poses_[0];
-      Eigen::Matrix4d first_inv = lidar_poses_[0].inverse();
+      // Store first pose as translation-only (Identity + first translation) so that
+      // transformToFirstPoseOrigin produces a pure translation shift for OSM,
+      // matching the Python: trans = [-first_x, -first_y, 0]
+      Eigen::Vector3d first_t = lidar_poses_[0].block<3, 1>(0, 3);
+      original_first_pose_ = Eigen::Matrix4d::Identity();
+      original_first_pose_.block<3, 1>(0, 3) = first_t;
+
+      // Subtract first pose translation from all poses (keep rotation intact)
       for (size_t i = 0; i < lidar_poses_.size(); ++i)
-        lidar_poses_[i] = first_inv * lidar_poses_[i];
-      RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << lidar_poses_.size() << " KITTI360 poses from " << pose_path << " (relative to first pose)");
+        lidar_poses_[i].block<3, 1>(0, 3) -= first_t;
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << lidar_poses_.size()
+          << " KITTI360 poses from " << pose_path
+          << " (shifted by first translation [" << first_t.x() << ", " << first_t.y() << ", " << first_t.z() << "])");
       return true;
     }
     
@@ -504,7 +518,7 @@ class MCDData {
     }
 
     /// Set map visualization color mode: semantic class or OSM prior (building/road/grassland/tree).
-    void set_color_mode(semantic_bki::MapColorMode mode) {
+    void set_color_mode(osm_bki::MapColorMode mode) {
       if (m_pub_) m_pub_->set_color_mode(mode);
     }
 
@@ -513,7 +527,7 @@ class MCDData {
       publish_variance_ = enabled;
       variance_topic_ = topic;
       if (enabled && !variance_pub_) {
-        variance_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        variance_pub_ = new osm_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
         RCLCPP_INFO_STREAM(node_->get_logger(), "Variance visualization enabled on topic: " << topic);
       }
     }
@@ -524,30 +538,30 @@ class MCDData {
       publish_semantic_uncertainty_ = enabled;
       semantic_uncertainty_topic_ = topic;
       if (enabled && !semantic_uncertainty_pub_) {
-        semantic_uncertainty_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        semantic_uncertainty_pub_ = new osm_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
         RCLCPP_INFO_STREAM(node_->get_logger(), "Semantic uncertainty map visualization enabled on topic: " << topic);
       }
     }
 
-    void set_osm_buildings(const std::vector<semantic_bki::Geometry2D> &buildings) {
+    void set_osm_buildings(const std::vector<osm_bki::Geometry2D> &buildings) {
       if (map_) map_->set_osm_buildings(buildings);
     }
-    void set_osm_roads(const std::vector<semantic_bki::Geometry2D> &roads) {
+    void set_osm_roads(const std::vector<osm_bki::Geometry2D> &roads) {
       if (map_) map_->set_osm_roads(roads);
     }
-    void set_osm_sidewalks(const std::vector<semantic_bki::Geometry2D> &sidewalks) {
+    void set_osm_sidewalks(const std::vector<osm_bki::Geometry2D> &sidewalks) {
       if (map_) map_->set_osm_sidewalks(sidewalks);
     }
-    void set_osm_cycleways(const std::vector<semantic_bki::Geometry2D> &cycleways) {
+    void set_osm_cycleways(const std::vector<osm_bki::Geometry2D> &cycleways) {
       if (map_) map_->set_osm_cycleways(cycleways);
     }
-    void set_osm_grasslands(const std::vector<semantic_bki::Geometry2D> &grasslands) {
+    void set_osm_grasslands(const std::vector<osm_bki::Geometry2D> &grasslands) {
       if (map_) map_->set_osm_grasslands(grasslands);
     }
-    void set_osm_trees(const std::vector<semantic_bki::Geometry2D> &trees) {
+    void set_osm_trees(const std::vector<osm_bki::Geometry2D> &trees) {
       if (map_) map_->set_osm_trees(trees);
     }
-    void set_osm_forests(const std::vector<semantic_bki::Geometry2D> &forests) {
+    void set_osm_forests(const std::vector<osm_bki::Geometry2D> &forests) {
       if (map_) map_->set_osm_forests(forests);
     }
     void set_osm_tree_points(const std::vector<std::pair<float, float>> &tree_points) {
@@ -558,20 +572,44 @@ class MCDData {
       if (map_) map_->set_osm_tree_point_radius(radius_m);
     }
 
-    void set_osm_parking(const std::vector<semantic_bki::Geometry2D> &parking) {
+    void set_osm_road_width(float width_m) {
+      if (map_) map_->set_osm_road_width(width_m);
+    }
+
+    void set_osm_sidewalk_width(float width_m) {
+      if (map_) map_->set_osm_sidewalk_width(width_m);
+    }
+
+    void set_osm_cycleway_width(float width_m) {
+      if (map_) map_->set_osm_cycleway_width(width_m);
+    }
+
+    void set_osm_fence_width(float width_m) {
+      if (map_) map_->set_osm_fence_width(width_m);
+    }
+
+    void set_osm_wall_width(float width_m) {
+      if (map_) map_->set_osm_wall_width(width_m);
+    }
+
+    void set_osm_pole_point_radius(float radius_m) {
+      if (map_) map_->set_osm_pole_point_radius(radius_m);
+    }
+
+    void set_osm_parking(const std::vector<osm_bki::Geometry2D> &parking) {
       if (map_) map_->set_osm_parking(parking);
     }
 
-    void set_osm_fences(const std::vector<semantic_bki::Geometry2D> &fences) {
+    void set_osm_fences(const std::vector<osm_bki::Geometry2D> &fences) {
       if (map_) map_->set_osm_fences(fences);
     }
-    void set_osm_walls(const std::vector<semantic_bki::Geometry2D> &walls) {
+    void set_osm_walls(const std::vector<osm_bki::Geometry2D> &walls) {
       if (map_) map_->set_osm_walls(walls);
     }
-    void set_osm_stairs(const std::vector<semantic_bki::Geometry2D> &stairs) {
+    void set_osm_stairs(const std::vector<osm_bki::Geometry2D> &stairs) {
       if (map_) map_->set_osm_stairs(stairs);
     }
-    void set_osm_water(const std::vector<semantic_bki::Geometry2D> &water) {
+    void set_osm_water(const std::vector<osm_bki::Geometry2D> &water) {
       if (map_) map_->set_osm_water(water);
     }
     void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points) {
@@ -587,13 +625,66 @@ class MCDData {
       if (map_) map_->set_osm_prior_strength(strength);
     }
 
+    void set_osm_height_filter_enabled(bool enabled) {
+      if (map_) map_->set_osm_height_filter_enabled(enabled);
+    }
+
     /// Enable OSM prior map on a separate topic. Priors computed on-the-fly (not stored in octree).
-    void set_publish_osm_prior_map(bool enabled, const std::string& topic, semantic_bki::MapColorMode osm_color_mode) {
+    void set_publish_osm_prior_map(bool enabled, const std::string& topic, osm_bki::MapColorMode osm_color_mode) {
       publish_osm_prior_map_ = enabled;
       osm_prior_map_color_mode_ = osm_color_mode;
       if (enabled && !osm_prior_map_pub_) {
-        osm_prior_map_pub_ = new semantic_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        osm_prior_map_pub_ = new osm_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
         RCLCPP_INFO_STREAM(node_->get_logger(), "OSM prior map visualization enabled on topic: " << topic);
+      }
+    }
+
+    /// Load optional geometry parameters used by OSM priors/visualization.
+    /// Expected node:
+    ///   osm_geometry_parameters:
+    ///     road_width_meters: ...
+    ///     sidewalk_width_meters: ...
+    ///     cycleway_width_meters: ...
+    ///     fence_width_meters: ...
+    ///     wall_width_meters: ...
+    ///     stairs_width_meters: ...
+    ///     tree_point_radius_meters: ...
+    ///     pole_point_radius_meters: ...
+    ///     osm_decay_meters: ...
+    bool load_osm_geometry_parameters(const std::string &yaml_path) {
+      if (!map_) return false;
+      try {
+        YAML::Node root = YAML::LoadFile(yaml_path);
+        if (!root["osm_geometry_parameters"]) return false;
+
+        auto p = root["osm_geometry_parameters"];
+        bool loaded_any = false;
+        auto load_float = [&](const char *key, auto setter) {
+          if (p[key]) {
+            setter(p[key].as<float>());
+            loaded_any = true;
+          }
+        };
+
+        load_float("road_width_meters", [&](float v) { map_->set_osm_road_width(v); });
+        load_float("sidewalk_width_meters", [&](float v) { map_->set_osm_sidewalk_width(v); });
+        load_float("cycleway_width_meters", [&](float v) { map_->set_osm_cycleway_width(v); });
+        load_float("fence_width_meters", [&](float v) { map_->set_osm_fence_width(v); });
+        load_float("wall_width_meters", [&](float v) { map_->set_osm_wall_width(v); });
+        load_float("stairs_width_meters", [&](float v) { map_->set_osm_stairs_width(v); });
+        load_float("tree_point_radius_meters", [&](float v) { map_->set_osm_tree_point_radius(v); });
+        load_float("pole_point_radius_meters", [&](float v) { map_->set_osm_pole_point_radius(v); });
+        load_float("osm_decay_meters", [&](float v) { map_->set_osm_decay_meters(v); });
+
+        if (loaded_any) {
+          RCLCPP_INFO_STREAM(node_->get_logger(),
+              "Loaded OSM geometry parameters from " << yaml_path);
+        }
+        return loaded_any;
+      } catch (const std::exception &e) {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load OSM geometry parameters: " << e.what());
+        return false;
       }
     }
 
@@ -644,6 +735,38 @@ class MCDData {
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
             "Failed to load OSM confusion matrix: " << e.what());
+        return false;
+      }
+    }
+
+    /// Load OSM height confusion matrix (rows=height bins, cols=OSM categories). Optional; used when osm_height_filtering enabled.
+    bool load_osm_height_confusion_matrix(const std::string &yaml_path) {
+      if (!map_) return false;
+      try {
+        YAML::Node root = YAML::LoadFile(yaml_path);
+        if (!root["osm_height_confusion_matrix"]) return false;
+
+        auto cm_node = root["osm_height_confusion_matrix"];
+        static constexpr int N_OSM_COLS = 14;
+        int max_bin = 0;
+        for (auto it = cm_node.begin(); it != cm_node.end(); ++it)
+          max_bin = std::max(max_bin, it->first.as<int>());
+        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(N_OSM_COLS, 0.f));
+        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
+          int bin_idx = it->first.as<int>();
+          if (bin_idx < 1 || bin_idx > max_bin) continue;
+          auto vals = it->second;
+          for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
+            matrix[bin_idx - 1][c] = vals[c].as<float>();
+        }
+        if (matrix.empty()) return false;
+        map_->set_osm_height_confusion_matrix(matrix);
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << N_OSM_COLS << " cols");
+        return true;
+      } catch (const std::exception &e) {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load OSM height confusion matrix: " << e.what());
         return false;
       }
     }
@@ -707,7 +830,7 @@ class MCDData {
         valid_count++;
       }
       
-      semantic_bki::point3f origin;
+      osm_bki::point3f origin;
       int insertion_count = 0;
       
       for (size_t list_idx = 0; list_idx < indices_to_process.size(); ++list_idx) {
@@ -726,6 +849,7 @@ class MCDData {
           std::string mc_name = inferred_multiclass_dir_ + "/" + std::string(scan_id_c) + ".bin";
           MulticlassResult mc_result = mcd2pcl_multiclass(scan_name, mc_name);
           cloud = mc_result.cloud;
+          scan_common_probs_ = mc_result.common_probs;
           if (publish_semantic_uncertainty_ && mc_result.n_classes > 1 && !mc_result.variances.empty()) {
             orig_cloud_for_unc = mc_result.cloud;
             orig_variances_copy = mc_result.variances;  // copy: mc_result is destroyed at block end
@@ -789,6 +913,8 @@ class MCDData {
               // Labels are already in common taxonomy after ingestion.
               pcl::PointCloud<pcl::PointXYZL>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZL>);
               filtered->points.reserve(n_pts);
+              std::vector<std::vector<float>> filtered_common_probs;
+              if (!scan_common_probs_.empty()) filtered_common_probs.reserve(n_pts);
               int n_dropped = 0;
 
               for (size_t pi = 0; pi < n_pts; ++pi) {
@@ -797,6 +923,8 @@ class MCDData {
                     ? class_precision_[pred_common] : 1.0f;
                 if (uncertainties[pi] <= precision || pred_common == 0) {
                   filtered->points.push_back(cloud->points[pi]);
+                  if (pi < scan_common_probs_.size())
+                    filtered_common_probs.push_back(scan_common_probs_[pi]);
                 } else {
                   n_dropped++;
                 }
@@ -818,11 +946,13 @@ class MCDData {
               filtered->is_dense = false;
               cloud = filtered;
               scan_point_weights_.clear();
+              scan_common_probs_ = std::move(filtered_common_probs);
             }
           } else {
             scan_point_weights_.clear();
           }
         } else {
+          scan_common_probs_.clear();
           std::string label_name = input_label_dir + "/" + std::string(scan_id_c) + ".bin";
           cloud = mcd2pcl(scan_name, label_name);
         }
@@ -884,12 +1014,32 @@ class MCDData {
           RCLCPP_INFO_STREAM(node_->get_logger(), "  Verification - lidar origin in map coords: [" << map_origin_test(0) << ", " << map_origin_test(1) << ", " << map_origin_test(2) << "]");
         }
         
-        // Publish individual scan as PointCloud2 (in lidar frame, before transformation)
-        sensor_msgs::msg::PointCloud2 cloud_msg;
-        pcl::toROSMsg(*cloud, cloud_msg);
-        cloud_msg.header.frame_id = "lidar";
-        cloud_msg.header.stamp = node_->now();
-        pointcloud_pub_->publish(cloud_msg);
+        // Transform cloud from lidar frame to map frame (once, before publish and insertion)
+        pcl::transformPointCloud(*cloud, *cloud, lidar_to_map.cast<float>());
+
+        // Publish scan as PointCloud2 in map frame with label-based RGB colors
+        {
+          pcl::PointCloud<pcl::PointXYZRGB> rgb_cloud;
+          rgb_cloud.width = static_cast<uint32_t>(cloud->points.size());
+          rgb_cloud.height = 1;
+          rgb_cloud.is_dense = true;
+          rgb_cloud.points.resize(cloud->points.size());
+          for (size_t i = 0; i < cloud->points.size(); ++i) {
+            rgb_cloud.points[i].x = cloud->points[i].x;
+            rgb_cloud.points[i].y = cloud->points[i].y;
+            rgb_cloud.points[i].z = cloud->points[i].z;
+            std_msgs::msg::ColorRGBA color = m_pub_->get_color_for_class(
+                static_cast<int>(cloud->points[i].label), 2);
+            rgb_cloud.points[i].r = static_cast<uint8_t>(std::min(255, static_cast<int>(color.r * 255.0f + 0.5f)));
+            rgb_cloud.points[i].g = static_cast<uint8_t>(std::min(255, static_cast<int>(color.g * 255.0f + 0.5f)));
+            rgb_cloud.points[i].b = static_cast<uint8_t>(std::min(255, static_cast<int>(color.b * 255.0f + 0.5f)));
+          }
+          sensor_msgs::msg::PointCloud2 cloud_msg;
+          pcl::toROSMsg(rgb_cloud, cloud_msg);
+          cloud_msg.header.frame_id = "map";
+          cloud_msg.header.stamp = node_->now();
+          pointcloud_pub_->publish(cloud_msg);
+        }
 
         // Accumulate semantic uncertainty per voxel (for map visualization)
         if (orig_cloud_for_unc && !orig_variances_copy.empty() && publish_semantic_uncertainty_) {
@@ -910,18 +1060,19 @@ class MCDData {
         }
 
         if (insertion_count == 0) {
-          RCLCPP_INFO_STREAM(node_->get_logger(), "Published PointCloud2 with " << cloud->points.size() << " points in frame 'lidar'");
+          RCLCPP_INFO_STREAM(node_->get_logger(), "Published PointCloud2 with " << cloud->points.size() << " points in frame 'map'");
         }
         
-        // Now transform cloud to world frame for map insertion
-        pcl::transformPointCloud(*cloud, *cloud, lidar_to_map);
-        
-        origin.x() = transform(0, 3);
-        origin.y() = transform(1, 3);
-        origin.z() = transform(2, 3);
+        // Cloud is already in map frame. Sensor origin from lidar_to_map translation.
+        origin.x() = lidar_to_map(0, 3);
+        origin.y() = lidar_to_map(1, 3);
+        origin.z() = lidar_to_map(2, 3);
         
         try {
-          if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
+          if (!scan_common_probs_.empty() && scan_common_probs_.size() == cloud->points.size()) {
+            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                    scan_point_weights_, &scan_common_probs_);
+          } else if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
             map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
           } else {
             map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
@@ -1010,8 +1161,8 @@ class MCDData {
           try {
             auto node = it.get_node();
             
-              if (node.get_state() == semantic_bki::State::OCCUPIED) {
-              semantic_bki::point3f p = it.get_loc();
+              if (node.get_state() == osm_bki::State::OCCUPIED) {
+              osm_bki::point3f p = it.get_loc();
               float size = it.get_size();
               if (publish_variance_) {
                 std::vector<float> vars(num_class_);
@@ -1053,8 +1204,8 @@ class MCDData {
         variance_pub_->clear_map(static_cast<float>(resolution_));
         for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
           auto node = it.get_node();
-          if (node.get_state() == semantic_bki::State::OCCUPIED) {
-            semantic_bki::point3f p = it.get_loc();
+          if (node.get_state() == osm_bki::State::OCCUPIED) {
+            osm_bki::point3f p = it.get_loc();
             int semantics = node.get_semantics();
             std::vector<float> vars(num_class_);
             node.get_vars(vars);
@@ -1069,28 +1220,28 @@ class MCDData {
       if (publish_osm_prior_map_ && osm_prior_map_pub_ && map_) {
         osm_prior_map_pub_->clear_map(static_cast<float>(resolution_));
         osm_prior_map_pub_->set_color_mode(osm_prior_map_color_mode_);
-        semantic_bki::MapColorMode mode = osm_prior_map_color_mode_;
+        osm_bki::MapColorMode mode = osm_prior_map_color_mode_;
         for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
           auto node = it.get_node();
-          if (node.get_state() != semantic_bki::State::OCCUPIED) continue;
-          semantic_bki::point3f p = it.get_loc();
+          if (node.get_state() != osm_bki::State::OCCUPIED) continue;
+          osm_bki::point3f p = it.get_loc();
           float size = it.get_size();
           float building, road, grassland, tree, parking, fence, stairs;
           map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland, tree, parking, fence, stairs);
-          if (mode == semantic_bki::MapColorMode::OSMBlend) {
+          if (mode == osm_bki::MapColorMode::OSMBlend) {
             osm_prior_map_pub_->insert_point3d_osm_blend(p.x(), p.y(), p.z(), size,
                 building, road, grassland, tree, parking, fence, stairs);
           } else {
             int prior_type = 0;
             float value = 0.f;
             switch (mode) {
-              case semantic_bki::MapColorMode::OSMBuilding:   prior_type = 0; value = building; break;
-              case semantic_bki::MapColorMode::OSMRoad:      prior_type = 1; value = road; break;
-              case semantic_bki::MapColorMode::OSMGrassland:  prior_type = 2; value = grassland; break;
-              case semantic_bki::MapColorMode::OSMTree:     prior_type = 3; value = tree; break;
-              case semantic_bki::MapColorMode::OSMParking:  prior_type = 4; value = parking; break;
-              case semantic_bki::MapColorMode::OSMFence:    prior_type = 5; value = fence; break;
-              case semantic_bki::MapColorMode::OSStairs:    prior_type = 6; value = stairs; break;
+              case osm_bki::MapColorMode::OSMBuilding:   prior_type = 0; value = building; break;
+              case osm_bki::MapColorMode::OSMRoad:      prior_type = 1; value = road; break;
+              case osm_bki::MapColorMode::OSMGrassland:  prior_type = 2; value = grassland; break;
+              case osm_bki::MapColorMode::OSMTree:     prior_type = 3; value = tree; break;
+              case osm_bki::MapColorMode::OSMParking:  prior_type = 4; value = parking; break;
+              case osm_bki::MapColorMode::OSMFence:    prior_type = 5; value = fence; break;
+              case osm_bki::MapColorMode::OSStairs:    prior_type = 6; value = stairs; break;
               default: prior_type = 0; value = building; break;
             }
             osm_prior_map_pub_->insert_point3d_osm_prior(p.x(), p.y(), p.z(), size, value, prior_type);
@@ -1105,8 +1256,8 @@ class MCDData {
         float max_unc = 0.f;
         for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
           auto node = it.get_node();
-          if (node.get_state() != semantic_bki::State::OCCUPIED) continue;
-          semantic_bki::point3f p = it.get_loc();
+          if (node.get_state() != osm_bki::State::OCCUPIED) continue;
+          osm_bki::point3f p = it.get_loc();
           int kx = static_cast<int>(std::floor(p.x() / resolution_));
           int ky = static_cast<int>(std::floor(p.y() / resolution_));
           int kz = static_cast<int>(std::floor(p.z() / resolution_));
@@ -1121,8 +1272,8 @@ class MCDData {
         semantic_uncertainty_pub_->clear_map(static_cast<float>(resolution_));
         for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
           auto node = it.get_node();
-          if (node.get_state() != semantic_bki::State::OCCUPIED) continue;
-          semantic_bki::point3f p = it.get_loc();
+          if (node.get_state() != osm_bki::State::OCCUPIED) continue;
+          osm_bki::point3f p = it.get_loc();
           int kx = static_cast<int>(std::floor(p.x() / resolution_));
           int ky = static_cast<int>(std::floor(p.y() / resolution_));
           int kz = static_cast<int>(std::floor(p.z() / resolution_));
@@ -1318,9 +1469,9 @@ class MCDData {
         
         for (int i = 0; i < (int)cloud->points.size(); ++i) {
           try {
-            semantic_bki::SemanticOcTreeNode node = map_->search(cloud->points[i].x, cloud->points[i].y, cloud->points[i].z);
+            osm_bki::SemanticOcTreeNode node = map_->search(cloud->points[i].x, cloud->points[i].y, cloud->points[i].z);
             int pred_label = 0;
-            if (node.get_state() == semantic_bki::State::OCCUPIED)
+            if (node.get_state() == osm_bki::State::OCCUPIED)
               pred_label = node.get_semantics();
             result_file << (int)cloud->points[i].label << " " << pred_label << "\n";
           } catch (const std::exception& e) {
@@ -1344,15 +1495,15 @@ class MCDData {
     double ds_resolution_;
     double free_resolution_;
     double max_range_;
-    semantic_bki::SemanticBKIOctoMap* map_;
-    semantic_bki::MarkerArrayPub* m_pub_;
-    semantic_bki::MarkerArrayPub* variance_pub_{nullptr};
+    osm_bki::SemanticBKIOctoMap* map_;
+    osm_bki::MarkerArrayPub* m_pub_;
+    osm_bki::MarkerArrayPub* variance_pub_{nullptr};
     bool publish_variance_{false};
-    semantic_bki::MarkerArrayPub* osm_prior_map_pub_{nullptr};
+    osm_bki::MarkerArrayPub* osm_prior_map_pub_{nullptr};
     bool publish_osm_prior_map_{false};
-    semantic_bki::MapColorMode osm_prior_map_color_mode_{semantic_bki::MapColorMode::OSMBlend};
+    osm_bki::MapColorMode osm_prior_map_color_mode_{osm_bki::MapColorMode::OSMBlend};
     std::string variance_topic_;
-    semantic_bki::MarkerArrayPub* semantic_uncertainty_pub_{nullptr};
+    osm_bki::MarkerArrayPub* semantic_uncertainty_pub_{nullptr};
     bool publish_semantic_uncertainty_{false};
     std::string semantic_uncertainty_topic_;
     std::map<VoxelKey, std::pair<float, int>> semantic_uncertainty_acc_;  // per-voxel: (sum_uncertainty, count)
@@ -1393,6 +1544,8 @@ class MCDData {
     int total_points_processed_;
     int total_points_filtered_;
     std::vector<float> scan_point_weights_;
+    /// Per-point common-class probabilities for soft counting (same size as cloud when multiclass + common config).
+    std::vector<std::vector<float>> scan_common_probs_;
 
     pcl::PointCloud<pcl::PointXYZL>::Ptr mcd2pcl(std::string fn, std::string fn_label, bool use_gt_mapping = false) {
       // Open scan file
@@ -1568,7 +1721,9 @@ class MCDData {
       pc->height = 1;
       pc->is_dense = false;
       result.variances.reserve(n_points);
+      result.common_probs.reserve(static_cast<size_t>(n_points));
 
+      std::vector<float> raw_vals(static_cast<size_t>(n_classes));
       for (int i = 0; i < n_points; i++) {
         pcl::PointXYZL point;
         float intensity;
@@ -1582,10 +1737,12 @@ class MCDData {
         // Convert float16 → float32, find argmax, and compute variance
         int best_class = 0;
         float best_val = half_to_float(row_ptr[0]);
+        raw_vals[0] = best_val;
         float sum = best_val;
         float sum_sq = best_val * best_val;
         for (int c = 1; c < n_classes; c++) {
           float v = half_to_float(row_ptr[c]);
+          raw_vals[static_cast<size_t>(c)] = v;
           sum += v;
           sum_sq += v * v;
           if (v > best_val) {
@@ -1598,19 +1755,66 @@ class MCDData {
         if (variance < 0.0f) variance = 0.0f;
         result.variances.push_back(variance);
 
-        // Network class index → raw label (via learning_map_inv) → common class
-        int raw_label = best_class;
-        if (!learning_map_inv_.empty()) {
-          auto it_inv = learning_map_inv_.find(best_class);
-          if (it_inv != learning_map_inv_.end()) raw_label = it_inv->second;
+        // Softmax over network classes (used for both common and native paths)
+        float max_val = raw_vals[0];
+        for (int c = 1; c < n_classes; c++) {
+          if (raw_vals[static_cast<size_t>(c)] > max_val)
+            max_val = raw_vals[static_cast<size_t>(c)];
         }
-        int common_label = raw_label;
+        float softmax_sum = 0.f;
+        std::vector<float> softmax_net(static_cast<size_t>(n_classes));
+        for (int c = 0; c < n_classes; c++) {
+          float v = std::exp(raw_vals[static_cast<size_t>(c)] - max_val);
+          softmax_net[static_cast<size_t>(c)] = v;
+          softmax_sum += v;
+        }
+        if (softmax_sum > 1e-10f) {
+          for (int c = 0; c < n_classes; c++)
+            softmax_net[static_cast<size_t>(c)] /= softmax_sum;
+        }
+
         if (common_label_config_loaded_) {
+          // Map to common taxonomy: point label and soft counts in common space
+          int raw_label = best_class;
+          if (!learning_map_inv_.empty()) {
+            auto it_inv = learning_map_inv_.find(best_class);
+            if (it_inv != learning_map_inv_.end()) raw_label = it_inv->second;
+          }
+          int common_label = raw_label;
           auto it_c = inferred_to_common_.find(raw_label);
           if (it_c != inferred_to_common_.end()) common_label = it_c->second;
           else common_label = 0;
+          point.label = static_cast<uint32_t>(common_label);
+          std::vector<float> common_probs_row(static_cast<size_t>(N_COMMON), 0.f);
+          std::vector<int> common_count(static_cast<size_t>(N_COMMON), 0);
+          for (int k = 0; k < n_classes; k++) {
+            int r = k;
+            if (!learning_map_inv_.empty()) {
+              auto it_inv = learning_map_inv_.find(k);
+              if (it_inv != learning_map_inv_.end()) r = it_inv->second;
+            }
+            it_c = inferred_to_common_.find(r);
+            if (it_c == inferred_to_common_.end()) continue;
+            int c_common = it_c->second;
+            if (c_common >= 0 && c_common < N_COMMON) {
+              common_probs_row[static_cast<size_t>(c_common)] += softmax_net[static_cast<size_t>(k)];
+              common_count[static_cast<size_t>(c_common)] += 1;
+            }
+          }
+          for (int c = 0; c < N_COMMON; ++c) {
+            if (common_count[static_cast<size_t>(c)] > 0)
+              common_probs_row[static_cast<size_t>(c)] /= static_cast<float>(common_count[static_cast<size_t>(c)]);
+          }
+          float row_sum = 0.f;
+          for (int c = 0; c < N_COMMON; ++c) row_sum += common_probs_row[static_cast<size_t>(c)];
+          if (row_sum > 1e-10f)
+            for (int c = 0; c < N_COMMON; ++c) common_probs_row[static_cast<size_t>(c)] /= row_sum;
+          result.common_probs.push_back(std::move(common_probs_row));
+        } else {
+          // No common taxonomy: use network class indices and raw softmax directly
+          point.label = static_cast<uint32_t>(best_class);
+          result.common_probs.push_back(softmax_net);
         }
-        point.label = static_cast<uint32_t>(common_label);
         pc->points.push_back(point);
       }
 

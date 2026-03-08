@@ -15,7 +15,7 @@
 #include <map>
 #include <fstream>
 
-namespace semantic_bki {
+namespace osm_bki {
 
     double interpolate( double val, double y0, double x0, double y1, double x1 ) {
         return (val-x0)*(y1-y0)/(x1-x0) + y0;
@@ -592,6 +592,21 @@ namespace semantic_bki {
         /// Set color mode for map visualization (semantic class vs OSM prior layer).
         void set_color_mode(MapColorMode mode) { color_mode_ = mode; }
         MapColorMode get_color_mode() const { return color_mode_; }
+
+        /// Return the color for a semantic class ID, using the loaded YAML
+        /// color_map_ if available, otherwise falling back to hardcoded palettes.
+        std_msgs::msg::ColorRGBA get_color_for_class(int c, int dataset = 2) const {
+            if (!color_map_.empty()) {
+                auto it = color_map_.find(c);
+                if (it != color_map_.end())
+                    return it->second;
+            }
+            switch (dataset) {
+              case 1:  return KITTISemanticMapColor(c);
+              case 2:  return SemanticKITTISemanticMapColor(c);
+              default: return SemanticMapColor(c);
+            }
+        }
 
         // Load colors from YAML file
         bool load_colors_from_params(rclcpp::Node::SharedPtr node) {

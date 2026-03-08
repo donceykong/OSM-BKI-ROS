@@ -98,17 +98,20 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("uncertainty_filter_mode", "confusion_matrix");
     node->declare_parameter<double>("uncertainty_drop_percent", 10.0);
     node->declare_parameter<double>("uncertainty_min_weight", 0.1);
+    node->declare_parameter<std::string>("config_datasets_dir", "");
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
+    node->declare_parameter<bool>("osm_height_filtering", false);
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
     node->declare_parameter<bool>("publish_variance", false);
-    node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
+    node->declare_parameter<std::string>("variance_topic", "/osm_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
     node->declare_parameter<bool>("publish_static_tf", true);
     node->declare_parameter<bool>("use_pose_index_as_scan_id", false);
+    node->declare_parameter<bool>("use_common_taxonomy", true);
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -144,6 +147,7 @@ int main(int argc, char **argv) {
       if (!lidar_pose_suffix.empty()) lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
       if (!input_label_suffix.empty()) input_label_prefix = sequence_name + "/" + input_label_suffix;
       if (!gt_label_suffix.empty()) gt_label_prefix = sequence_name + "/" + gt_label_suffix;
+      if (!evaluation_result_prefix.empty()) evaluation_result_prefix = sequence_name + "/" + evaluation_result_prefix;
     }
     node->get_parameter<bool>("query", query);
     node->get_parameter<bool>("visualize", visualize);
@@ -151,6 +155,9 @@ int main(int argc, char **argv) {
     // Color configuration
     std::string colors_file;
     node->get_parameter<std::string>("colors_file", colors_file);
+
+    std::string config_datasets_dir;
+    node->get_parameter<std::string>("config_datasets_dir", config_datasets_dir);
     
     // Calibration file
     std::string calibration_file;
@@ -245,26 +252,34 @@ int main(int argc, char **argv) {
     }
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Calibration loaded successfully");
 
-    // Load common taxonomy label mappings (raw labels → common class indices)
-    {
+    // Load common taxonomy label mappings (raw labels → common class indices).
+    // When use_common_taxonomy is false, skip loading and use network class indices directly;
+    // set num_class in config to the network's number of classes (e.g. 29 for MCD).
+    bool use_common_taxonomy = true;
+    node->get_parameter<bool>("use_common_taxonomy", use_common_taxonomy);
+    // Prefer config from source (config_datasets_dir); else use install share
+    std::string pkg_config_datasets;
+    if (!config_datasets_dir.empty()) {
+      pkg_config_datasets = config_datasets_dir;
+      if (pkg_config_datasets.back() != '/') pkg_config_datasets += '/';
+    } else {
+      pkg_config_datasets = ament_index_cpp::get_package_share_directory("osm_bki") + "/config/datasets/";
+    }
+
+    if (use_common_taxonomy) {
       std::string inferred_labels_key, gt_labels_key;
       node->get_parameter<std::string>("inferred_labels_key", inferred_labels_key);
       node->get_parameter<std::string>("gt_labels_key", gt_labels_key);
 
-      std::string common_label_path;
-      size_t dp = dir.rfind("/data/");
-      if (dp != std::string::npos) {
-        common_label_path = dir.substr(0, dp) + "/config/datasets/labels_common.yaml";
-      } else {
-        common_label_path = ament_index_cpp::get_package_share_directory("semantic_bki")
-                            + "/config/datasets/labels_common.yaml";
-      }
+      std::string common_label_path = pkg_config_datasets + "labels_common.yaml";
       if (!mcd_data.load_common_label_config(common_label_path, inferred_labels_key, gt_labels_key)) {
         RCLCPP_FATAL_STREAM(node->get_logger(),
             "Failed to load common label config from " << common_label_path
             << ". Cannot proceed without label mappings.");
         return 1;
       }
+    } else {
+      RCLCPP_INFO(node->get_logger(), "use_common_taxonomy=false: using network class indices (set num_class to network n_classes)");
     }
 
     // Multiclass setup: inferred and/or GT can use per-class scores (float16) instead of single uint32 labels.
@@ -277,10 +292,7 @@ int main(int argc, char **argv) {
         f = "labels_kitti360.yaml";
       else
         f = "labels_semkitti.yaml";
-      size_t dp = dir.rfind("/data/");
-      if (dp != std::string::npos)
-        return dir.substr(0, dp) + "/config/datasets/" + f;
-      return ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/" + f;
+      return pkg_config_datasets + f;
     };
 
     bool inferred_use_multiclass = false, gt_use_multiclass = false;
@@ -309,10 +321,7 @@ int main(int argc, char **argv) {
                                       static_cast<float>(uncertainty_drop_percent),
                                       static_cast<float>(uncertainty_min_weight));
       if (use_uncertainty_filter && !confusion_matrix_file.empty()) {
-        size_t dp = dir.rfind("/data/");
-        std::string cm_path = (dp != std::string::npos)
-            ? dir.substr(0, dp) + "/config/datasets/" + confusion_matrix_file
-            : confusion_matrix_file;
+        std::string cm_path = pkg_config_datasets + confusion_matrix_file;
         if (!mcd_data.load_confusion_matrix(cm_path)) {
           RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load confusion matrix. Uncertainty filtering disabled.");
         }
@@ -333,15 +342,7 @@ int main(int argc, char **argv) {
     if (colors_file.empty()) {
       RCLCPP_WARN_STREAM(node->get_logger(), "WARNING: No colors_file specified in dataset config. Using default hardcoded colors.");
     } else {
-      // Derive config path from dir (<pkg_root>/data/<dataset>)
-      std::string colors_file_path;
-      size_t dp = dir.rfind("/data/");
-      if (dp != std::string::npos) {
-        colors_file_path = dir.substr(0, dp) + "/config/datasets/" + colors_file;
-      } else {
-        colors_file_path = ament_index_cpp::get_package_share_directory("semantic_bki")
-                           + "/config/datasets/" + colors_file;
-      }
+      std::string colors_file_path = pkg_config_datasets + colors_file;
       {
         RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Colors file path: " << colors_file_path);
         RCLCPP_INFO_STREAM(node->get_logger(), "Loading colors from file specified in config: " << colors_file_path);
@@ -357,7 +358,7 @@ int main(int argc, char **argv) {
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Color loading completed");
 
     // Main map always uses semantic colors
-    mcd_data.set_color_mode(semantic_bki::MapColorMode::Semantic);
+    mcd_data.set_color_mode(osm_bki::MapColorMode::Semantic);
 
     mcd_data.set_osm_decay_meters(static_cast<float>(osm_decay_meters));
     mcd_data.set_osm_tree_point_radius(static_cast<float>(osm_tree_point_radius_meters));
@@ -368,7 +369,7 @@ int main(int argc, char **argv) {
       if (osm_file[0] != '/' && !dir.empty()) {
         full_osm_path = dir + "/" + osm_file;
       }
-      semantic_bki::OSMVisualizer osm_vis(node, "");
+      osm_bki::OSMVisualizer osm_vis(node, "");
       if (osm_vis.loadFromOSM(full_osm_path, osm_origin_lat, osm_origin_lon)) {
         osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
         mcd_data.set_osm_buildings(osm_vis.getBuildings());
@@ -385,6 +386,12 @@ int main(int argc, char **argv) {
         mcd_data.set_osm_stairs(osm_vis.getStairs());
         mcd_data.set_osm_water(osm_vis.getWater());
         mcd_data.set_osm_pole_points(osm_vis.getPolePoints());
+        mcd_data.set_osm_road_width(osm_vis.getRoadWidth());
+        mcd_data.set_osm_sidewalk_width(osm_vis.getSidewalkWidth());
+        mcd_data.set_osm_cycleway_width(osm_vis.getCyclewayWidth());
+        mcd_data.set_osm_fence_width(osm_vis.getFenceWidth());
+        mcd_data.set_osm_wall_width(osm_vis.getWallWidth());
+        mcd_data.set_osm_pole_point_radius(osm_vis.getPolePointRadius());
         mcd_data.set_osm_stairs_width(osm_vis.getStairsWidth());
         RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometries for voxel priors: "
             << osm_vis.getBuildings().size() << " buildings, " << osm_vis.getRoads().size() << " roads, "
@@ -405,8 +412,10 @@ int main(int argc, char **argv) {
       double osm_prior_str;
       node->get_parameter<std::string>("osm_confusion_matrix_file", osm_cm_file);
       node->get_parameter<double>("osm_prior_strength", osm_prior_str);
+      bool osm_height_filtering = false;
+      node->get_parameter<bool>("osm_height_filtering", osm_height_filtering);
       bool publish_variance = false;
-      std::string variance_topic = "/semantic_bki_variance";
+      std::string variance_topic = "/osm_bki_variance";
       node->get_parameter<bool>("publish_variance", publish_variance);
       node->get_parameter<std::string>("variance_topic", variance_topic);
       mcd_data.set_publish_variance(publish_variance, variance_topic);
@@ -416,6 +425,7 @@ int main(int argc, char **argv) {
       node->get_parameter<std::string>("semantic_uncertainty_topic", semantic_uncertainty_topic);
       mcd_data.set_publish_semantic_uncertainty(publish_semantic_uncertainty, semantic_uncertainty_topic);
       mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
+      mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
 
       bool publish_osm_prior_map = false;
       std::string osm_prior_map_color_mode_str = "osm_blend";
@@ -423,31 +433,29 @@ int main(int argc, char **argv) {
       node->get_parameter<bool>("publish_osm_prior_map", publish_osm_prior_map);
       node->get_parameter<std::string>("osm_prior_map_color_mode", osm_prior_map_color_mode_str);
       node->get_parameter<std::string>("osm_prior_map_topic", osm_prior_map_topic);
-      semantic_bki::MapColorMode osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
+      osm_bki::MapColorMode osm_color_mode = osm_bki::MapColorMode::OSMBlend;
       if (osm_prior_map_color_mode_str == "osm_building") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMBuilding;
+        osm_color_mode = osm_bki::MapColorMode::OSMBuilding;
       } else if (osm_prior_map_color_mode_str == "osm_road") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMRoad;
+        osm_color_mode = osm_bki::MapColorMode::OSMRoad;
       } else if (osm_prior_map_color_mode_str == "osm_grassland") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMGrassland;
+        osm_color_mode = osm_bki::MapColorMode::OSMGrassland;
       } else if (osm_prior_map_color_mode_str == "osm_tree") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMTree;
+        osm_color_mode = osm_bki::MapColorMode::OSMTree;
       } else if (osm_prior_map_color_mode_str == "osm_parking") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMParking;
+        osm_color_mode = osm_bki::MapColorMode::OSMParking;
       } else if (osm_prior_map_color_mode_str == "osm_fence") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMFence;
+        osm_color_mode = osm_bki::MapColorMode::OSMFence;
       } else if (osm_prior_map_color_mode_str == "osm_blend") {
-        osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
+        osm_color_mode = osm_bki::MapColorMode::OSMBlend;
       }
       mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
+      if (!osm_cm_file.empty()) {
+        std::string cm_path = pkg_config_datasets + osm_cm_file;
+        mcd_data.load_osm_geometry_parameters(cm_path);
+      }
       if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
-        std::string cm_path;
-        size_t data_pos = dir.rfind("/data/");
-        if (data_pos != std::string::npos) {
-          cm_path = dir.substr(0, data_pos) + "/config/datasets/" + osm_cm_file;
-        } else {
-          cm_path = osm_cm_file;
-        }
+        std::string cm_path = pkg_config_datasets + osm_cm_file;
         if (mcd_data.load_osm_confusion_matrix(cm_path)) {
           RCLCPP_INFO_STREAM(node->get_logger(),
               "Loaded OSM confusion matrix from " << cm_path
@@ -455,6 +463,15 @@ int main(int argc, char **argv) {
         } else {
           RCLCPP_WARN_STREAM(node->get_logger(),
               "Failed to load OSM confusion matrix from " << cm_path);
+        }
+        if (osm_height_filtering) {
+          if (mcd_data.load_osm_height_confusion_matrix(cm_path)) {
+            RCLCPP_INFO_STREAM(node->get_logger(),
+                "Loaded OSM height confusion matrix from " << cm_path);
+          } else {
+            RCLCPP_WARN_STREAM(node->get_logger(),
+                "Failed to load OSM height confusion matrix; height filtering disabled");
+          }
         }
       }
     }

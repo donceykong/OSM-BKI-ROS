@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 #include <pcl/point_cloud.h>
@@ -9,7 +11,7 @@
 #include "bkioctree_node.h"
 #include "osm_geometry.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// PCL PointCloud types as input
     typedef pcl::PointXYZL PCLPointType;
@@ -31,9 +33,12 @@ namespace semantic_bki {
             point3f first;
             float second;
             float weight;
-            GPPointType() : first(), second(0), weight(1.0f) {}
-            GPPointType(const point3f& p, float label, float w = 1.0f)
-                : first(p), second(label), weight(w) {}
+            /// Optional soft (multiclass probability) label for counting sensor model; size = num_class.
+            std::shared_ptr<std::vector<float>> soft_probs;
+            GPPointType() : first(), second(0), weight(1.0f), soft_probs() {}
+            GPPointType(const point3f& p, float label, float w = 1.0f,
+                        std::shared_ptr<std::vector<float>> soft = nullptr)
+                : first(p), second(label), weight(w), soft_probs(std::move(soft)) {}
         };
         typedef std::vector<GPPointType> GPPointCloud;
         typedef RTree<GPPointType *, float, 3, float> MyRTree;
@@ -100,6 +105,13 @@ namespace semantic_bki {
         void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
                                float free_res, float max_range,
                                const std::vector<float> &point_weights);
+
+        /// Weighted + soft labels: when multiclass_probs is non-null and matches cloud size,
+        /// uses counting sensor model with soft counts (train_soft + predict_csm).
+        void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs);
 
         /// Get bounding box of the map.
         void get_bbox(point3f &lim_min, point3f &lim_max) const;
@@ -352,6 +364,12 @@ namespace semantic_bki {
         void set_osm_stairs(const std::vector<Geometry2D> &stairs);
         void set_osm_water(const std::vector<Geometry2D> &water);
         void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points);
+        void set_osm_road_width(float width_m);
+        void set_osm_sidewalk_width(float width_m);
+        void set_osm_cycleway_width(float width_m);
+        void set_osm_fence_width(float width_m);
+        void set_osm_wall_width(float width_m);
+        void set_osm_pole_point_radius(float radius_m);
         void set_osm_stairs_width(float width_m);
         void set_osm_decay_meters(float decay_m);
 
@@ -365,6 +383,10 @@ namespace semantic_bki {
         void set_osm_confusion_matrix(const std::vector<std::vector<float>> &matrix,
                                       const std::vector<std::vector<int>> &row_to_labels);
         void set_osm_prior_strength(float strength);
+
+        /// OSM height filter: per-scan relative bins, multiply OSM priors by height confusion matrix.
+        void set_osm_height_filter_enabled(bool enabled);
+        void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
 
         /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
@@ -448,6 +470,12 @@ namespace semantic_bki {
                                float free_resolution, float max_range, GPPointCloud &xy,
                                const std::vector<float> &point_weights) const;
 
+        /// Weighted + soft labels: like above but attaches mean soft probs per voxel for counting sensor model.
+        void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_resolution, float max_range, GPPointCloud &xy,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs) const;
+
         float resolution;
         float block_size;
         unsigned short block_depth;
@@ -469,6 +497,11 @@ namespace semantic_bki {
         std::vector<Geometry2D> osm_water_;
         std::vector<std::pair<float, float>> osm_pole_points_;
         float osm_pole_point_radius_{2.0f};  // Radius (m) for pole/traffic-sign points
+        float osm_road_width_{6.0f};         // Width (m) for road polyline bands
+        float osm_sidewalk_width_{2.0f};     // Width (m) for sidewalk polyline bands
+        float osm_cycleway_width_{2.0f};     // Width (m) for cycleway polyline bands
+        float osm_fence_width_{0.6f};        // Width (m) for fence polyline bands
+        float osm_wall_width_{0.8f};         // Width (m) for wall polyline bands
         float osm_stairs_width_{1.5f};  // Width (m) for stairs polylines; prior = 1 inside width band, decays outside
         float osm_decay_meters_;
 
@@ -479,6 +512,14 @@ namespace semantic_bki {
         float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
+
+        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][OSM_col]
+        bool use_osm_height_filter_{false};
+        bool osm_height_cm_loaded_{false};
+        float osm_height_min_z_{0.f};
+        float osm_height_max_z_{0.f};
+        int osm_height_num_bins_{0};
+        std::vector<std::array<float, N_OSM_PRIOR_COLS>> osm_height_cm_{};
     };
 
 }
