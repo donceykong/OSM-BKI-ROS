@@ -26,17 +26,17 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: velodyne_points/data
     lidar_pose_suffix: velodyne_poses.txt
-    input_label_suffix: gt_labels #inferred_labels/cenet_mcd/multiclass_confidence_scores
+    input_label_suffix: inferred_labels/cenet_mcd/multiclass_confidence_scores
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/ground_truth/
+    evaluation_result_prefix: evaluations/osm_prior/
     query: true
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
-    inferred_use_multiclass: false   # inferred labels from input_label_suffix
+    inferred_use_multiclass: true   # inferred labels from input_label_suffix
     gt_use_multiclass: false         # GT labels from gt_label_suffix
-    inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    inferred_labels_key: mcd   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: kitti360              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
@@ -88,8 +88,8 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized_kitti360.yaml
-    osm_prior_strength: 0.0  # fraction of OSM influence per observation (0.0 = disabled)
-    osm_height_filtering: false  # use height-based filtering for OSM priors
+    osm_prior_strength: 2.0  # fraction of OSM influence per observation (0.0 = disabled)
+    osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
