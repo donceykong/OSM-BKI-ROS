@@ -180,14 +180,15 @@ namespace semantic_bki {
 #endif
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
+            Block *block = nullptr;
 #ifdef OPENMP
 #pragma omp critical
 #endif
             {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
+                block = block_arr[key];
             };
-            Block *block = block_arr[key];
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
                 point3f p = block->get_loc(leaf_it);
@@ -195,9 +196,7 @@ namespace semantic_bki {
                 xs.push_back(p.y());
                 xs.push_back(p.z());
             }
-            //std::cout << "xs size: "<<xs.size() << std::endl;
 
-	          // For counting sensor model
             auto bgk = bgk_arr.find(key);
             if (bgk == bgk_arr.end())
               continue;
@@ -698,14 +697,15 @@ namespace semantic_bki {
 #endif
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
+            Block *block = nullptr;
 #ifdef OPENMP
 #pragma omp critical
 #endif
             {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
+                block = block_arr[key];
             };
-            Block *block = block_arr[key];
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
                 point3f p = block->get_loc(leaf_it);
@@ -713,7 +713,6 @@ namespace semantic_bki {
                 xs.push_back(p.y());
                 xs.push_back(p.z());
             }
-            //std::cout << "xs size: "<<xs.size() << std::endl;
 
             ExtendedBlock eblock = block->get_extended_block();
             for (auto block_it = eblock.cbegin(); block_it != eblock.cend(); ++block_it) {
@@ -1094,14 +1093,15 @@ namespace semantic_bki {
 #endif
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
+            Block *block = nullptr;
 #ifdef OPENMP
 #pragma omp critical
 #endif
             {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
+                block = block_arr[key];
             };
-            Block *block = block_arr[key];
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
                 point3f p = block->get_loc(leaf_it);
