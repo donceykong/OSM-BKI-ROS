@@ -1485,15 +1485,15 @@ def main():
     parser.add_argument("--max-scans", type=int, default=50000)
     parser.add_argument("--skip-frames", type=int, default=2)
     parser.add_argument("--decay", type=float, default=0.0)
-    parser.add_argument("--tree-radius", type=float, default=6.0)
+    parser.add_argument("--tree-radius", type=float, default=4.0)
     parser.add_argument("--pole-radius", type=float, default=2.0)
-    parser.add_argument("--road-width", type=float, default=8.0)
-    parser.add_argument("--sidewalk-width", type=float, default=8.0)
-    parser.add_argument("--cycleway-width", type=float, default=8.0)
+    parser.add_argument("--road-width", type=float, default=4.0)
+    parser.add_argument("--sidewalk-width", type=float, default=2.0)
+    parser.add_argument("--cycleway-width", type=float, default=2.0)
     parser.add_argument("--fence-width", type=float, default=0.6)
     parser.add_argument("--wall-width", type=float, default=0.8)
     parser.add_argument("--stairs-width", type=float, default=10.0)
-    parser.add_argument("--grid-res", type=float, default=0.25,
+    parser.add_argument("--grid-res", type=float, default=2.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")

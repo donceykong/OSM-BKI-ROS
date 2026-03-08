@@ -283,7 +283,9 @@ class MCDData {
     }
 
     /// Read KITTI-360 velodyne_poses.txt format (see scripts/kitti360/visualize_sem_map_KITTI360.py).
-    /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major). Poses are made relative to first pose.
+    /// Each line: frame_index (int) then 12 or 16 floats (3x4 or 4x4 row-major).
+    /// Poses are shifted so the first pose's translation is at origin (translation-only,
+    /// no rotation applied — matching the Python visualize_sem_map_KITTI360.py convention).
     bool read_lidar_poses_kitti360(const std::string& pose_path) {
       std::ifstream f(pose_path);
       if (!f.is_open()) {
@@ -316,11 +318,19 @@ class MCDData {
         RCLCPP_ERROR_STREAM(node_->get_logger(), "No valid poses in " << pose_path);
         return false;
       }
-      original_first_pose_ = lidar_poses_[0];
-      Eigen::Matrix4d first_inv = lidar_poses_[0].inverse();
+      // Store first pose as translation-only (Identity + first translation) so that
+      // transformToFirstPoseOrigin produces a pure translation shift for OSM,
+      // matching the Python: trans = [-first_x, -first_y, 0]
+      Eigen::Vector3d first_t = lidar_poses_[0].block<3, 1>(0, 3);
+      original_first_pose_ = Eigen::Matrix4d::Identity();
+      original_first_pose_.block<3, 1>(0, 3) = first_t;
+
+      // Subtract first pose translation from all poses (keep rotation intact)
       for (size_t i = 0; i < lidar_poses_.size(); ++i)
-        lidar_poses_[i] = first_inv * lidar_poses_[i];
-      RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << lidar_poses_.size() << " KITTI360 poses from " << pose_path << " (relative to first pose)");
+        lidar_poses_[i].block<3, 1>(0, 3) -= first_t;
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << lidar_poses_.size()
+          << " KITTI360 poses from " << pose_path
+          << " (shifted by first translation [" << first_t.x() << ", " << first_t.y() << ", " << first_t.z() << "])");
       return true;
     }
     
@@ -1004,12 +1014,32 @@ class MCDData {
           RCLCPP_INFO_STREAM(node_->get_logger(), "  Verification - lidar origin in map coords: [" << map_origin_test(0) << ", " << map_origin_test(1) << ", " << map_origin_test(2) << "]");
         }
         
-        // Publish individual scan as PointCloud2 (in lidar frame, before transformation)
-        sensor_msgs::msg::PointCloud2 cloud_msg;
-        pcl::toROSMsg(*cloud, cloud_msg);
-        cloud_msg.header.frame_id = "lidar";
-        cloud_msg.header.stamp = node_->now();
-        pointcloud_pub_->publish(cloud_msg);
+        // Transform cloud from lidar frame to map frame (once, before publish and insertion)
+        pcl::transformPointCloud(*cloud, *cloud, lidar_to_map.cast<float>());
+
+        // Publish scan as PointCloud2 in map frame with label-based RGB colors
+        {
+          pcl::PointCloud<pcl::PointXYZRGB> rgb_cloud;
+          rgb_cloud.width = static_cast<uint32_t>(cloud->points.size());
+          rgb_cloud.height = 1;
+          rgb_cloud.is_dense = true;
+          rgb_cloud.points.resize(cloud->points.size());
+          for (size_t i = 0; i < cloud->points.size(); ++i) {
+            rgb_cloud.points[i].x = cloud->points[i].x;
+            rgb_cloud.points[i].y = cloud->points[i].y;
+            rgb_cloud.points[i].z = cloud->points[i].z;
+            std_msgs::msg::ColorRGBA color = m_pub_->get_color_for_class(
+                static_cast<int>(cloud->points[i].label), 2);
+            rgb_cloud.points[i].r = static_cast<uint8_t>(std::min(255, static_cast<int>(color.r * 255.0f + 0.5f)));
+            rgb_cloud.points[i].g = static_cast<uint8_t>(std::min(255, static_cast<int>(color.g * 255.0f + 0.5f)));
+            rgb_cloud.points[i].b = static_cast<uint8_t>(std::min(255, static_cast<int>(color.b * 255.0f + 0.5f)));
+          }
+          sensor_msgs::msg::PointCloud2 cloud_msg;
+          pcl::toROSMsg(rgb_cloud, cloud_msg);
+          cloud_msg.header.frame_id = "map";
+          cloud_msg.header.stamp = node_->now();
+          pointcloud_pub_->publish(cloud_msg);
+        }
 
         // Accumulate semantic uncertainty per voxel (for map visualization)
         if (orig_cloud_for_unc && !orig_variances_copy.empty() && publish_semantic_uncertainty_) {
@@ -1030,15 +1060,13 @@ class MCDData {
         }
 
         if (insertion_count == 0) {
-          RCLCPP_INFO_STREAM(node_->get_logger(), "Published PointCloud2 with " << cloud->points.size() << " points in frame 'lidar'");
+          RCLCPP_INFO_STREAM(node_->get_logger(), "Published PointCloud2 with " << cloud->points.size() << " points in frame 'map'");
         }
         
-        // Now transform cloud to world frame for map insertion
-        pcl::transformPointCloud(*cloud, *cloud, lidar_to_map);
-        
-        origin.x() = transform(0, 3);
-        origin.y() = transform(1, 3);
-        origin.z() = transform(2, 3);
+        // Cloud is already in map frame. Sensor origin from lidar_to_map translation.
+        origin.x() = lidar_to_map(0, 3);
+        origin.y() = lidar_to_map(1, 3);
+        origin.z() = lidar_to_map(2, 3);
         
         try {
           if (!scan_common_probs_.empty() && scan_common_probs_.size() == cloud->points.size()) {

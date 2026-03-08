@@ -236,20 +236,29 @@ int main(int argc, char** argv) {
             fPoses.close();
             
             if (!poses.empty()) {
-                Eigen::Matrix4d first_pose = poses[0];
-                RCLCPP_INFO_STREAM(node->get_logger(), "First pose - Translation: [" << first_pose(0,3) << ", " << first_pose(1,3) << ", " << first_pose(2,3) << "]");
+                Eigen::Vector3d first_t(poses[0](0,3), poses[0](1,3), poses[0](2,3));
+                RCLCPP_INFO_STREAM(node->get_logger(), "First pose - Translation: [" << first_t.x() << ", " << first_t.y() << ", " << first_t.z() << "]");
+
+                // For KITTI-360: translation-only shift (matching Python visualize_map_osm.py).
+                // For MCD: full 4x4 inverse.
+                Eigen::Matrix4d first_pose_for_osm;
+                if (pose_format == "kitti360") {
+                    first_pose_for_osm = Eigen::Matrix4d::Identity();
+                    first_pose_for_osm.block<3, 1>(0, 3) = first_t;
+                } else {
+                    first_pose_for_osm = poses[0];
+                }
                 RCLCPP_INFO(node->get_logger(), "Transforming OSM data to first pose origin (so both start at 0,0,0)...");
-                visualizer.transformToFirstPoseOrigin(first_pose);
+                visualizer.transformToFirstPoseOrigin(first_pose_for_osm);
                 RCLCPP_INFO(node->get_logger(), "OSM data transformed to first pose origin.");
                 
-                // Build path in first-pose frame (same as OSM) for debugging
-                Eigen::Matrix4d first_pose_inverse = first_pose.inverse();
+                // Build path in first-pose frame (same as OSM)
                 std::vector<std::pair<float, float>> path;
                 path.reserve(poses.size());
                 for (const auto& T : poses) {
-                    Eigen::Vector4d p_world(T(0, 3), T(1, 3), T(2, 3), 1.0);
-                    Eigen::Vector4d p_local = first_pose_inverse * p_world;
-                    path.push_back({ static_cast<float>(p_local(0)), static_cast<float>(p_local(1)) });
+                    float px = static_cast<float>(T(0, 3) - first_t.x());
+                    float py = static_cast<float>(T(1, 3) - first_t.y());
+                    path.push_back({ px, py });
                 }
                 visualizer.setPath(path);
                 RCLCPP_INFO_STREAM(node->get_logger(), "Lidar path loaded: " << path.size() << " poses (green polyline in RViz).");

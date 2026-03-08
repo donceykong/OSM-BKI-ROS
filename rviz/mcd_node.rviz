@@ -6,6 +6,7 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
+        - /PointCloud21
       Splitter Ratio: 0.5
     Tree Height: 1681
   - Class: rviz_common/Selection
@@ -25,7 +26,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: PointCloud2
 Visualization Manager:
   Class: ""
   Displays:
@@ -33,7 +34,7 @@ Visualization Manager:
       Cell Size: 1
       Class: rviz_default_plugins/Grid
       Color: 160; 160; 164
-      Enabled: true
+      Enabled: false
       Line Style:
         Line Width: 0.029999999329447746
         Value: Lines
@@ -46,7 +47,7 @@ Visualization Manager:
       Plane: XY
       Plane Cell Count: 10
       Reference Frame: <Fixed Frame>
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -57,14 +58,14 @@ Visualization Manager:
       Channel Name: x
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: Intensity
+      Color Transformer: RGB8
       Decay Time: 0
-      Enabled: false
+      Enabled: true
       Invert Rainbow: false
       Max Color: 0; 0; 0
-      Max Intensity: 79.76319122314453
+      Max Intensity: 142.08876037597656
       Min Color: 0; 0; 0
-      Min Intensity: -77.6485595703125
+      Min Intensity: -28.088581085205078
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true
@@ -79,7 +80,7 @@ Visualization Manager:
         Value: /mcd_scan_pointcloud
       Use Fixed Frame: true
       Use rainbow: false
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/TF
       Enabled: false
       Filter (blacklist): ""
@@ -121,17 +122,17 @@ Visualization Manager:
         Value: /osm_geometries
       Value: true
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Semantic Map
       Namespaces:
-        map: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /occupied_cells_vis_array
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: false
       Name: variance_map
@@ -193,16 +194,16 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/XYOrbit
-      Distance: 425.2450256347656
+      Distance: 458.5559387207031
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 136.73358154296875
-        Y: 145.01577758789062
-        Z: 0.00026217682170681655
+        X: 67.133056640625
+        Y: 0.7126486897468567
+        Z: 0.0010627229930832982
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: true
