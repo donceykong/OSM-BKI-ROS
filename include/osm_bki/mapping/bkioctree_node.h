@@ -2,7 +2,7 @@
 
 #include <vector>
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// Occupancy state: before pruning: FREE, OCCUPIED, UNKNOWN; after pruning: PRUNED
     enum class State : char {

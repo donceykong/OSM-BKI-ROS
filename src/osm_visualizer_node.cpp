@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
                 }
             } else {
                 try {
-                    std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");
+                    std::string pkg_share = ament_index_cpp::get_package_share_directory("osm_bki");
                     full_path = pkg_share + "/data/mcd/" + osm_file;
                 } catch (...) {}
             }
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     RCLCPP_INFO_STREAM(node->get_logger(), "OSM Visualizer: Loading " << full_path);
     RCLCPP_INFO_STREAM(node->get_logger(), "  Origin: (" << osm_origin_lat << ", " << osm_origin_lon << "), Topic: " << topic);
 
-    semantic_bki::OSMVisualizer visualizer(node, topic);
+    osm_bki::OSMVisualizer visualizer(node, topic);
     visualizer.setTreePointRadius(static_cast<float>(tree_point_radius_meters));
     visualizer.setPolePointRadius(static_cast<float>(pole_point_radius_meters));
     visualizer.setRoadWidth(static_cast<float>(road_width_meters));
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
                 if (!config_datasets_dir.empty()) {
                     cm_path = config_datasets_dir + (config_datasets_dir.back() == '/' ? "" : "/") + osm_confusion_matrix_file;
                 } else {
-                    std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");
+                    std::string pkg_share = ament_index_cpp::get_package_share_directory("osm_bki");
                     cm_path = pkg_share + "/config/datasets/" + osm_confusion_matrix_file;
                 }
             }
@@ -162,7 +162,7 @@ int main(int argc, char** argv) {
                 full_pose_path = data_dir + "/" + lidar_pose_file;
             } else {
                 try {
-                    std::string pkg_share = ament_index_cpp::get_package_share_directory("semantic_bki");
+                    std::string pkg_share = ament_index_cpp::get_package_share_directory("osm_bki");
                     full_pose_path = pkg_share + "/data/mcd/" + lidar_pose_file;
                 } catch (...) {
                     RCLCPP_WARN(node->get_logger(), "Could not determine package share directory, using pose file as-is");

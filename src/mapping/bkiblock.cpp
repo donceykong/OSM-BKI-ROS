@@ -3,7 +3,7 @@
 
 #include "bkiblock.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     std::unordered_map<OcTreeHashKey, point3f> init_key_loc_map(float resolution, unsigned short max_depth) {
         std::unordered_map<OcTreeHashKey, point3f> key_loc_map;

@@ -2,7 +2,7 @@
 
 #include "bkioctomap.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
 	/*
      * @brief Bayesian Generalized Kernel Inference on Bernoulli distribution

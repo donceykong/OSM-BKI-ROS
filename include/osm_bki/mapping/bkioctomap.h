@@ -11,7 +11,7 @@
 #include "bkioctree_node.h"
 #include "osm_geometry.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// PCL PointCloud types as input
     typedef pcl::PointXYZL PCLPointType;

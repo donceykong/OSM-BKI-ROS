@@ -26,8 +26,8 @@ def _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_over
 
 
 def generate_launch_description():
-    pkg_arg = DeclareLaunchArgument('pkg', default_value='semantic_bki', description='Package name')
-    method_arg = DeclareLaunchArgument('method', default_value='semantic_bki', description='Method name')
+    pkg_arg = DeclareLaunchArgument('pkg', default_value='osm_bki', description='Package name')
+    method_arg = DeclareLaunchArgument('method', default_value='osm_bki', description='Method name')
     dataset_arg = DeclareLaunchArgument('dataset', default_value='cu_north_campus', description='Dataset name')
     data_root_arg = DeclareLaunchArgument(
         'data_root', default_value='',
@@ -40,11 +40,11 @@ def generate_launch_description():
 
 
 def launch_setup(context):
-    method = context.launch_configurations.get('method', 'semantic_bki')
+    method = context.launch_configurations.get('method', 'osm_bki')
     dataset = context.launch_configurations.get('dataset', 'cu_north_campus')
     data_root_override = context.launch_configurations.get('data_root', '')
 
-    pkg_share_dir = get_package_share_directory('semantic_bki')
+    pkg_share_dir = get_package_share_directory('osm_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
     pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     if not os.path.isdir(os.path.join(pkg_src_dir, 'config')):
@@ -66,7 +66,7 @@ def launch_setup(context):
     ]
 
     mcd_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='mcd_node',
         name='mcd_node',
         output='screen',
@@ -82,7 +82,7 @@ def launch_setup(context):
     )
 
     osm_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',

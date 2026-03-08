@@ -19,7 +19,7 @@ using std::vector;
 std::cout << "Debug: " << msg << std::endl; }
 #endif
 
-namespace semantic_bki {
+namespace osm_bki {
 
     SemanticBKIOctoMap::SemanticBKIOctoMap() : SemanticBKIOctoMap(0.1f, // resolution
                                         4, // block_depth

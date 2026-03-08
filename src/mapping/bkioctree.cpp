@@ -2,7 +2,7 @@
 
 #include "bkioctree.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     unsigned short SemanticOcTree::max_depth = 0;
 

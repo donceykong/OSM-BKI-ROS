@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
     node->declare_parameter<bool>("publish_variance", false);
-    node->declare_parameter<std::string>("variance_topic", "/semantic_bki_variance");
+    node->declare_parameter<std::string>("variance_topic", "/osm_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
     node->declare_parameter<bool>("use_common_taxonomy", true);
@@ -136,6 +136,7 @@ int main(int argc, char **argv) {
         if (!lidar_pose_suffix.empty()) lidar_pose_file = sequence_name + "/" + lidar_pose_suffix;
         if (!input_label_suffix.empty()) input_label_prefix = sequence_name + "/" + input_label_suffix;
         if (!gt_label_suffix.empty()) gt_label_prefix = sequence_name + "/" + gt_label_suffix;
+        if (!evaluation_result_prefix.empty()) evaluation_result_prefix = sequence_name + "/" + evaluation_result_prefix;
     }
     node->get_parameter<bool>("query", query);
     node->get_parameter<bool>("visualize", visualize);
@@ -174,7 +175,7 @@ int main(int argc, char **argv) {
         pkg_config_datasets = config_datasets_dir;
         if (pkg_config_datasets.back() != '/') pkg_config_datasets += '/';
     } else {
-        pkg_config_datasets = ament_index_cpp::get_package_share_directory("semantic_bki") + "/config/datasets/";
+        pkg_config_datasets = ament_index_cpp::get_package_share_directory("osm_bki") + "/config/datasets/";
     }
 
     bool use_common_taxonomy = true;
@@ -240,7 +241,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    mcd_data.set_color_mode(semantic_bki::MapColorMode::Semantic);
+    mcd_data.set_color_mode(osm_bki::MapColorMode::Semantic);
     mcd_data.set_osm_decay_meters(static_cast<float>(osm_decay_meters));
     mcd_data.set_osm_tree_point_radius(static_cast<float>(osm_tree_point_radius_meters));
 
@@ -252,7 +253,7 @@ int main(int argc, char **argv) {
             else
                 full_osm_path = dir + "/" + osm_file;
         }
-        semantic_bki::OSMVisualizer osm_vis(node, "");
+        osm_bki::OSMVisualizer osm_vis(node, "");
         if (osm_vis.loadFromOSM(full_osm_path, osm_origin_lat, osm_origin_lon)) {
             osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
             mcd_data.set_osm_buildings(osm_vis.getBuildings());
@@ -290,7 +291,7 @@ int main(int argc, char **argv) {
         bool osm_height_filtering = false;
         node->get_parameter<bool>("osm_height_filtering", osm_height_filtering);
         bool publish_variance = false;
-        std::string variance_topic = "/semantic_bki_variance";
+        std::string variance_topic = "/osm_bki_variance";
         node->get_parameter<bool>("publish_variance", publish_variance);
         node->get_parameter<std::string>("variance_topic", variance_topic);
         mcd_data.set_publish_variance(publish_variance, variance_topic);
@@ -306,13 +307,13 @@ int main(int argc, char **argv) {
         node->get_parameter<bool>("publish_osm_prior_map", publish_osm_prior_map);
         node->get_parameter<std::string>("osm_prior_map_color_mode", osm_prior_map_color_mode_str);
         node->get_parameter<std::string>("osm_prior_map_topic", osm_prior_map_topic);
-        semantic_bki::MapColorMode osm_color_mode = semantic_bki::MapColorMode::OSMBlend;
-        if (osm_prior_map_color_mode_str == "osm_building") osm_color_mode = semantic_bki::MapColorMode::OSMBuilding;
-        else if (osm_prior_map_color_mode_str == "osm_road") osm_color_mode = semantic_bki::MapColorMode::OSMRoad;
-        else if (osm_prior_map_color_mode_str == "osm_grassland") osm_color_mode = semantic_bki::MapColorMode::OSMGrassland;
-        else if (osm_prior_map_color_mode_str == "osm_tree") osm_color_mode = semantic_bki::MapColorMode::OSMTree;
-        else if (osm_prior_map_color_mode_str == "osm_parking") osm_color_mode = semantic_bki::MapColorMode::OSMParking;
-        else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = semantic_bki::MapColorMode::OSMFence;
+        osm_bki::MapColorMode osm_color_mode = osm_bki::MapColorMode::OSMBlend;
+        if (osm_prior_map_color_mode_str == "osm_building") osm_color_mode = osm_bki::MapColorMode::OSMBuilding;
+        else if (osm_prior_map_color_mode_str == "osm_road") osm_color_mode = osm_bki::MapColorMode::OSMRoad;
+        else if (osm_prior_map_color_mode_str == "osm_grassland") osm_color_mode = osm_bki::MapColorMode::OSMGrassland;
+        else if (osm_prior_map_color_mode_str == "osm_tree") osm_color_mode = osm_bki::MapColorMode::OSMTree;
+        else if (osm_prior_map_color_mode_str == "osm_parking") osm_color_mode = osm_bki::MapColorMode::OSMParking;
+        else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = osm_bki::MapColorMode::OSMFence;
         mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
         if (!osm_cm_file.empty()) {
             std::string cm_path = pkg_config_datasets + osm_cm_file;

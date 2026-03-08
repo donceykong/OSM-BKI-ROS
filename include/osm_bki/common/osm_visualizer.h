@@ -18,7 +18,7 @@
 #include <osmium/osm/location.hpp>
 #include "osm_geometry.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     class OSMVisualizer {
     public:
@@ -204,4 +204,4 @@ namespace semantic_bki {
         bool transformed_; // Flag to track if data has already been transformed
     };
 
-} // namespace semantic_bki
+} // namespace osm_bki

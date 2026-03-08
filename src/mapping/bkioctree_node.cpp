@@ -3,7 +3,7 @@
 
 #include "bkioctree_node.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// Default static values
     int Semantics::num_class = 2;

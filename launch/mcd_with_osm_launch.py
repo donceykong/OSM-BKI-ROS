@@ -30,13 +30,13 @@ def generate_launch_description():
     # Declare launch arguments
     pkg_arg = DeclareLaunchArgument(
         'pkg',
-        default_value='semantic_bki',
+        default_value='osm_bki',
         description='Package name'
     )
     
     method_arg = DeclareLaunchArgument(
         'method',
-        default_value='semantic_bki',
+        default_value='osm_bki',
         description='Method name'
     )
     
@@ -97,7 +97,7 @@ def generate_launch_description():
 
 
 def launch_setup(context):
-    method = context.launch_configurations.get('method', 'semantic_bki')
+    method = context.launch_configurations.get('method', 'osm_bki')
     dataset = context.launch_configurations.get('dataset', 'mcd')
     data_root_override = context.launch_configurations.get('data_root', '')
     color_mode = context.launch_configurations.get('color_mode', 'semantic')
@@ -106,7 +106,7 @@ def launch_setup(context):
     osm_origin_lon = context.launch_configurations.get('osm_origin_lon', '0.0')
     osm_decay_meters = context.launch_configurations.get('osm_decay_meters', '2.0')
 
-    pkg_share_dir = get_package_share_directory('semantic_bki')
+    pkg_share_dir = get_package_share_directory('osm_bki')
     ws_root = os.path.abspath(os.path.join(pkg_share_dir, '..', '..', '..', '..'))
     pkg_src_dir = os.path.join(ws_root, 'src', 'OSM-BKI-ROS')
     if not os.path.isdir(os.path.join(pkg_src_dir, 'config')):
@@ -152,7 +152,7 @@ def launch_setup(context):
         })
     
     mcd_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='mcd_node',
         name='mcd_node',
         output='screen',
@@ -161,7 +161,7 @@ def launch_setup(context):
     
     # OSM visualizer uses same config (mcd.yaml) and data_dir from launch; config from src
     osm_node = Node(
-        package='semantic_bki',
+        package='osm_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',

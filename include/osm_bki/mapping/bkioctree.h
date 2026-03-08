@@ -6,7 +6,7 @@
 #include "point3f.h"
 #include "bkioctree_node.h"
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// Hash key to index OcTree nodes given depth and the index in that layer.
     typedef int OcTreeHashKey;

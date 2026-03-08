@@ -143,7 +143,7 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /semantic_bki_variance
+        Value: /osm_bki_variance
       Value: false
   Enabled: true
   Global Options:

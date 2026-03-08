@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(semantic_bki)
+project(osm_bki)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -100,9 +100,9 @@ endif()
 ###########
 
 include_directories(
-  include/semantic_bki/common
-  include/semantic_bki/mapping
-  include/semantic_bki/dataset_devkit
+  include/osm_bki/common
+  include/osm_bki/mapping
+  include/osm_bki/dataset_devkit
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}

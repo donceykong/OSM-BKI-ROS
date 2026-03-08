@@ -24,7 +24,7 @@
 namespace {
 
     /// Add polygon outline (outer ring + holes) as line segments to marker.
-    void addPolygonOutlineToMarker(const semantic_bki::Geometry2D& poly,
+    void addPolygonOutlineToMarker(const osm_bki::Geometry2D& poly,
                                    visualization_msgs::msg::Marker& marker) {
         auto addRing = [&](const std::vector<std::pair<float, float>>& coords) {
             if (coords.size() < 2) return;
@@ -93,19 +93,19 @@ namespace {
         static constexpr double EARTH_RADIUS_M = 6378137.0;
 
         OSMGeometryHandler(double origin_lat, double origin_lon,
-                          std::vector<semantic_bki::Geometry2D>& buildings,
-                          std::vector<semantic_bki::Geometry2D>& roads,
-                          std::vector<semantic_bki::Geometry2D>& sidewalks,
-                          std::vector<semantic_bki::Geometry2D>& cycleways,
-                          std::vector<semantic_bki::Geometry2D>& walls,
-                          std::vector<semantic_bki::Geometry2D>& water,
+                          std::vector<osm_bki::Geometry2D>& buildings,
+                          std::vector<osm_bki::Geometry2D>& roads,
+                          std::vector<osm_bki::Geometry2D>& sidewalks,
+                          std::vector<osm_bki::Geometry2D>& cycleways,
+                          std::vector<osm_bki::Geometry2D>& walls,
+                          std::vector<osm_bki::Geometry2D>& water,
                           std::vector<std::pair<float, float>>& pole_points,
-                          std::vector<semantic_bki::Geometry2D>& parking,
-                          std::vector<semantic_bki::Geometry2D>& fences,
-                          std::vector<semantic_bki::Geometry2D>& stairs,
-                          std::vector<semantic_bki::Geometry2D>& grasslands,
-                          std::vector<semantic_bki::Geometry2D>& trees,
-                          std::vector<semantic_bki::Geometry2D>& forests,
+                          std::vector<osm_bki::Geometry2D>& parking,
+                          std::vector<osm_bki::Geometry2D>& fences,
+                          std::vector<osm_bki::Geometry2D>& stairs,
+                          std::vector<osm_bki::Geometry2D>& grasslands,
+                          std::vector<osm_bki::Geometry2D>& trees,
+                          std::vector<osm_bki::Geometry2D>& forests,
                           std::vector<std::pair<float, float>>& tree_points)
             : origin_lat_(origin_lat), origin_lon_(origin_lon),
               buildings_(buildings), roads_(roads), sidewalks_(sidewalks), cycleways_(cycleways),
@@ -158,7 +158,7 @@ namespace {
 
         void way(const osmium::Way& way) {
             // Extract node coordinates
-            semantic_bki::Geometry2D geom;
+            osm_bki::Geometry2D geom;
             for (const auto& node_ref : way.nodes()) {
                 const osmium::Location& location = node_ref.location();
                 if (location.valid()) {
@@ -314,9 +314,9 @@ namespace {
         }
 
         /// Helper: extract outer + inner rings from area into polygons with holes, push to container.
-        void push_area_with_holes(const osmium::Area& area, std::vector<semantic_bki::Geometry2D>& container) {
+        void push_area_with_holes(const osmium::Area& area, std::vector<osm_bki::Geometry2D>& container) {
             for (const auto& outer_ring : area.outer_rings()) {
-                semantic_bki::Geometry2D geom;
+                osm_bki::Geometry2D geom;
                 for (const auto& node_ref : outer_ring) {
                     const osmium::Location& location = node_ref.location();
                     if (location.valid()) {
@@ -324,7 +324,7 @@ namespace {
                     }
                 }
                 for (const auto& inner_ring : area.inner_rings(outer_ring)) {
-                    semantic_bki::Geometry2D hole;
+                    osm_bki::Geometry2D hole;
                     for (const auto& node_ref : inner_ring) {
                         const osmium::Location& location = node_ref.location();
                         if (location.valid()) {
@@ -413,24 +413,24 @@ namespace {
     private:
         double origin_lat_, origin_lon_;
         double scale_, origin_mx_, origin_my_;
-        std::vector<semantic_bki::Geometry2D>& buildings_;
-        std::vector<semantic_bki::Geometry2D>& roads_;
-        std::vector<semantic_bki::Geometry2D>& sidewalks_;
-        std::vector<semantic_bki::Geometry2D>& cycleways_;
-        std::vector<semantic_bki::Geometry2D>& walls_;
-        std::vector<semantic_bki::Geometry2D>& water_;
+        std::vector<osm_bki::Geometry2D>& buildings_;
+        std::vector<osm_bki::Geometry2D>& roads_;
+        std::vector<osm_bki::Geometry2D>& sidewalks_;
+        std::vector<osm_bki::Geometry2D>& cycleways_;
+        std::vector<osm_bki::Geometry2D>& walls_;
+        std::vector<osm_bki::Geometry2D>& water_;
         std::vector<std::pair<float, float>>& pole_points_;
-        std::vector<semantic_bki::Geometry2D>& parking_;
-        std::vector<semantic_bki::Geometry2D>& fences_;
-        std::vector<semantic_bki::Geometry2D>& stairs_;
-        std::vector<semantic_bki::Geometry2D>& grasslands_;
-        std::vector<semantic_bki::Geometry2D>& trees_;
-        std::vector<semantic_bki::Geometry2D>& forests_;
+        std::vector<osm_bki::Geometry2D>& parking_;
+        std::vector<osm_bki::Geometry2D>& fences_;
+        std::vector<osm_bki::Geometry2D>& stairs_;
+        std::vector<osm_bki::Geometry2D>& grasslands_;
+        std::vector<osm_bki::Geometry2D>& trees_;
+        std::vector<osm_bki::Geometry2D>& forests_;
         std::vector<std::pair<float, float>>& tree_points_;
     };
 }
 
-namespace semantic_bki {
+namespace osm_bki {
 
     OSMVisualizer::OSMVisualizer(rclcpp::Node::SharedPtr node, const std::string& topic) 
         : node_(node), topic_(topic), frame_id_("map"), transformed_(false) {
@@ -1464,4 +1464,4 @@ namespace semantic_bki {
         // RCLCPP_INFO_STREAM(node_->get_logger(), "OSM geometries (buildings, roads, grasslands, trees) transformed to first pose origin frame.");
     }
 
-} // namespace semantic_bki
+} // namespace osm_bki

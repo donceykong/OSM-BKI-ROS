@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace semantic_bki {
+namespace osm_bki {
 
     /// 2D polygon (list of (x,y) vertices; same convention as OSMVisualizer).
     /// Optional holes (inner rings): points inside a hole are considered outside the filled polygon.

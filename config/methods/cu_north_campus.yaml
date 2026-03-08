@@ -55,7 +55,7 @@
 
     # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
     publish_variance: false
-    variance_topic: /semantic_bki_variance
+    variance_topic: /osm_bki_variance
 
     # Semantic uncertainty map: publish accumulated input observation uncertainty per voxel (like variance map).
     # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.

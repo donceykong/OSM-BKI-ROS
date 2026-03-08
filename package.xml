@@ -1,9 +1,9 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>semantic_bki</name>
+  <name>osm_bki</name>
   <version>0.0.1</version>
-  <description>The semantic_bki package</description>
+  <description>The osm_bki package</description>
   <maintainer email="ganlu@umich.edu">Lu Gan</maintainer>
   <license>MIT</license>
   <author email="ganlu@umich.edu">Lu Gan</author>
