@@ -1,0 +1,19 @@
+services:
+  osm-bki:
+    build: .
+    container_name: osm-bki
+    network_mode: host
+    ipc: host
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - ROS_DOMAIN_ID=0
+    volumes:
+      # Mount dataset directory at the same path configs expect
+      - /media/donceykong/doncey_ssd_03/datasets:/media/donceykong/doncey_ssd_03/datasets
+      # X11 forwarding for RViz
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
+    stdin_open: true
+    tty: true
