@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_03/datasets/"
+    data_root: "/media/sgarimella34/hercules-collect/datasets/"
 
     # Map information
     resolution: 0.5
@@ -26,7 +26,7 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: velodyne_points/data
     lidar_pose_suffix: velodyne_poses.txt
-    input_label_suffix: inferred_labels/cenet_mcd/multiclass_confidence_scores
+    input_label_suffix: inferred_labels/cenet_mcd_softmax
     gt_label_suffix: gt_labels
 
     evaluation_result_prefix: evaluations/osm_prior/

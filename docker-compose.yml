@@ -11,7 +11,7 @@ services:
       - ROS_DOMAIN_ID=0
     volumes:
       # Mount dataset directory at the same path configs expect
-      - /media/donceykong/doncey_ssd_03/datasets:/media/donceykong/doncey_ssd_03/datasets
+      - /media/sgarimella34/hercules-collect/datasets:/media/sgarimella34/hercules-collect/datasets
       # X11 forwarding for RViz
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/.Xauthority:/root/.Xauthority:ro
