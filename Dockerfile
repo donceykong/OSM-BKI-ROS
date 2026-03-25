@@ -21,14 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-tf2-eigen \
     ros-humble-rviz2 \
     python3-pip \
-    python3-numpy \
-    python3-scipy \
-    python3-matplotlib \
     python3-yaml \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages not available via apt
-RUN pip3 install --no-cache-dir shapely tqdm
+# Install all Python scientific packages via pip to avoid numpy version conflicts
+RUN pip3 install --no-cache-dir numpy scipy matplotlib shapely tqdm rasterio pyproj
 
 # Create ROS2 workspace
 RUN mkdir -p /ros2_ws/src

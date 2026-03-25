@@ -11,7 +11,10 @@ services:
       - ROS_DOMAIN_ID=0
     volumes:
       # Mount dataset directory at the same path configs expect
-      - /media/sgarimella34/hercules-collect/datasets:/media/sgarimella34/hercules-collect/datasets
+      - /media/sgarimella34/hercules-collect1/datasets:/media/sgarimella34/hercules-collect1/datasets
+      # DEM and DSM tile directories
+      - /media/sgarimella34/hercules-collect1/kitti360_DGM025:/media/sgarimella34/hercules-collect1/kitti360_DGM025
+      - /media/sgarimella34/hercules-collect1/kitti360_DOM1:/media/sgarimella34/hercules-collect1/kitti360_DOM1
       # X11 forwarding for RViz
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/.Xauthority:/root/.Xauthority:ro

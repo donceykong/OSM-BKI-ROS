@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/sgarimella34/hercules-collect/datasets/"
+    data_root: "/media/sgarimella34/hercules-collect1/datasets/"
 
     # Map information
     resolution: 0.5
