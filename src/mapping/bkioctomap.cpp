@@ -212,6 +212,7 @@ namespace osm_bki {
                 float ybar_sum = 0.f;
                 for (auto v : ybars[j]) ybar_sum += std::abs(v);
                 apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
 
                 node.update(ybars[j]);
             }
@@ -341,6 +342,54 @@ namespace osm_bki {
                 osm_height_cm_[static_cast<size_t>(r)][static_cast<size_t>(c)] = matrix[r][c];
         }
         osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
+    }
+
+    void SemanticBKIOctoMap::set_dem_grids(std::unique_ptr<DEMHeightQuery> dem, std::unique_ptr<DEMHeightQuery> dsm) {
+        dem_query_ = std::move(dem);
+        dsm_query_ = std::move(dsm);
+    }
+
+    void SemanticBKIOctoMap::set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau) {
+        height_kernel_lambda_ = lambda;
+        height_kernel_mu_ = mu;
+        height_kernel_tau_ = tau;
+    }
+
+    void SemanticBKIOctoMap::set_dem_occupancy_prior(float strength, float margin) {
+        dem_occupancy_strength_ = strength;
+        dem_occupancy_margin_ = margin;
+    }
+
+    void SemanticBKIOctoMap::apply_height_kernel_to_ybars(std::vector<float> &ybars,
+                                                           float x, float y, float z) const {
+        if (!dem_query_ || !dem_query_->is_loaded() || height_kernel_lambda_ <= 0.f) return;
+
+        float h = dem_query_->height_above_ground(x, y, z);
+        if (std::isnan(h)) return;  // no DEM coverage → no effect
+
+        int nc = static_cast<int>(ybars.size());
+        float lam = height_kernel_lambda_;
+
+        // Per-class height support: ybars[k] *= (1-λ) + λ * φ_k(h)
+        // φ_k(h) = exp(-(h - μ_k)² / (2 τ_k²))
+        for (int k = 0; k < nc; ++k) {
+            float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
+            float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
+            float diff = h - mu_k;
+            float phi_k = std::exp(-(diff * diff) / (2.f * tau_k * tau_k));
+            float scale = (1.f - lam) + lam * phi_k;
+            ybars[k] *= scale;
+        }
+
+        // DEM/DSM occupancy prior: evidence for free space above DSM or below DEM
+        if (dsm_query_ && dsm_query_->is_loaded() && dem_occupancy_strength_ > 0.f) {
+            float h_dsm = dsm_query_->height_above_ground(x, y, z);
+            bool above_dsm = (!std::isnan(h_dsm) && h_dsm > dem_occupancy_margin_);
+            bool below_dem = (!std::isnan(h) && h < -dem_occupancy_margin_);
+            if ((above_dsm || below_dem) && nc > 0) {
+                ybars[0] += dem_occupancy_strength_;  // class 0 = unlabeled/free
+            }
+        }
     }
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
@@ -731,6 +780,7 @@ namespace osm_bki {
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
 
                     node.update(ybars[j]);
                 }
@@ -1127,6 +1177,7 @@ namespace osm_bki {
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
 
                     node.update(ybars[j]);
                 }

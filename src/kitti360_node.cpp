@@ -103,6 +103,15 @@ int main(int argc, char **argv) {
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
     node->declare_parameter<std::string>("semantic_uncertainty_topic", "/semantic_uncertainty_cloud");
     node->declare_parameter<bool>("use_common_taxonomy", true);
+    // DEM-based height kernel
+    node->declare_parameter<bool>("height_kernel_enabled", false);
+    node->declare_parameter<double>("height_kernel_lambda", 0.5);
+    node->declare_parameter<std::string>("height_kernel_dem_grid_suffix", "dem_local_grid.bin");
+    node->declare_parameter<std::string>("height_kernel_dsm_grid_suffix", "dsm_local_grid.bin");
+    node->declare_parameter<double>("dem_occupancy_strength", 0.0);
+    node->declare_parameter<double>("dem_occupancy_margin", 1.0);
+    node->declare_parameter<std::vector<double>>("height_kernel_mu", std::vector<double>());
+    node->declare_parameter<std::vector<double>>("height_kernel_tau", std::vector<double>());
 
     node->get_parameter<std::string>("map_topic", map_topic);
     node->get_parameter<int>("block_depth", block_depth);
@@ -332,6 +341,38 @@ int main(int argc, char **argv) {
                 } else {
                     RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM height confusion matrix; height filtering disabled");
                 }
+            }
+        }
+    }
+
+    // DEM-based height kernel
+    {
+        bool hk_enabled = false;
+        node->get_parameter<bool>("height_kernel_enabled", hk_enabled);
+        if (hk_enabled) {
+            double hk_lambda, occ_strength, occ_margin;
+            std::string dem_suffix, dsm_suffix;
+            node->get_parameter<double>("height_kernel_lambda", hk_lambda);
+            node->get_parameter<std::string>("height_kernel_dem_grid_suffix", dem_suffix);
+            node->get_parameter<std::string>("height_kernel_dsm_grid_suffix", dsm_suffix);
+            node->get_parameter<double>("dem_occupancy_strength", occ_strength);
+            node->get_parameter<double>("dem_occupancy_margin", occ_margin);
+
+            std::string dem_path = dir + "/" + sequence_name + "/" + dem_suffix;
+            std::string dsm_path = dir + "/" + sequence_name + "/" + dsm_suffix;
+
+            std::vector<double> mu_d, tau_d;
+            node->get_parameter<std::vector<double>>("height_kernel_mu", mu_d);
+            node->get_parameter<std::vector<double>>("height_kernel_tau", tau_d);
+            std::vector<float> mu_f(mu_d.begin(), mu_d.end());
+            std::vector<float> tau_f(tau_d.begin(), tau_d.end());
+
+            if (mcd_data.load_dem_height_kernel(dem_path, dsm_path,
+                    static_cast<float>(hk_lambda), mu_f, tau_f,
+                    static_cast<float>(occ_strength), static_cast<float>(occ_margin))) {
+                RCLCPP_INFO_STREAM(node->get_logger(), "Height kernel enabled (lambda=" << hk_lambda << ")");
+            } else {
+                RCLCPP_WARN_STREAM(node->get_logger(), "Height kernel: DEM grid not found, kernel disabled");
             }
         }
     }

@@ -771,6 +771,49 @@ class MCDData {
       }
     }
 
+    /// Load DEM/DSM binary grids and height kernel params from config.
+    bool load_dem_height_kernel(const std::string &dem_grid_path,
+                                const std::string &dsm_grid_path,
+                                float lambda,
+                                const std::vector<float> &mu,
+                                const std::vector<float> &tau,
+                                float occ_strength,
+                                float occ_margin) {
+      if (!map_) return false;
+
+      auto dem = std::make_unique<osm_bki::DEMHeightQuery>();
+      auto dsm = std::make_unique<osm_bki::DEMHeightQuery>();
+
+      bool dem_ok = dem->load(dem_grid_path);
+      bool dsm_ok = dsm->load(dsm_grid_path);
+
+      if (dem_ok) {
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "DEM grid loaded: " << dem->rows() << "x" << dem->cols()
+            << " cells (" << dem->cell_size() << "m)");
+      } else {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load DEM grid: " << dem_grid_path);
+      }
+      if (dsm_ok) {
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "DSM grid loaded: " << dsm->rows() << "x" << dsm->cols()
+            << " cells (" << dsm->cell_size() << "m)");
+      } else {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load DSM grid: " << dsm_grid_path);
+      }
+
+      map_->set_dem_grids(std::move(dem), std::move(dsm));
+      map_->set_height_kernel_params(lambda, mu, tau);
+      map_->set_dem_occupancy_prior(occ_strength, occ_margin);
+
+      RCLCPP_INFO_STREAM(node_->get_logger(),
+          "Height kernel: lambda=" << lambda
+          << ", " << mu.size() << " class priors, occ_strength=" << occ_strength);
+      return dem_ok;
+    }
+
     /// Return true if both the lidar bin and label/multiclass file exist for the given scan file number.
     bool scan_and_label_exist(const std::string& input_data_dir, const std::string& input_label_dir, int scan_file_num) {
       char scan_id_c[256];

@@ -10,6 +10,7 @@
 #include "bkiblock.h"
 #include "bkioctree_node.h"
 #include "osm_geometry.h"
+#include "dem_height_query.h"
 
 namespace osm_bki {
 
@@ -392,12 +393,19 @@ namespace osm_bki {
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
                                               float &tree, float &parking, float &fence, float &stairs) const;
 
+        /// DEM-based height kernel: per-class Gaussian support modulating ybars.
+        /// dem/dsm are binary grids in KITTI-360 local frame (from precompute_dem_grid.py).
+        void set_dem_grids(std::unique_ptr<DEMHeightQuery> dem, std::unique_ptr<DEMHeightQuery> dsm);
+        void set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau);
+        void set_dem_occupancy_prior(float strength, float margin);
+
     private:
         static constexpr int N_OSM_PRIOR_COLS = 14;  // roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none
 
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
         void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
+        void apply_height_kernel_to_ybars(std::vector<float> &ybars, float x, float y, float z) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -520,6 +528,15 @@ namespace osm_bki {
         float osm_height_max_z_{0.f};
         int osm_height_num_bins_{0};
         std::vector<std::array<float, N_OSM_PRIOR_COLS>> osm_height_cm_{};
+
+        // DEM-based height kernel
+        std::unique_ptr<DEMHeightQuery> dem_query_;
+        std::unique_ptr<DEMHeightQuery> dsm_query_;
+        float height_kernel_lambda_{0.f};
+        std::vector<float> height_kernel_mu_;   // per-class expected height above ground
+        std::vector<float> height_kernel_tau_;  // per-class tolerance (std dev)
+        float dem_occupancy_strength_{0.f};     // free-space evidence strength for above-DSM / below-DEM
+        float dem_occupancy_margin_{1.0f};      // meters of tolerance before applying occupancy prior
     };
 
 }

@@ -92,6 +92,24 @@
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
     # --------------------------------
+    # DEM-based height consistency kernel
+    # --------------------------------
+    # Requires precomputed binary grids (run height_kernel/precompute_dem_grid.py first).
+    # Grid files live in the sequence directory alongside the pose/lidar data.
+    height_kernel_enabled: true
+    height_kernel_lambda: 0.5       # 0 = disabled, 1 = full gating
+    height_kernel_dem_grid_suffix: dem_local_grid.bin
+    height_kernel_dsm_grid_suffix: dsm_local_grid.bin
+    # DEM occupancy prior: add free-space evidence for voxels above DSM or below DEM
+    dem_occupancy_strength: 0.5     # 0 = disabled
+    dem_occupancy_margin: 1.0       # meters of tolerance
+    # Per-class height priors: μ_k (expected height above ground) and τ_k (tolerance)
+    # Order matches common taxonomy: unlabeled, road, sidewalk, parking, other-ground,
+    #   building, fence, pole, traffic-sign, vegetation, two-wheeler, vehicle, other-object
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 1.0, 3.0, 2.5, 3.0, 0.8, 0.8, 1.0]
+    height_kernel_tau: [100.0, 0.5, 0.5, 0.5, 1.0, 15.0, 1.5, 4.0, 3.0, 8.0, 1.0, 1.0, 2.0]
+
+    # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
     # --------------------------------
     # If true, OSM file path is data_dir/sequence_name/osm_file; else data_dir/osm_file
