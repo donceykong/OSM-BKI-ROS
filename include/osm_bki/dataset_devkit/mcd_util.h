@@ -34,6 +34,7 @@
 #include "bkioctomap.h"
 #include "markerarray_pub.h"
 #include "osm_geometry.h"
+#include <patchwork/patchworkpp.h>
 
 // ---------------------------------------------------------------------------
 // Common taxonomy (13 classes) — loaded from labels_common.yaml at runtime.
@@ -625,8 +626,83 @@ class MCDData {
       if (map_) map_->set_osm_prior_strength(strength);
     }
 
-    void set_osm_height_filter_enabled(bool enabled) {
-      if (map_) map_->set_osm_height_filter_enabled(enabled);
+    void set_osm_ground_filter_enabled(bool enabled) {
+      use_osm_ground_filter_ = enabled;
+      if (map_) map_->set_osm_ground_filter_enabled(enabled);
+    }
+
+    /// Initialize Patchwork++ ground segmentation with given parameters.
+    void init_patchworkpp(double sensor_height, double th_seeds, double th_dist) {
+      patchwork::Params pw_params;
+      pw_params.verbose = false;
+      pw_params.sensor_height = sensor_height;
+      pw_params.th_seeds = th_seeds;
+      pw_params.th_dist = th_dist;
+      patchworkpp_ = std::make_unique<patchwork::PatchWorkpp>(pw_params);
+      RCLCPP_INFO_STREAM(node_->get_logger(),
+          "Patchwork++ initialized (sensor_height=" << sensor_height
+          << ", th_seeds=" << th_seeds << ", th_dist=" << th_dist << ")");
+    }
+
+    /// Load ground and non-ground confusion matrices from a YAML file.
+    /// Expects keys: confusion_matrix_ground, confusion_matrix_nonground, label_to_matrix_idx.
+    bool load_osm_ground_confusion_matrices(const std::string &yaml_path) {
+      if (!map_) return false;
+      try {
+        YAML::Node root = YAML::LoadFile(yaml_path);
+        if (!root["label_to_matrix_idx"]) return false;
+        bool has_ground = root["confusion_matrix_ground"].IsDefined();
+        bool has_nonground = root["confusion_matrix_nonground"].IsDefined();
+        if (!has_ground && !has_nonground) return false;
+
+        auto lm_node = root["label_to_matrix_idx"];
+        int max_row = -1;
+        for (auto it = lm_node.begin(); it != lm_node.end(); ++it)
+          max_row = std::max(max_row, it->second.as<int>());
+        int n_rows = max_row + 1;
+
+        // Build row_to_labels (same for both ground and nonground CMs)
+        std::vector<std::vector<int>> row_to_labels(n_rows);
+        for (auto it = lm_node.begin(); it != lm_node.end(); ++it) {
+          int common_class = it->first.as<int>();
+          int row = it->second.as<int>();
+          if (common_class > 0 && row >= 0 && row < n_rows)
+            row_to_labels[row].push_back(common_class);
+        }
+
+        static constexpr int N_OSM_COLS = 14;
+        auto parse_cm = [&](const YAML::Node &cm_node) {
+          std::vector<std::vector<float>> matrix(n_rows, std::vector<float>(N_OSM_COLS, 0.f));
+          for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
+            int common_class = it->first.as<int>();
+            int row = -1;
+            if (lm_node[common_class]) row = lm_node[common_class].as<int>();
+            if (row < 0 || row >= n_rows) continue;
+            auto vals = it->second;
+            for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
+              matrix[row][c] = vals[c].as<float>();
+          }
+          return matrix;
+        };
+
+        if (has_ground) {
+          auto mat = parse_cm(root["confusion_matrix_ground"]);
+          map_->set_osm_ground_confusion_matrix(mat, row_to_labels);
+          RCLCPP_INFO_STREAM(node_->get_logger(),
+              "Loaded OSM ground confusion matrix: " << n_rows << " rows x " << N_OSM_COLS << " cols");
+        }
+        if (has_nonground) {
+          auto mat = parse_cm(root["confusion_matrix_nonground"]);
+          map_->set_osm_nonground_confusion_matrix(mat, row_to_labels);
+          RCLCPP_INFO_STREAM(node_->get_logger(),
+              "Loaded OSM non-ground confusion matrix: " << n_rows << " rows x " << N_OSM_COLS << " cols");
+        }
+        return true;
+      } catch (const std::exception &e) {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Failed to load OSM ground confusion matrices: " << e.what());
+        return false;
+      }
     }
 
     /// Enable OSM prior map on a separate topic. Priors computed on-the-fly (not stored in octree).
@@ -735,38 +811,6 @@ class MCDData {
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
             "Failed to load OSM confusion matrix: " << e.what());
-        return false;
-      }
-    }
-
-    /// Load OSM height confusion matrix (rows=height bins, cols=OSM categories). Optional; used when osm_height_filtering enabled.
-    bool load_osm_height_confusion_matrix(const std::string &yaml_path) {
-      if (!map_) return false;
-      try {
-        YAML::Node root = YAML::LoadFile(yaml_path);
-        if (!root["osm_height_confusion_matrix"]) return false;
-
-        auto cm_node = root["osm_height_confusion_matrix"];
-        static constexpr int N_OSM_COLS = 14;
-        int max_bin = 0;
-        for (auto it = cm_node.begin(); it != cm_node.end(); ++it)
-          max_bin = std::max(max_bin, it->first.as<int>());
-        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(N_OSM_COLS, 0.f));
-        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
-          int bin_idx = it->first.as<int>();
-          if (bin_idx < 1 || bin_idx > max_bin) continue;
-          auto vals = it->second;
-          for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
-            matrix[bin_idx - 1][c] = vals[c].as<float>();
-        }
-        if (matrix.empty()) return false;
-        map_->set_osm_height_confusion_matrix(matrix);
-        RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << N_OSM_COLS << " cols");
-        return true;
-      } catch (const std::exception &e) {
-        RCLCPP_WARN_STREAM(node_->get_logger(),
-            "Failed to load OSM height confusion matrix: " << e.what());
         return false;
       }
     }
@@ -1014,6 +1058,38 @@ class MCDData {
           RCLCPP_INFO_STREAM(node_->get_logger(), "  Verification - lidar origin in map coords: [" << map_origin_test(0) << ", " << map_origin_test(1) << ", " << map_origin_test(2) << "]");
         }
         
+        // Patchwork++ ground segmentation (run on sensor-frame cloud before transform)
+        scan_is_ground_.clear();
+        if (use_osm_ground_filter_ && patchworkpp_ && cloud && !cloud->points.empty()) {
+          size_t n_pts = cloud->points.size();
+          bool have_intensity = (scan_intensity_.size() == n_pts);
+          int n_cols = have_intensity ? 4 : 3;
+          Eigen::MatrixXf pw_cloud(n_pts, n_cols);
+          for (size_t pi = 0; pi < n_pts; ++pi) {
+            pw_cloud(pi, 0) = cloud->points[pi].x;
+            pw_cloud(pi, 1) = cloud->points[pi].y;
+            pw_cloud(pi, 2) = cloud->points[pi].z;
+            if (have_intensity)
+              pw_cloud(pi, 3) = scan_intensity_[pi];
+          }
+          patchworkpp_->estimateGround(pw_cloud);
+          Eigen::VectorXi ground_indices = patchworkpp_->getGroundIndices();
+
+          scan_is_ground_.resize(n_pts, false);
+          for (int gi = 0; gi < ground_indices.size(); ++gi) {
+            int idx = ground_indices(gi);
+            if (idx >= 0 && idx < static_cast<int>(n_pts))
+              scan_is_ground_[idx] = true;
+          }
+
+          if (list_idx < 3 || list_idx % 50 == 0) {
+            int gnd_count = ground_indices.size();
+            RCLCPP_INFO_STREAM(node_->get_logger(),
+                "Scan " << list_idx << ": Patchwork++ ground=" << gnd_count
+                << "/" << n_pts << " (" << (100.0 * gnd_count / n_pts) << "%)");
+          }
+        }
+
         // Transform cloud from lidar frame to map frame (once, before publish and insertion)
         pcl::transformPointCloud(*cloud, *cloud, lidar_to_map.cast<float>());
 
@@ -1069,13 +1145,25 @@ class MCDData {
         origin.z() = lidar_to_map(2, 3);
         
         try {
+          bool has_ground = (scan_is_ground_.size() == cloud->points.size());
           if (!scan_common_probs_.empty() && scan_common_probs_.size() == cloud->points.size()) {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
-                                    scan_point_weights_, &scan_common_probs_);
+            if (has_ground)
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                      scan_point_weights_, &scan_common_probs_, scan_is_ground_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                      scan_point_weights_, &scan_common_probs_);
           } else if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
+            if (has_ground)
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                      scan_point_weights_, scan_is_ground_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
           } else {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
+            if (has_ground)
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_is_ground_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
           }
         } catch (const std::exception& e) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Exception during insert_pointcloud: " << e.what());
@@ -1547,6 +1635,14 @@ class MCDData {
     /// Per-point common-class probabilities for soft counting (same size as cloud when multiclass + common config).
     std::vector<std::vector<float>> scan_common_probs_;
 
+    // Patchwork++ ground segmentation
+    std::unique_ptr<patchwork::PatchWorkpp> patchworkpp_;
+    bool use_osm_ground_filter_{false};
+    /// Per-point ground labels for current scan (set by patchwork++, consumed by insert_pointcloud)
+    std::vector<bool> scan_is_ground_;
+    /// Per-point intensity for current scan (from binary file, used by patchwork++ RNR)
+    std::vector<float> scan_intensity_;
+
     pcl::PointCloud<pcl::PointXYZL>::Ptr mcd2pcl(std::string fn, std::string fn_label, bool use_gt_mapping = false) {
       // Open scan file
       FILE* fp = std::fopen(fn.c_str(), "rb");
@@ -1592,6 +1688,8 @@ class MCDData {
       // Read data in a tighter loop; collect unique class IDs for logging
       int points_read = 0;
       std::set<int> unique_labels;
+      scan_intensity_.clear();
+      scan_intensity_.reserve(n_hits);
       for (int i = 0; i < n_hits; i++) {
         pcl::PointXYZL point;
         float intensity;
@@ -1616,6 +1714,7 @@ class MCDData {
         }
         unique_labels.insert(point.label);
         pc->points.push_back(point);
+        scan_intensity_.push_back(intensity);
         points_read++;
       }
       
@@ -1724,6 +1823,8 @@ class MCDData {
       result.common_probs.reserve(static_cast<size_t>(n_points));
 
       std::vector<float> raw_vals(static_cast<size_t>(n_classes));
+      scan_intensity_.clear();
+      scan_intensity_.reserve(n_points);
       for (int i = 0; i < n_points; i++) {
         pcl::PointXYZL point;
         float intensity;
@@ -1816,6 +1917,7 @@ class MCDData {
           result.common_probs.push_back(softmax_net);
         }
         pc->points.push_back(point);
+        scan_intensity_.push_back(intensity);
       }
 
       std::fclose(fp);

@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <numeric>
+#include <tuple>
 #include <pcl/filters/voxel_grid.h>
 
 #include "bkioctomap.h"
@@ -112,8 +114,6 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -128,6 +128,7 @@ namespace osm_bki {
         /////////////////////////////////////////////////
         vector<BlockHashKey> test_blocks;
         std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
+        std::unordered_map<BlockHashKey, bool> block_ground_vote;
 #ifdef OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -148,14 +149,13 @@ namespace osm_bki {
                 continue;
 
             vector<float> block_x, block_y;
+            int ground_count = 0;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
-            
-            
-            //std::cout << search(it->first.x(), it->first.y(), it->first.z()) << std::endl;
+                if (it->is_ground) ++ground_count;
             }
 
             SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
@@ -165,6 +165,7 @@ namespace osm_bki {
 #endif
             {
                 bgk_arr.emplace(key, bgk);
+                block_ground_vote[key] = (ground_count * 2 >= static_cast<int>(block_xy.size()));
             };
         }
 #ifdef DEBUG
@@ -181,6 +182,7 @@ namespace osm_bki {
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
             Block *block = nullptr;
+            bool is_ground_block = false;
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -188,6 +190,9 @@ namespace osm_bki {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                auto gv_it = block_ground_vote.find(key);
+                if (gv_it != block_ground_vote.end())
+                    is_ground_block = gv_it->second;
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -211,7 +216,7 @@ namespace osm_bki {
 
                 float ybar_sum = 0.f;
                 for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), is_ground_block, std::min(ybar_sum, 1.0f));
 
                 node.update(ybars[j]);
             }
@@ -325,22 +330,38 @@ namespace osm_bki {
         osm_prior_strength_ = strength;
     }
 
-    void SemanticBKIOctoMap::set_osm_height_filter_enabled(bool enabled) {
-        use_osm_height_filter_ = enabled;
+    void SemanticBKIOctoMap::set_osm_ground_filter_enabled(bool enabled) {
+        use_osm_ground_filter_ = enabled;
     }
 
-    void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
-        osm_height_num_bins_ = static_cast<int>(matrix.size());
-        osm_height_cm_.clear();
-        osm_height_cm_.resize(static_cast<size_t>(osm_height_num_bins_));
-        for (auto &row : osm_height_cm_) row.fill(0.f);
-
-        for (int r = 0; r < osm_height_num_bins_; ++r) {
+    void SemanticBKIOctoMap::set_osm_ground_confusion_matrix(
+            const std::vector<std::vector<float>> &matrix,
+            const std::vector<std::vector<int>> &row_to_labels) {
+        osm_cm_ground_rows_ = std::min(static_cast<int>(matrix.size()), 13);
+        std::memset(osm_cm_ground_, 0, sizeof(osm_cm_ground_));
+        for (int r = 0; r < osm_cm_ground_rows_; ++r) {
             int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
             for (int c = 0; c < ncols; ++c)
-                osm_height_cm_[static_cast<size_t>(r)][static_cast<size_t>(c)] = matrix[r][c];
+                osm_cm_ground_[r][c] = matrix[r][c];
         }
-        osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
+        osm_cm_ground_row_to_labels_ = row_to_labels;
+        osm_cm_ground_row_to_labels_.resize(osm_cm_ground_rows_);
+        osm_cm_ground_loaded_ = true;
+    }
+
+    void SemanticBKIOctoMap::set_osm_nonground_confusion_matrix(
+            const std::vector<std::vector<float>> &matrix,
+            const std::vector<std::vector<int>> &row_to_labels) {
+        osm_cm_nonground_rows_ = std::min(static_cast<int>(matrix.size()), 13);
+        std::memset(osm_cm_nonground_, 0, sizeof(osm_cm_nonground_));
+        for (int r = 0; r < osm_cm_nonground_rows_; ++r) {
+            int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
+            for (int c = 0; c < ncols; ++c)
+                osm_cm_nonground_[r][c] = matrix[r][c];
+        }
+        osm_cm_nonground_row_to_labels_ = row_to_labels;
+        osm_cm_nonground_row_to_labels_.resize(osm_cm_nonground_rows_);
+        osm_cm_nonground_loaded_ = true;
     }
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
@@ -393,34 +414,48 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::apply_osm_prior_to_ybars(std::vector<float> &ybars,
-                                                      float x, float y, float z, float scale) const {
-        if (!osm_cm_loaded_ || osm_prior_strength_ <= 0.0f || scale <= 0.0f) return;
+                                                      float x, float y, bool is_ground, float scale) const {
+        if (osm_prior_strength_ <= 0.0f || scale <= 0.0f) return;
+
+        // Select which confusion matrix to use based on ground classification.
+        // When ground filtering is enabled and ground/nonground CMs are loaded, use them.
+        // Otherwise fall back to the default CM.
+        const float (*cm)[N_OSM_PRIOR_COLS];
+        int cm_rows;
+        const std::vector<std::vector<int>> *cm_row_to_labels;
+
+        if (use_osm_ground_filter_ && is_ground && osm_cm_ground_loaded_) {
+            cm = osm_cm_ground_;
+            cm_rows = osm_cm_ground_rows_;
+            cm_row_to_labels = &osm_cm_ground_row_to_labels_;
+        } else if (use_osm_ground_filter_ && !is_ground && osm_cm_nonground_loaded_) {
+            cm = osm_cm_nonground_;
+            cm_rows = osm_cm_nonground_rows_;
+            cm_row_to_labels = &osm_cm_nonground_row_to_labels_;
+        } else if (osm_cm_loaded_) {
+            cm = osm_cm_;
+            cm_rows = osm_cm_rows_;
+            cm_row_to_labels = &osm_cm_row_to_labels_;
+        } else {
+            return;  // No confusion matrix available
+        }
 
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // OSM height filter: multiply osm_vec by height confusion matrix row (per-scan relative bins)
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                osm_vec[c] *= osm_height_cm_[bin][c];
-        }
-
         // p_super[row] = sum_j(M[row][j] * osm_vec[j])
         // M values in [-1, 1]; negative decreases likelihood, positive increases.
-        std::vector<float> p_super(osm_cm_rows_, 0.f);
-        for (int r = 0; r < osm_cm_rows_; ++r)
+        std::vector<float> p_super(cm_rows, 0.f);
+        for (int r = 0; r < cm_rows; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                p_super[r] += osm_cm_[r][c] * osm_vec[c];
+                p_super[r] += cm[r][c] * osm_vec[c];
 
         // Add OSM contribution directly to ybars so it accumulates with every
         // observation, maintaining a constant proportion of the total evidence.
         float effective = osm_prior_strength_ * scale;
         int num_class = static_cast<int>(ybars.size());
-        for (int r = 0; r < osm_cm_rows_; ++r) {
-            const auto &labels = osm_cm_row_to_labels_[r];
+        for (int r = 0; r < cm_rows; ++r) {
+            const auto &labels = (*cm_row_to_labels)[r];
             if (labels.empty() || p_super[r] == 0.f) continue;
             float share = effective * p_super[r] / static_cast<float>(labels.size());
             for (int lbl : labels) {
@@ -629,8 +664,6 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -645,6 +678,7 @@ namespace osm_bki {
         /////////////////////////////////////////////////
         vector<BlockHashKey> test_blocks;
         std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
+        std::unordered_map<BlockHashKey, bool> block_ground_vote;
 #ifdef OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -665,14 +699,13 @@ namespace osm_bki {
                 continue;
 
             vector<float> block_x, block_y;
+            int ground_count = 0;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
-            
-            
-            //std::cout << search(it->first.x(), it->first.y(), it->first.z()) << std::endl;
+                if (it->is_ground) ++ground_count;
             }
 
             SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
@@ -682,6 +715,7 @@ namespace osm_bki {
 #endif
             {
                 bgk_arr.emplace(key, bgk);
+                block_ground_vote[key] = (ground_count * 2 >= static_cast<int>(block_xy.size()));
             };
         }
 #ifdef DEBUG
@@ -698,6 +732,7 @@ namespace osm_bki {
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
             Block *block = nullptr;
+            bool is_ground_block = false;
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -705,6 +740,9 @@ namespace osm_bki {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                auto gv_it = block_ground_vote.find(key);
+                if (gv_it != block_ground_vote.end())
+                    is_ground_block = gv_it->second;
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -730,7 +768,7 @@ namespace osm_bki {
 
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), is_ground_block, std::min(ybar_sum, 1.0f));
 
                     node.update(ybars[j]);
                 }
@@ -1026,8 +1064,6 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -1040,6 +1076,7 @@ namespace osm_bki {
         int nc = SemanticOcTreeNode::num_class;
         vector<BlockHashKey> test_blocks;
         std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
+        std::unordered_map<BlockHashKey, bool> block_ground_vote;
 #ifdef OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -1058,19 +1095,18 @@ namespace osm_bki {
 
             vector<float> block_x, block_y, block_w;
             std::vector<std::vector<float>> block_y_soft;
+            int ground_count = 0;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
                 block_w.push_back(it->weight);
+                if (it->is_ground) ++ground_count;
                 if (use_soft) {
                     if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc))
                         block_y_soft.push_back(*it->soft_probs);
                     else {
-                        // Free-space points (soft_probs == nullptr): use zero vector so they do not
-                        // swamp the semantic counts; otherwise class 0 would dominate and all voxels
-                        // would get semantics=0 (e.g. all blue). Hit points with label 0 have soft_probs.
                         std::vector<float> zero_vec(static_cast<size_t>(nc), 0.f);
                         block_y_soft.push_back(std::move(zero_vec));
                     }
@@ -1085,7 +1121,10 @@ namespace osm_bki {
 #ifdef OPENMP
 #pragma omp critical
 #endif
-            { bgk_arr.emplace(key, bgk); };
+            {
+                bgk_arr.emplace(key, bgk);
+                block_ground_vote[key] = (ground_count * 2 >= static_cast<int>(block_xy.size()));
+            };
         }
 
 #ifdef OPENMP
@@ -1094,6 +1133,7 @@ namespace osm_bki {
         for (int i = 0; i < test_blocks.size(); ++i) {
             BlockHashKey key = test_blocks[i];
             Block *block = nullptr;
+            bool is_ground_block = false;
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -1101,6 +1141,9 @@ namespace osm_bki {
                 if (block_arr.find(key) == block_arr.end())
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                auto gv_it = block_ground_vote.find(key);
+                if (gv_it != block_ground_vote.end())
+                    is_ground_block = gv_it->second;
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -1126,7 +1169,7 @@ namespace osm_bki {
 
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
+                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), is_ground_block, std::min(ybar_sum, 1.0f));
 
                     node.update(ybars[j]);
                 }
@@ -1136,6 +1179,355 @@ namespace osm_bki {
         for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
             delete it->second;
         rtree.RemoveAll();
+    }
+
+    // ====================================================================
+    // insert_pointcloud overloads with per-point ground labels
+    // ====================================================================
+
+    void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_res, float max_range,
+                                      const std::vector<bool> &point_is_ground) {
+        GPPointCloud xy;
+        get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_is_ground);
+        if (xy.size() == 0) return;
+
+        point3f lim_min, lim_max;
+        bbox(xy, lim_min, lim_max);
+
+        vector<BlockHashKey> blocks;
+        get_blocks_in_bbox(lim_min, lim_max, blocks);
+
+        for (auto it = xy.cbegin(); it != xy.cend(); ++it) {
+            float p[] = {it->first.x(), it->first.y(), it->first.z()};
+            rtree.Insert(p, p, const_cast<GPPointType *>(&*it));
+        }
+
+        vector<BlockHashKey> test_blocks;
+        std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
+        std::unordered_map<BlockHashKey, bool> block_ground_vote;
+#ifdef OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for (int i = 0; i < blocks.size(); ++i) {
+            BlockHashKey key = blocks[i];
+            ExtendedBlock eblock = get_extended_block(key);
+            if (has_gp_points_in_bbox(eblock))
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            { test_blocks.push_back(key); };
+
+            GPPointCloud block_xy;
+            get_gp_points_in_bbox(key, block_xy);
+            if (block_xy.size() < 1) continue;
+
+            vector<float> block_x, block_y;
+            int ground_count = 0;
+            for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
+                block_x.push_back(it->first.x());
+                block_x.push_back(it->first.y());
+                block_x.push_back(it->first.z());
+                block_y.push_back(it->second);
+                if (it->is_ground) ++ground_count;
+            }
+
+            SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
+            bgk->train(block_x, block_y);
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            {
+                bgk_arr.emplace(key, bgk);
+                block_ground_vote[key] = (ground_count * 2 >= static_cast<int>(block_xy.size()));
+            };
+        }
+
+#ifdef OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for (int i = 0; i < test_blocks.size(); ++i) {
+            BlockHashKey key = test_blocks[i];
+            Block *block = nullptr;
+            bool is_ground_block = false;
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            {
+                if (block_arr.find(key) == block_arr.end())
+                    block_arr.emplace(key, new Block(hash_key_to_block(key)));
+                block = block_arr[key];
+                auto gv_it = block_ground_vote.find(key);
+                if (gv_it != block_ground_vote.end()) is_ground_block = gv_it->second;
+            };
+            vector<float> xs;
+            for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
+                point3f p = block->get_loc(leaf_it);
+                xs.push_back(p.x());
+                xs.push_back(p.y());
+                xs.push_back(p.z());
+            }
+            ExtendedBlock eblock = block->get_extended_block();
+            for (auto block_it = eblock.cbegin(); block_it != eblock.cend(); ++block_it) {
+                auto bgk = bgk_arr.find(*block_it);
+                if (bgk == bgk_arr.end()) continue;
+                vector<vector<float>> ybars;
+                bgk->second->predict(xs, ybars);
+                int j = 0;
+                for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
+                    SemanticOcTreeNode &node = leaf_it.get_node();
+                    point3f loc = block->get_loc(leaf_it);
+                    float ybar_sum = 0.f;
+                    for (auto v : ybars[j]) ybar_sum += std::abs(v);
+                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), is_ground_block, std::min(ybar_sum, 1.0f));
+                    node.update(ybars[j]);
+                }
+            }
+        }
+        for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
+            delete it->second;
+        rtree.RemoveAll();
+    }
+
+    void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_res, float max_range,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<bool> &point_is_ground) {
+        insert_pointcloud(cloud, origin, ds_resolution, free_res, max_range, point_weights, nullptr, point_is_ground);
+    }
+
+    void SemanticBKIOctoMap::insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin,
+                                      float ds_resolution, float free_res, float max_range,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<std::vector<float>> *multiclass_probs,
+                                      const std::vector<bool> &point_is_ground) {
+        bool use_soft = (multiclass_probs != nullptr && !multiclass_probs->empty() &&
+                         multiclass_probs->size() == cloud.size());
+        GPPointCloud xy;
+        if (use_soft)
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights, multiclass_probs, point_is_ground);
+        else
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights, point_is_ground);
+        if (xy.size() == 0) return;
+
+        point3f lim_min, lim_max;
+        bbox(xy, lim_min, lim_max);
+
+        vector<BlockHashKey> blocks;
+        get_blocks_in_bbox(lim_min, lim_max, blocks);
+
+        for (auto it = xy.cbegin(); it != xy.cend(); ++it) {
+            float p[] = {it->first.x(), it->first.y(), it->first.z()};
+            rtree.Insert(p, p, const_cast<GPPointType *>(&*it));
+        }
+
+        int nc = SemanticOcTreeNode::num_class;
+        vector<BlockHashKey> test_blocks;
+        std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
+        std::unordered_map<BlockHashKey, bool> block_ground_vote;
+#ifdef OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for (int i = 0; i < blocks.size(); ++i) {
+            BlockHashKey key = blocks[i];
+            ExtendedBlock eblock = get_extended_block(key);
+            if (has_gp_points_in_bbox(eblock))
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            { test_blocks.push_back(key); };
+
+            GPPointCloud block_xy;
+            get_gp_points_in_bbox(key, block_xy);
+            if (block_xy.size() < 1) continue;
+
+            vector<float> block_x, block_y, block_w;
+            std::vector<std::vector<float>> block_y_soft;
+            int ground_count = 0;
+            for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
+                block_x.push_back(it->first.x());
+                block_x.push_back(it->first.y());
+                block_x.push_back(it->first.z());
+                block_y.push_back(it->second);
+                block_w.push_back(it->weight);
+                if (it->is_ground) ++ground_count;
+                if (use_soft) {
+                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc))
+                        block_y_soft.push_back(*it->soft_probs);
+                    else {
+                        std::vector<float> zero_vec(static_cast<size_t>(nc), 0.f);
+                        block_y_soft.push_back(std::move(zero_vec));
+                    }
+                }
+            }
+
+            SemanticBKI3f *bgk = new SemanticBKI3f(nc, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
+            if (use_soft && block_y_soft.size() == block_xy.size())
+                bgk->train_soft(block_x, block_y_soft, block_w);
+            else
+                bgk->train(block_x, block_y, block_w);
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            {
+                bgk_arr.emplace(key, bgk);
+                block_ground_vote[key] = (ground_count * 2 >= static_cast<int>(block_xy.size()));
+            };
+        }
+
+#ifdef OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+        for (int i = 0; i < test_blocks.size(); ++i) {
+            BlockHashKey key = test_blocks[i];
+            Block *block = nullptr;
+            bool is_ground_block = false;
+#ifdef OPENMP
+#pragma omp critical
+#endif
+            {
+                if (block_arr.find(key) == block_arr.end())
+                    block_arr.emplace(key, new Block(hash_key_to_block(key)));
+                block = block_arr[key];
+                auto gv_it = block_ground_vote.find(key);
+                if (gv_it != block_ground_vote.end()) is_ground_block = gv_it->second;
+            };
+            vector<float> xs;
+            for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
+                point3f p = block->get_loc(leaf_it);
+                xs.push_back(p.x());
+                xs.push_back(p.y());
+                xs.push_back(p.z());
+            }
+            ExtendedBlock eblock = block->get_extended_block();
+            for (auto block_it = eblock.cbegin(); block_it != eblock.cend(); ++block_it) {
+                auto bgk = bgk_arr.find(*block_it);
+                if (bgk == bgk_arr.end()) continue;
+                vector<vector<float>> ybars;
+                if (use_soft)
+                    bgk->second->predict_csm(xs, ybars);
+                else
+                    bgk->second->predict(xs, ybars);
+                int j = 0;
+                for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
+                    SemanticOcTreeNode &node = leaf_it.get_node();
+                    point3f loc = block->get_loc(leaf_it);
+                    float ybar_sum = 0.f;
+                    for (auto v : ybars[j]) ybar_sum += std::abs(v);
+                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), is_ground_block, std::min(ybar_sum, 1.0f));
+                    node.update(ybars[j]);
+                }
+            }
+        }
+        for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
+            delete it->second;
+        rtree.RemoveAll();
+    }
+
+    // ====================================================================
+    // get_training_data overloads with per-point ground labels
+    // ====================================================================
+
+    void SemanticBKIOctoMap::get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_resolution, float max_range, GPPointCloud &xy,
+                                      const std::vector<bool> &point_is_ground) const {
+        // Delegate to base get_training_data, then tag ground labels
+        get_training_data(cloud, origin, ds_resolution, free_resolution, max_range, xy);
+        // The base method creates xy entries from downsampled cloud + free-space points.
+        // We can't perfectly match indices after voxel downsampling, so use a simpler approach:
+        // Tag all occupied (label > 0) points conservatively using nearest original ground label.
+        // For simplicity: build a set of ground point indices, then tag xy entries whose original
+        // cloud point was ground. Since downsampling uses voxel grid, we use majority vote per voxel.
+        // Actually, the simpler approach: just re-implement with ground awareness.
+        // But the cleanest is: tag based on PCL label matching.
+        // Since the base get_training_data does voxel downsampling, the simplest correct approach
+        // is to rebuild. Let's just set ground on occupied points based on input.
+        // For now, use a spatial majority approach: occupied points in xy get ground=true if
+        // the majority of original cloud points in the same voxel were ground.
+        if (point_is_ground.size() != cloud.size()) return;
+
+        // Build voxel -> ground count map
+        float ds = std::max(ds_resolution, 0.01f);
+        struct GndVote { int ground = 0; int total = 0; };
+        std::map<std::tuple<int,int,int>, GndVote> voxel_gnd;
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            int vx = static_cast<int>(std::floor(cloud.points[i].x / ds));
+            int vy = static_cast<int>(std::floor(cloud.points[i].y / ds));
+            int vz = static_cast<int>(std::floor(cloud.points[i].z / ds));
+            auto &v = voxel_gnd[{vx, vy, vz}];
+            v.total++;
+            if (point_is_ground[i]) v.ground++;
+        }
+        // Tag xy entries (occupied points have label > 0; free-space points have label == 0)
+        for (auto &pt : xy) {
+            if (pt.second == 0.0f) {
+                pt.is_ground = false;  // free-space points are not ground
+                continue;
+            }
+            int vx = static_cast<int>(std::floor(pt.first.x() / ds));
+            int vy = static_cast<int>(std::floor(pt.first.y() / ds));
+            int vz = static_cast<int>(std::floor(pt.first.z() / ds));
+            auto it = voxel_gnd.find({vx, vy, vz});
+            if (it != voxel_gnd.end())
+                pt.is_ground = (it->second.ground * 2 >= it->second.total);
+            else
+                pt.is_ground = false;
+        }
+    }
+
+    void SemanticBKIOctoMap::get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_resolution, float max_range, GPPointCloud &xy,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<bool> &point_is_ground) const {
+        get_training_data(cloud, origin, ds_resolution, free_resolution, max_range, xy, point_weights);
+        if (point_is_ground.size() != cloud.size()) return;
+        float ds = std::max(ds_resolution, 0.01f);
+        struct GndVote { int ground = 0; int total = 0; };
+        std::map<std::tuple<int,int,int>, GndVote> voxel_gnd;
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            int vx = static_cast<int>(std::floor(cloud.points[i].x / ds));
+            int vy = static_cast<int>(std::floor(cloud.points[i].y / ds));
+            int vz = static_cast<int>(std::floor(cloud.points[i].z / ds));
+            auto &v = voxel_gnd[{vx, vy, vz}];
+            v.total++;
+            if (point_is_ground[i]) v.ground++;
+        }
+        for (auto &pt : xy) {
+            if (pt.second == 0.0f) { pt.is_ground = false; continue; }
+            int vx = static_cast<int>(std::floor(pt.first.x() / ds));
+            int vy = static_cast<int>(std::floor(pt.first.y() / ds));
+            int vz = static_cast<int>(std::floor(pt.first.z() / ds));
+            auto it = voxel_gnd.find({vx, vy, vz});
+            pt.is_ground = (it != voxel_gnd.end()) ? (it->second.ground * 2 >= it->second.total) : false;
+        }
+    }
+
+    void SemanticBKIOctoMap::get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_resolution, float max_range, GPPointCloud &xy,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<std::vector<float>> *multiclass_probs,
+                                      const std::vector<bool> &point_is_ground) const {
+        get_training_data(cloud, origin, ds_resolution, free_resolution, max_range, xy, point_weights, multiclass_probs);
+        if (point_is_ground.size() != cloud.size()) return;
+        float ds = std::max(ds_resolution, 0.01f);
+        struct GndVote { int ground = 0; int total = 0; };
+        std::map<std::tuple<int,int,int>, GndVote> voxel_gnd;
+        for (size_t i = 0; i < cloud.size(); ++i) {
+            int vx = static_cast<int>(std::floor(cloud.points[i].x / ds));
+            int vy = static_cast<int>(std::floor(cloud.points[i].y / ds));
+            int vz = static_cast<int>(std::floor(cloud.points[i].z / ds));
+            auto &v = voxel_gnd[{vx, vy, vz}];
+            v.total++;
+            if (point_is_ground[i]) v.ground++;
+        }
+        for (auto &pt : xy) {
+            if (pt.second == 0.0f) { pt.is_ground = false; continue; }
+            int vx = static_cast<int>(std::floor(pt.first.x() / ds));
+            int vy = static_cast<int>(std::floor(pt.first.y() / ds));
+            int vz = static_cast<int>(std::floor(pt.first.z() / ds));
+            auto it = voxel_gnd.find({vx, vy, vz});
+            pt.is_ground = (it != voxel_gnd.end()) ? (it->second.ground * 2 >= it->second.total) : false;
+        }
     }
 
     void SemanticBKIOctoMap::downsample(const PCLPointCloud &in, PCLPointCloud &out, float ds_resolution) const {

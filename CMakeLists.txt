@@ -5,9 +5,9 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Default to C++14
+# Default to C++17 (required by patchwork++)
 if(NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
+  set(CMAKE_CXX_STANDARD 17)
 endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
@@ -103,6 +103,7 @@ include_directories(
   include/osm_bki/common
   include/osm_bki/mapping
   include/osm_bki/dataset_devkit
+  3rdparty/patchworkpp/include
   ${OpenCV_INCLUDE_DIRS}
   ${EIGEN3_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
@@ -110,6 +111,9 @@ include_directories(
 
 # Common source files
 set(COMMON_SOURCE_FILES src/common/point3f.cpp)
+
+# 3rd-party: Patchwork++ ground segmentation
+set(PATCHWORKPP_SOURCE_FILES 3rdparty/patchworkpp/src/patchworkpp.cpp)
 
 # Files for SEMANTIC BGK source
 set(MAPPING_SOURCE_FILES
@@ -121,6 +125,7 @@ set(MAPPING_SOURCE_FILES
 add_executable(mcd_node
   ${MAPPING_SOURCE_FILES}
   ${COMMON_SOURCE_FILES}
+  ${PATCHWORKPP_SOURCE_FILES}
   src/common/osm_visualizer.cpp
   src/mcd_node.cpp
 )
@@ -128,6 +133,7 @@ add_executable(mcd_node
 add_executable(kitti360_node
   ${MAPPING_SOURCE_FILES}
   ${COMMON_SOURCE_FILES}
+  ${PATCHWORKPP_SOURCE_FILES}
   src/common/osm_visualizer.cpp
   src/kitti360_node.cpp
 )

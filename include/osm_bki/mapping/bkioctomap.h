@@ -33,12 +33,14 @@ namespace osm_bki {
             point3f first;
             float second;
             float weight;
+            bool is_ground;  // Patchwork++ ground classification
             /// Optional soft (multiclass probability) label for counting sensor model; size = num_class.
             std::shared_ptr<std::vector<float>> soft_probs;
-            GPPointType() : first(), second(0), weight(1.0f), soft_probs() {}
+            GPPointType() : first(), second(0), weight(1.0f), is_ground(false), soft_probs() {}
             GPPointType(const point3f& p, float label, float w = 1.0f,
-                        std::shared_ptr<std::vector<float>> soft = nullptr)
-                : first(p), second(label), weight(w), soft_probs(std::move(soft)) {}
+                        std::shared_ptr<std::vector<float>> soft = nullptr,
+                        bool ground = false)
+                : first(p), second(label), weight(w), is_ground(ground), soft_probs(std::move(soft)) {}
         };
         typedef std::vector<GPPointType> GPPointCloud;
         typedef RTree<GPPointType *, float, 3, float> MyRTree;
@@ -384,9 +386,32 @@ namespace osm_bki {
                                       const std::vector<std::vector<int>> &row_to_labels);
         void set_osm_prior_strength(float strength);
 
-        /// OSM height filter: per-scan relative bins, multiply OSM priors by height confusion matrix.
-        void set_osm_height_filter_enabled(bool enabled);
-        void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
+        /// OSM ground filter: use Patchwork++ ground/non-ground classification to select confusion matrix.
+        void set_osm_ground_filter_enabled(bool enabled);
+        /// Set the confusion matrix used for ground-classified voxels.
+        void set_osm_ground_confusion_matrix(const std::vector<std::vector<float>> &matrix,
+                                             const std::vector<std::vector<int>> &row_to_labels);
+        /// Set the confusion matrix used for non-ground-classified voxels.
+        void set_osm_nonground_confusion_matrix(const std::vector<std::vector<float>> &matrix,
+                                                const std::vector<std::vector<int>> &row_to_labels);
+
+        /// Insert pointcloud with per-point ground labels from Patchwork++.
+        void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<bool> &point_is_ground);
+
+        /// Weighted + ground labels variant.
+        void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights,
+                               const std::vector<bool> &point_is_ground);
+
+        /// Weighted + soft labels + ground labels variant.
+        void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs,
+                               const std::vector<bool> &point_is_ground);
 
         /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
@@ -397,7 +422,7 @@ namespace osm_bki {
 
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
-        void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
+        void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, bool is_ground, float scale) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -476,6 +501,24 @@ namespace osm_bki {
                                const std::vector<float> &point_weights,
                                const std::vector<std::vector<float>> *multiclass_probs) const;
 
+        /// Ground-label variant: propagates per-point is_ground to GPPointType.
+        void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_resolution, float max_range, GPPointCloud &xy,
+                               const std::vector<bool> &point_is_ground) const;
+
+        /// Weighted + ground labels variant.
+        void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_resolution, float max_range, GPPointCloud &xy,
+                               const std::vector<float> &point_weights,
+                               const std::vector<bool> &point_is_ground) const;
+
+        /// Weighted + soft labels + ground labels variant.
+        void get_training_data(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_resolution, float max_range, GPPointCloud &xy,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs,
+                               const std::vector<bool> &point_is_ground) const;
+
         float resolution;
         float block_size;
         unsigned short block_depth;
@@ -513,13 +556,16 @@ namespace osm_bki {
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
 
-        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][OSM_col]
-        bool use_osm_height_filter_{false};
-        bool osm_height_cm_loaded_{false};
-        float osm_height_min_z_{0.f};
-        float osm_height_max_z_{0.f};
-        int osm_height_num_bins_{0};
-        std::vector<std::array<float, N_OSM_PRIOR_COLS>> osm_height_cm_{};
+        // OSM ground filter: Patchwork++ ground/non-ground selects which confusion matrix to use
+        bool use_osm_ground_filter_{false};
+        bool osm_cm_ground_loaded_{false};
+        int osm_cm_ground_rows_{0};
+        float osm_cm_ground_[13][N_OSM_PRIOR_COLS]{};
+        std::vector<std::vector<int>> osm_cm_ground_row_to_labels_;
+        bool osm_cm_nonground_loaded_{false};
+        int osm_cm_nonground_rows_{0};
+        float osm_cm_nonground_[13][N_OSM_PRIOR_COLS]{};
+        std::vector<std::vector<int>> osm_cm_nonground_row_to_labels_;
     };
 
 }

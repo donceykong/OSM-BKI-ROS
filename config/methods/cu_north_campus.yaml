@@ -97,7 +97,11 @@
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
     osm_prior_strength: 0.0  # fraction of OSM influence per observation (0.0 = disabled)
-    osm_height_filtering: true  # use height-based filtering for OSM priors
+    osm_ground_filtering: true  # use Patchwork++ ground segmentation to select ground/non-ground confusion matrix
+    # Patchwork++ ground segmentation parameters
+    pw_sensor_height: 1.8   # sensor height above ground (m)
+    pw_th_seeds: 0.4        # seed selection threshold
+    pw_th_dist: 0.3         # ground plane distance threshold
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch

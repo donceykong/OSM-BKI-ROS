@@ -101,7 +101,10 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("config_datasets_dir", "");
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
-    node->declare_parameter<bool>("osm_height_filtering", false);
+    node->declare_parameter<bool>("osm_ground_filtering", false);
+    node->declare_parameter<double>("pw_sensor_height", 1.8);
+    node->declare_parameter<double>("pw_th_seeds", 0.4);
+    node->declare_parameter<double>("pw_th_dist", 0.3);
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
@@ -412,8 +415,8 @@ int main(int argc, char **argv) {
       double osm_prior_str;
       node->get_parameter<std::string>("osm_confusion_matrix_file", osm_cm_file);
       node->get_parameter<double>("osm_prior_strength", osm_prior_str);
-      bool osm_height_filtering = false;
-      node->get_parameter<bool>("osm_height_filtering", osm_height_filtering);
+      bool osm_ground_filtering = false;
+      node->get_parameter<bool>("osm_ground_filtering", osm_ground_filtering);
       bool publish_variance = false;
       std::string variance_topic = "/osm_bki_variance";
       node->get_parameter<bool>("publish_variance", publish_variance);
@@ -425,7 +428,14 @@ int main(int argc, char **argv) {
       node->get_parameter<std::string>("semantic_uncertainty_topic", semantic_uncertainty_topic);
       mcd_data.set_publish_semantic_uncertainty(publish_semantic_uncertainty, semantic_uncertainty_topic);
       mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
-      mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
+      mcd_data.set_osm_ground_filter_enabled(osm_ground_filtering);
+      if (osm_ground_filtering) {
+        double pw_sensor_height, pw_th_seeds, pw_th_dist;
+        node->get_parameter<double>("pw_sensor_height", pw_sensor_height);
+        node->get_parameter<double>("pw_th_seeds", pw_th_seeds);
+        node->get_parameter<double>("pw_th_dist", pw_th_dist);
+        mcd_data.init_patchworkpp(pw_sensor_height, pw_th_seeds, pw_th_dist);
+      }
 
       bool publish_osm_prior_map = false;
       std::string osm_prior_map_color_mode_str = "osm_blend";
@@ -464,13 +474,14 @@ int main(int argc, char **argv) {
           RCLCPP_WARN_STREAM(node->get_logger(),
               "Failed to load OSM confusion matrix from " << cm_path);
         }
-        if (osm_height_filtering) {
-          if (mcd_data.load_osm_height_confusion_matrix(cm_path)) {
+        // Load ground/non-ground confusion matrices if ground filtering is enabled
+        if (osm_ground_filtering) {
+          if (mcd_data.load_osm_ground_confusion_matrices(cm_path)) {
             RCLCPP_INFO_STREAM(node->get_logger(),
-                "Loaded OSM height confusion matrix from " << cm_path);
+                "Loaded OSM ground/non-ground confusion matrices from " << cm_path);
           } else {
             RCLCPP_WARN_STREAM(node->get_logger(),
-                "Failed to load OSM height confusion matrix; height filtering disabled");
+                "No ground/non-ground confusion matrices in " << cm_path << "; using default CM for all points");
           }
         }
       }
