@@ -156,30 +156,48 @@ python3 /ros2_ws/src/osm_bki/height_kernel/evaluate_ablation.py compare \
 
 Outputs: per-run confusion matrices (`confusion_matrix.csv`), per-run results (`results.csv`), and a combined comparison (`ablation_comparison.csv`).
 
-### Results: 40-Frame Study (KITTI-360 seq 0000)
+### Results: Full Sequence (KITTI-360 seq 0000, 4433 scans, 516M points)
 
 | Class | Baseline (IoU) | + Height Kernel (IoU) | Delta |
 |-------|:--------------:|:---------------------:|:-----:|
-| road | 46.82% | 51.47% | **+4.65%** |
-| sidewalk | 25.08% | 31.07% | **+5.98%** |
-| parking | 0.00% | 0.00% | 0.00% |
-| other-ground | 0.00% | 0.00% | 0.00% |
-| building | 41.38% | 61.54% | **+20.16%** |
-| fence | 0.00% | 0.00% | 0.00% |
-| pole | 0.00% | 0.00% | 0.00% |
-| traffic-sign | 0.00% | 0.00% | 0.00% |
-| vegetation | 48.57% | 47.69% | -0.87% |
-| two-wheeler | 0.00% | 0.00% | 0.00% |
-| vehicle | 0.35% | 4.65% | **+4.30%** |
-| other-object | 4.23% | 11.59% | **+7.36%** |
-| **mIoU** | **13.87%** | **17.17%** | **+3.30%** |
-| **Overall Accuracy** | **59.68%** | **68.24%** | **+8.56%** |
+| road | 45.09% | 48.15% | **+3.05%** |
+| sidewalk | 33.20% | 36.41% | **+3.21%** |
+| parking | 0.63% | 1.96% | **+1.33%** |
+| other-ground | 0.74% | 1.71% | **+0.97%** |
+| building | 45.74% | 65.40% | **+19.66%** |
+| fence | 2.73% | 5.31% | **+2.58%** |
+| pole | 3.93% | 3.89% | -0.04% |
+| traffic-sign | 0.68% | 0.65% | -0.02% |
+| vegetation | 33.35% | 30.72% | -2.63% |
+| two-wheeler | 0.00% | 0.04% | +0.03% |
+| vehicle | 0.63% | 3.19% | **+2.56%** |
+| other-object | 0.15% | 1.84% | **+1.70%** |
+| **mIoU** | **13.91%** | **16.61%** | **+2.70%** |
+| **Overall Accuracy** | **56.83%** | **65.54%** | **+8.70%** |
 
 Key takeaways:
-- **Building +20.16%**: Height prior strongly penalizes false building predictions at ground level (mu=7m, tau=4m)
-- **Road +4.65%**: Ground-class priors preserve road accuracy; DEM occupancy margin (1.5m) prevents erosion near building edges
-- **Overall accuracy +8.56%**: Consistent improvement across all classes with ground-truth support
-- **Vegetation -0.87%**: Minor regression from canopy height prior (mu=5m, tau=3m); acceptable trade-off
+- **Building +19.66%**: Height prior strongly penalizes false building predictions at ground level (mu=7m, tau=4m) — largest single-class gain
+- **Road +3.05%, Sidewalk +3.21%**: Ground-class priors preserve and improve surface accuracy; DEM occupancy margin (1.5m) prevents erosion near building edges
+- **Overall accuracy +8.70%**: Consistent improvement across the full sequence (516M points)
+- **Vehicle +2.56%, Fence +2.58%**: Height priors correctly constrain low-structure and near-ground classes
+- **Vegetation -2.63%**: Regression from canopy height prior (mu=5m, tau=3m); vegetation canopy height varies significantly across the full sequence
+- **Pole -0.04%, Traffic-sign -0.02%**: Negligible change — these thin structures are not strongly affected by height priors
+
+<details>
+<summary>40-Frame Pilot Study</summary>
+
+Earlier validation on 40 frames showed similar trends with slightly larger deltas due to smaller sample:
+
+| Class | Baseline | + Height | Delta |
+|-------|:--------:|:--------:|:-----:|
+| road | 46.82% | 51.47% | +4.65% |
+| sidewalk | 25.08% | 31.07% | +5.98% |
+| building | 41.38% | 61.54% | +20.16% |
+| vegetation | 48.57% | 47.69% | -0.87% |
+| **mIoU** | **13.87%** | **17.17%** | **+3.30%** |
+| **Overall Acc** | **59.68%** | **68.24%** | **+8.56%** |
+
+</details>
 
 ### Height Kernel Parameters (Tuned)
 
