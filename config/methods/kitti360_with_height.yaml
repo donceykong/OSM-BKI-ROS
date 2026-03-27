@@ -1,0 +1,84 @@
+# KITTI360 ablation: OSM-BKI + height kernel
+# Identical to kitti360.yaml except separate eval output dir.
+
+/**:
+  ros__parameters:
+    data_root: "/media/sgarimella34/hercules-collect1/datasets/"
+
+    resolution: 0.5
+    free_resolution: 100.0
+    ds_resolution: 0.5
+    num_class: 13
+
+    scan_num: 5
+    max_range: 200.0
+    skip_frames: 25
+
+    dataset_name: kitti360
+    sequence_name: 2013_05_28_drive_0000_sync
+
+    input_data_suffix: velodyne_points/data
+    lidar_pose_suffix: velodyne_poses.txt
+    input_label_suffix: inferred_labels/cenet_mcd_softmax
+    gt_label_suffix: gt_labels
+
+    evaluation_result_prefix: evaluations/osm_prior_with_height/
+    query: true
+    visualize: false
+
+    inferred_use_multiclass: true
+    gt_use_multiclass: false
+    inferred_labels_key: mcd
+    gt_labels_key: kitti360
+
+    publish_osm_prior_map: false
+    osm_prior_map_color_mode: osm_blend
+    osm_prior_map_topic: /semantic_osm_prior_map
+    publish_variance: false
+    variance_topic: /osm_bki_variance
+    publish_semantic_uncertainty: false
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+    colors_file: labels_common.yaml
+
+    use_uncertainty_filter: false
+    uncertainty_filter_mode: top_percent
+    uncertainty_drop_percent: 99.0
+    uncertainty_min_weight: 0.00
+    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml
+
+    osm_decay_meters: 1.0
+    osm_file: map_0000.osm
+    osm_origin_lat: 48.9843445
+    osm_origin_lon: 8.4295857
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized_kitti360.yaml
+    osm_prior_strength: 2.0
+    osm_height_filtering: true
+
+    # Height kernel ENABLED
+    height_kernel_enabled: true
+    height_kernel_lambda: 0.9
+    height_kernel_dem_grid_suffix: dem_local_grid.bin
+    height_kernel_dsm_grid_suffix: dsm_local_grid.bin
+    dem_occupancy_strength: 0.5
+    dem_occupancy_margin: 1.5
+    # Per-class height priors (aggressive tuning):
+    #   unlabeled: mu=0, tau=100 (no constraint)
+    #   road:      mu=0, tau=0.8 (ground-level, DEM-tolerant)
+    #   sidewalk:  mu=0, tau=0.8 (ground-level, DEM-tolerant)
+    #   parking:   mu=0, tau=0.8 (ground-level, DEM-tolerant)
+    #   other-gnd: mu=0, tau=0.8 (ground-level)
+    #   building:  mu=7, tau=4   (elevated, tight — kills false building at ground)
+    #   fence:     mu=1, tau=0.8 (low structures)
+    #   pole:      mu=3, tau=2.5 (mid-height)
+    #   traffic:   mu=3, tau=2.0 (signs at mid-height)
+    #   vegetation:mu=5, tau=3   (canopy, penalizes false veg at ground)
+    #   2-wheeler: mu=0.7,tau=0.5(near ground, tight)
+    #   vehicle:   mu=0.8,tau=0.6(near ground, tight)
+    #   other-obj: mu=1, tau=1.5 (flexible)
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 5.0, 0.7, 0.8, 1.0]
+    height_kernel_tau: [100.0, 0.8, 0.8, 0.8, 0.8, 4.0, 0.8, 2.5, 2.0, 3.0, 0.5, 0.6, 1.5]
+
+    osm_in_sequence_dir: true
+    pose_format: kitti360
+    publish_rate: 1.0
+    topic: /osm_geometries

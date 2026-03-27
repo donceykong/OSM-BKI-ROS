@@ -380,7 +380,11 @@ int main(int argc, char **argv) {
     mcd_data.set_up_evaluation(dir + "/" + gt_label_prefix, dir + "/" + evaluation_result_prefix);
     mcd_data.process_scans(dir + "/" + input_data_prefix, dir + "/" + input_label_prefix, scan_num, skip_frames, query, visualize);
 
-    rclcpp::spin(node);
+    if (visualize) {
+        rclcpp::spin(node);
+    } else {
+        RCLCPP_INFO(node->get_logger(), "Visualize disabled — exiting after processing.");
+    }
     rclcpp::shutdown();
     return 0;
 }
