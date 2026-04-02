@@ -32,7 +32,7 @@ import rasterio
 
 # --- Config ---
 DATASET_DIR = "/media/sgarimella34/hercules-collect1/datasets/kitti360"
-SEQUENCE = "2013_05_28_drive_0000_sync"
+SEQUENCE = os.environ.get("KITTI360_SEQUENCE", "2013_05_28_drive_0000_sync")
 SEQUENCE_DIR = os.path.join(DATASET_DIR, SEQUENCE)
 POSE_FILE = os.path.join(SEQUENCE_DIR, "velodyne_poses.txt")
 TRANSFORM_FILE = os.path.join(SEQUENCE_DIR, "kitti360_to_utm.npz")

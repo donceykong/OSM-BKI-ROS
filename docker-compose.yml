@@ -10,11 +10,14 @@ services:
       - QT_X11_NO_MITSHM=1
       - ROS_DOMAIN_ID=0
     volumes:
-      # Mount dataset directory at the same path configs expect
-      - /media/sgarimella34/hercules-collect1/datasets:/media/sgarimella34/hercules-collect1/datasets
+      # Mount dataset directory (host hercules-collect2 → container hercules-collect1 paths)
+      - /media/sgarimella34/hercules-collect2/datasets:/media/sgarimella34/hercules-collect1/datasets
       # DEM and DSM tile directories
-      - /media/sgarimella34/hercules-collect1/kitti360_DGM025:/media/sgarimella34/hercules-collect1/kitti360_DGM025
-      - /media/sgarimella34/hercules-collect1/kitti360_DOM1:/media/sgarimella34/hercules-collect1/kitti360_DOM1
+      - /media/sgarimella34/hercules-collect2/kitti360_DGM025:/media/sgarimella34/hercules-collect1/kitti360_DGM025
+      - /media/sgarimella34/hercules-collect2/kitti360_DOM1:/media/sgarimella34/hercules-collect1/kitti360_DOM1
+      # KTH geospatial data (Stockholm DEM/DSM source) and output
+      - /media/sgarimella34/hercules-collect2/kth_geopatial_data:/media/sgarimella34/hercules-collect1/kth_geopatial_data
+      - /media/sgarimella34/hercules-collect2/kth_dem_dsm:/media/sgarimella34/hercules-collect1/kth_dem_dsm
       # X11 forwarding for RViz
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ${HOME}/.Xauthority:/root/.Xauthority:ro

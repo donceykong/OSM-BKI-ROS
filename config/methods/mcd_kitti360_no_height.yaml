@@ -1,0 +1,69 @@
+# Experiment 3A: MCD kth_day_09, cross-domain labels (CENet trained on KITTI-360), NO height kernel
+
+/**:
+  ros__parameters:
+    data_root: "/media/sgarimella34/hercules-collect1/datasets/"
+
+    resolution: 0.5
+    free_resolution: 100.0
+    ds_resolution: 0.5
+    num_class: 13
+
+    scan_num: 100
+    max_range: 200.0
+    skip_frames: 25
+
+    dataset_name: mcd
+    sequence_name: kth_day_09
+
+    input_data_suffix: lidar_bin/data
+    lidar_pose_suffix: pose_inW.csv
+    input_label_suffix: inferred_labels/cenet_kitti360_softmax
+    gt_label_suffix: gt_labels
+
+    evaluation_result_prefix: evaluations/kitti360labels_no_height/
+    query: true
+    visualize: false
+
+    inferred_use_multiclass: true
+    gt_use_multiclass: false
+    inferred_labels_key: kitti360
+    gt_labels_key: mcd
+
+    publish_osm_prior_map: false
+    osm_prior_map_color_mode: osm_blend
+    osm_prior_map_topic: /semantic_osm_prior_map
+    publish_variance: false
+    variance_topic: /osm_bki_variance
+    publish_semantic_uncertainty: false
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+    colors_file: labels_common.yaml
+
+    use_uncertainty_filter: false
+    uncertainty_filter_mode: top_percent
+    uncertainty_drop_percent: 99.0
+    uncertainty_min_weight: 0.00
+    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml
+
+    osm_decay_meters: 3.0
+    osm_file: ""
+    osm_origin_lat: 59.347671416
+    osm_origin_lon: 18.072069652
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
+    osm_prior_strength: 0.0
+    osm_height_filtering: false
+
+    # Height kernel DISABLED
+    height_kernel_enabled: false
+    height_kernel_lambda: 0.5
+    height_kernel_dem_grid_suffix: dem_local_grid.bin
+    height_kernel_dsm_grid_suffix: dsm_local_grid.bin
+    dem_occupancy_strength: 0.5
+    dem_occupancy_margin: 1.0
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 1.0, 3.0, 2.5, 3.0, 0.8, 0.8, 1.0]
+    height_kernel_tau: [100.0, 0.5, 0.5, 0.5, 1.0, 15.0, 1.5, 4.0, 3.0, 8.0, 1.0, 1.0, 2.0]
+
+    osm_in_sequence_dir: false
+    pose_format: mcd
+    publish_rate: 1.0
+    topic: /osm_geometries

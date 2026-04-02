@@ -349,10 +349,13 @@ namespace osm_bki {
         dsm_query_ = std::move(dsm);
     }
 
-    void SemanticBKIOctoMap::set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau) {
+    void SemanticBKIOctoMap::set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone, bool redistribute, float gate) {
         height_kernel_lambda_ = lambda;
         height_kernel_mu_ = mu;
         height_kernel_tau_ = tau;
+        height_kernel_dead_zone_ = dead_zone;
+        height_kernel_redistribute_ = redistribute;
+        height_kernel_gate_ = gate;
     }
 
     void SemanticBKIOctoMap::set_dem_occupancy_prior(float strength, float margin) {
@@ -370,15 +373,54 @@ namespace osm_bki {
         int nc = static_cast<int>(ybars.size());
         float lam = height_kernel_lambda_;
 
-        // Per-class height support: ybars[k] *= (1-λ) + λ * φ_k(h)
-        // φ_k(h) = exp(-(h - μ_k)² / (2 τ_k²))
+        // Compute per-class height compatibility phi_k (with dead zone)
+        float dz = height_kernel_dead_zone_;
+        std::vector<float> phi(nc, 1.f);
         for (int k = 0; k < nc; ++k) {
             float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
             float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
-            float diff = h - mu_k;
-            float phi_k = std::exp(-(diff * diff) / (2.f * tau_k * tau_k));
-            float scale = (1.f - lam) + lam * phi_k;
-            ybars[k] *= scale;
+            float abs_diff = std::abs(h - mu_k);
+            if (abs_diff <= dz) continue;  // within dead zone → phi = 1
+            float excess = abs_diff - dz;
+            phi[k] = std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
+        }
+
+        // Prediction gate: only apply kernel when argmax is height-incompatible
+        if (height_kernel_gate_ > 0.f) {
+            int argmax_k = 0;
+            for (int k = 1; k < nc; ++k) {
+                if (ybars[k] > ybars[argmax_k]) argmax_k = k;
+            }
+            if (phi[argmax_k] >= height_kernel_gate_) return;  // prediction is height-compatible, skip
+        }
+
+        if (height_kernel_redistribute_) {
+            // Redistribution mode: reweight ybars by phi, preserving total positive evidence.
+            // Classes at wrong height lose evidence; classes at correct height gain it.
+            float sum_pos = 0.f, sum_weighted = 0.f;
+            for (int k = 0; k < nc; ++k) {
+                if (ybars[k] > 0.f) {
+                    sum_pos += ybars[k];
+                    sum_weighted += ybars[k] * phi[k];
+                }
+            }
+            if (sum_weighted > 1e-12f && sum_pos > 1e-12f) {
+                float norm = sum_pos / sum_weighted;
+                for (int k = 0; k < nc; ++k) {
+                    if (ybars[k] > 0.f) {
+                        float new_ybar = ybars[k] * phi[k] * norm;
+                        ybars[k] = (1.f - lam) * ybars[k] + lam * new_ybar;
+                    }
+                }
+            }
+        } else {
+            // Suppression mode: ybars[k] *= (1-λ) + λ * phi_k
+            for (int k = 0; k < nc; ++k) {
+                if (phi[k] < 1.f) {
+                    float scale = (1.f - lam) + lam * phi[k];
+                    ybars[k] *= scale;
+                }
+            }
         }
 
         // DEM/DSM occupancy prior: evidence for free space above DSM or below DEM

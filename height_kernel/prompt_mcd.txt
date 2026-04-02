@@ -1,0 +1,91 @@
+You are tuning the DEM-based height kernel for the MCD dataset (Stockholm, KTH campus) experiments. Your goal: make the height kernel IMPROVE results (positive mIoU delta) for BOTH experiments 3 and 4 on 100 scans. Do not stop until you achieve significant positive improvement on both.
+
+## System Setup
+- Working directory: /home/sgarimella34/OSM-BKI-ROS
+- Docker container: osm-bki (docker compose based)
+- To rebuild after config changes: `docker compose down && docker compose up -d --build`
+- To run experiments: `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_mcd.sh"`
+- Source is COPIED into Docker at build time (not mounted), so ANY config or code change requires rebuild
+- External drive mounts: host hercules-collect2 → container hercules-collect1 paths
+
+## Experiments
+- **Experiment 3**: MCD kth_day_09, cross-domain labels (CENet trained on KITTI-360, tested on MCD)
+  - Configs: config/methods/mcd_kitti360_no_height.yaml (baseline) vs mcd_kitti360_with_height.yaml (height kernel)
+  - Baseline mIoU: ~12.80%, Overall Acc: ~50.84%
+- **Experiment 4**: MCD kth_day_09, in-domain labels (CENet trained on MCD, tested on MCD)
+  - Configs: config/methods/mcd_mcd_no_height.yaml (baseline) vs mcd_mcd_with_height.yaml (height kernel)
+  - Baseline mIoU: ~34.21%, Overall Acc: ~75.72%
+- Both use scan_num: 100, skip_frames: 25 → ~1089 eval scans
+- Run script: height_kernel/run_ablation_mcd.sh (runs both experiments sequentially with evaluation)
+- Evaluation script: height_kernel/evaluate_ablation.py
+
+## Height Kernel Formula
+For each voxel at height h above ground (from DEM):
+  ybars[k] *= (1-lambda) + lambda * exp(-(h - mu_k)^2 / (2 * tau_k^2))
+
+Where h = voxel_z - dem_grid_value. Applied per-class in bkioctomap.cpp.
+Also has DEM/DSM occupancy prior: ybars[0] += dem_occupancy_strength for voxels above DSM or below DEM.
+
+## Parameters to Tune (in the *_with_height.yaml configs)
+- height_kernel_lambda: strength (0=off, 1=full authority)
+- height_kernel_mu: per-class expected height [13 values for common taxonomy]
+- height_kernel_tau: per-class tolerance [13 values] — larger = more permissive
+- dem_occupancy_strength: free-space evidence (0=disabled)
+- dem_occupancy_margin: tolerance in meters
+
+## Class Order (common taxonomy, 13 classes)
+0:unlabeled, 1:road, 2:sidewalk, 3:parking, 4:other-ground, 5:building, 6:fence, 7:pole, 8:traffic-sign, 9:vegetation, 10:two-wheeler, 11:vehicle, 12:other-object
+
+## Critical Context: What We Already Tried and Why It Failed
+
+### The MCD DEM is NOISY
+- Source: single .laz airborne LiDAR tile converted to 0.5m DEM/DSM GeoTIFFs
+- DEM has 23% NaN cells (sparse ground classification)
+- Height measurement std at ground level: ~2.0m (compared to <0.5m for KITTI-360's German government DEM)
+- The nodata blending bug was already fixed (precompute_dem_grid_mcd.py replaces nodata with NaN before interpolation)
+
+### Per-class height distributions (h = voxel_z - dem_value, from diagnostic on scan 1):
+  sidewalk:     mean_h=0.38, std=0.47,  p10=-0.15, p90=0.73
+  other-ground: mean_h=0.93, std=1.15,  p10=-0.14, p90=2.57
+  building:     mean_h=6.50, std=2.30,  p10=3.59,  p90=9.32
+  pole:         mean_h=0.48, std=0.66
+  traffic-sign: mean_h=1.91, std=0.37
+  vegetation:   mean_h=4.40, std=2.20,  p10=2.52,  p90=6.99
+  vehicle:      mean_h=1.35, std=0.72
+  other-object: mean_h=2.35, std=2.09
+
+### What was tried (all failed on MCD):
+1. lambda=0.9, tight taus (original KITTI-360 tuning) → mIoU -6.23% (exp3), -12.31% (exp4). Catastrophic.
+2. lambda=0.3, wider taus [5,5,5,5,8,5,8,6,15,3,3,5] → mIoU -4.21% (exp3), -9.00% (exp4). Still bad.
+3. lambda=0.15, wide taus, occupancy=0.2 → mIoU -3.81% (exp3). DEM occupancy was the main culprit.
+4. lambda=0.15, wide taus, occupancy=0.0 → mIoU -0.32% (exp3), -0.39% (exp4). Nearly neutral! Overall Acc +1.71% for exp3. Vehicle was the big loser at -7.86%.
+5. lambda=0.25, vehicle/2wheeler tau=100 (disabled), building tau=10, veg tau=15 → never ran (was queued)
+6. lambda=0.7, building tau=4, veg tau=6 only, rest tau=100 → mIoU -4.05% (exp3). Tau too tight for noisy DEM.
+7. lambda=0.5, building tau=8, veg tau=8, rest tau=100 → mIoU -2.12% (exp3). Still too tight.
+8. lambda=0.5, building tau=15, veg tau=12, rest tau=100 → currently configured, not yet run
+
+### Key Insight
+The ONLY configuration that came close to helping was #4 (lambda=0.15, all taus wide, no occupancy). It gave +1.71% overall accuracy on exp3 but slightly negative mIoU. The kernel can only SUPPRESS (multiply by factor ≤ 1), never boost. So it helps by suppressing wrong predictions at wrong heights, but hurts if it also suppresses correct predictions.
+
+### Possible Approaches to Try
+1. **Ultra-conservative**: lambda=0.1-0.2, only building+vegetation with tau matching their height std (tau > 3*std), no occupancy
+2. **Height-band approach**: Only suppress predictions that are VERY far from expected height (e.g., building at h<1 or vegetation at h<1)
+3. **Asymmetric approach**: Maybe modify the C++ code to only apply the kernel when the suppression would actually help (e.g., only suppress low-confidence predictions)
+4. **Fix the DEM**: The 23% NaN coverage might be improvable by interpolating from valid cells
+5. **Reconsider the occupancy prior**: With margin=3.0+, maybe it could work — the issue was margin=1.5 was too tight
+
+## Files You May Need to Modify
+- config/methods/mcd_kitti360_with_height.yaml — exp 3 height kernel config
+- config/methods/mcd_mcd_with_height.yaml — exp 4 height kernel config
+- src/mapping/bkioctomap.cpp — apply_height_kernel_to_ybars() at line ~363
+- include/osm_bki/common/dem_height_query.h — DEM grid loader
+- height_kernel/precompute_dem_grid_mcd.py — DEM grid generation
+
+## Workflow
+1. Edit configs (or C++ code if needed)
+2. `docker compose down && docker compose up -d --build` (takes ~25s)
+3. `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_mcd.sh"`
+4. Check results in output — look for COMPARISON section with per-class deltas
+5. Iterate until BOTH experiments show positive mIoU delta
+
+DO NOT GIVE UP. Keep iterating. The height kernel works on KITTI-360 cross-domain (+2.70% mIoU), so it CAN work on MCD too — it just needs the right parameters or a code fix for the noisy DEM.

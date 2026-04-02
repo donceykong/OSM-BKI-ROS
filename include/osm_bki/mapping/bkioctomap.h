@@ -396,7 +396,7 @@ namespace osm_bki {
         /// DEM-based height kernel: per-class Gaussian support modulating ybars.
         /// dem/dsm are binary grids in KITTI-360 local frame (from precompute_dem_grid.py).
         void set_dem_grids(std::unique_ptr<DEMHeightQuery> dem, std::unique_ptr<DEMHeightQuery> dsm);
-        void set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau);
+        void set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone = 0.f, bool redistribute = false, float gate = 0.f);
         void set_dem_occupancy_prior(float strength, float margin);
 
     private:
@@ -535,6 +535,9 @@ namespace osm_bki {
         float height_kernel_lambda_{0.f};
         std::vector<float> height_kernel_mu_;   // per-class expected height above ground
         std::vector<float> height_kernel_tau_;  // per-class tolerance (std dev)
+        float height_kernel_dead_zone_{0.f};   // meters: no suppression within ±dead_zone of mu
+        bool height_kernel_redistribute_{false}; // redistribute mode: preserve total evidence
+        float height_kernel_gate_{0.f};          // if >0, only apply when argmax phi < gate
         float dem_occupancy_strength_{0.f};     // free-space evidence strength for above-DSM / below-DEM
         float dem_occupancy_margin_{1.0f};      // meters of tolerance before applying occupancy prior
     };

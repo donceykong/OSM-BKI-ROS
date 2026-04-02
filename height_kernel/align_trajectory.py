@@ -29,7 +29,7 @@ from rasterio.plot import show as rioshow
 
 # --- Config ---
 DATASET_DIR = "/media/sgarimella34/hercules-collect1/datasets/kitti360"
-SEQUENCE = "2013_05_28_drive_0000_sync"
+SEQUENCE = os.environ.get("KITTI360_SEQUENCE", "2013_05_28_drive_0000_sync")
 POSE_FILE = os.path.join(DATASET_DIR, SEQUENCE, "velodyne_poses.txt")
 
 # KITTI-360 Mercator origin (from kitti360.yaml)

@@ -112,6 +112,18 @@ int main(int argc, char **argv) {
     node->declare_parameter<bool>("publish_static_tf", true);
     node->declare_parameter<bool>("use_pose_index_as_scan_id", false);
     node->declare_parameter<bool>("use_common_taxonomy", true);
+    // DEM-based height kernel
+    node->declare_parameter<bool>("height_kernel_enabled", false);
+    node->declare_parameter<double>("height_kernel_lambda", 0.5);
+    node->declare_parameter<std::string>("height_kernel_dem_grid_suffix", "dem_local_grid.bin");
+    node->declare_parameter<std::string>("height_kernel_dsm_grid_suffix", "dsm_local_grid.bin");
+    node->declare_parameter<double>("dem_occupancy_strength", 0.0);
+    node->declare_parameter<double>("dem_occupancy_margin", 1.0);
+    node->declare_parameter<std::vector<double>>("height_kernel_mu", std::vector<double>());
+    node->declare_parameter<std::vector<double>>("height_kernel_tau", std::vector<double>());
+    node->declare_parameter<double>("height_kernel_dead_zone", 0.0);
+    node->declare_parameter<bool>("height_kernel_redistribute", false);
+    node->declare_parameter<double>("height_kernel_gate", 0.0);
 
     // Get parameters
     node->get_parameter<std::string>("map_topic", map_topic);
@@ -476,6 +488,45 @@ int main(int argc, char **argv) {
       }
     }
 
+    // DEM-based height kernel
+    {
+        bool hk_enabled = false;
+        node->get_parameter<bool>("height_kernel_enabled", hk_enabled);
+        if (hk_enabled) {
+            double hk_lambda, occ_strength, occ_margin, hk_dead_zone;
+            std::string dem_suffix, dsm_suffix;
+            node->get_parameter<double>("height_kernel_lambda", hk_lambda);
+            node->get_parameter<std::string>("height_kernel_dem_grid_suffix", dem_suffix);
+            node->get_parameter<std::string>("height_kernel_dsm_grid_suffix", dsm_suffix);
+            node->get_parameter<double>("dem_occupancy_strength", occ_strength);
+            node->get_parameter<double>("dem_occupancy_margin", occ_margin);
+            node->get_parameter<double>("height_kernel_dead_zone", hk_dead_zone);
+            bool hk_redistribute = false;
+            double hk_gate = 0.0;
+            node->get_parameter<bool>("height_kernel_redistribute", hk_redistribute);
+            node->get_parameter<double>("height_kernel_gate", hk_gate);
+
+            std::string dem_path = dir + "/" + sequence_name + "/" + dem_suffix;
+            std::string dsm_path = dir + "/" + sequence_name + "/" + dsm_suffix;
+
+            std::vector<double> mu_d, tau_d;
+            node->get_parameter<std::vector<double>>("height_kernel_mu", mu_d);
+            node->get_parameter<std::vector<double>>("height_kernel_tau", tau_d);
+            std::vector<float> mu_f(mu_d.begin(), mu_d.end());
+            std::vector<float> tau_f(tau_d.begin(), tau_d.end());
+
+            if (mcd_data.load_dem_height_kernel(dem_path, dsm_path,
+                    static_cast<float>(hk_lambda), mu_f, tau_f,
+                    static_cast<float>(occ_strength), static_cast<float>(occ_margin),
+                    static_cast<float>(hk_dead_zone), hk_redistribute,
+                    static_cast<float>(hk_gate))) {
+                RCLCPP_INFO_STREAM(node->get_logger(), "Height kernel enabled (lambda=" << hk_lambda << ", dead_zone=" << hk_dead_zone << ", gate=" << hk_gate << ")");
+            } else {
+                RCLCPP_WARN_STREAM(node->get_logger(), "Height kernel: DEM grid not found, kernel disabled");
+            }
+        }
+    }
+
     // Process scans
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: About to set up evaluation");
     mcd_data.set_up_evaluation(dir + '/' + gt_label_prefix, dir + '/' + evaluation_result_prefix);
@@ -483,13 +534,11 @@ int main(int argc, char **argv) {
     
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: About to process scans. input_data_prefix=" << input_data_prefix << ", scan_num=" << scan_num);
     mcd_data.process_scans(dir + '/' + input_data_prefix, dir + '/' + input_label_prefix, scan_num, skip_frames, query, visualize);
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Scan processing completed, about to spin");
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Node pointer: " << node.get());
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Starting rclcpp::spin(node)...");
-    
-    rclcpp::spin(node);
-    
-    RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: rclcpp::spin() returned (node shutdown)");
+    if (visualize) {
+        rclcpp::spin(node);
+    } else {
+        RCLCPP_INFO(node->get_logger(), "Visualize disabled — exiting after processing.");
+    }
     
     rclcpp::shutdown();
     return 0;

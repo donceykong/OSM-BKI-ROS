@@ -1,0 +1,74 @@
+# Experiment 4B: MCD kth_day_09, in-domain labels (CENet trained on MCD), WITH height kernel
+
+/**:
+  ros__parameters:
+    data_root: "/media/sgarimella34/hercules-collect1/datasets/"
+
+    resolution: 0.5
+    free_resolution: 100.0
+    ds_resolution: 0.5
+    num_class: 13
+
+    scan_num: 100
+    max_range: 200.0
+    skip_frames: 25
+
+    dataset_name: mcd
+    sequence_name: kth_day_09
+
+    input_data_suffix: lidar_bin/data
+    lidar_pose_suffix: pose_inW.csv
+    input_label_suffix: inferred_labels/cenet_mcd_softmax
+    gt_label_suffix: gt_labels
+
+    evaluation_result_prefix: evaluations/mcdlabels_with_height/
+    query: true
+    visualize: false
+
+    inferred_use_multiclass: true
+    gt_use_multiclass: false
+    inferred_labels_key: mcd
+    gt_labels_key: mcd
+
+    publish_osm_prior_map: false
+    osm_prior_map_color_mode: osm_blend
+    osm_prior_map_topic: /semantic_osm_prior_map
+    publish_variance: false
+    variance_topic: /osm_bki_variance
+    publish_semantic_uncertainty: false
+    semantic_uncertainty_topic: /semantic_uncertainty_map
+    colors_file: labels_common.yaml
+
+    use_uncertainty_filter: false
+    uncertainty_filter_mode: top_percent
+    uncertainty_drop_percent: 99.0
+    uncertainty_min_weight: 0.00
+    confusion_matrix_file: confusion_matrix_mcd_optimized.yaml
+
+    osm_decay_meters: 3.0
+    osm_file: ""
+    osm_origin_lat: 59.347671416
+    osm_origin_lon: 18.072069652
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized.yaml
+    osm_prior_strength: 0.0
+    osm_height_filtering: false
+
+    # Height kernel ENABLED — bilateral suppress, ONLY sidewalk(2) active, gentle τ=4.0
+    height_kernel_enabled: true
+    height_kernel_lambda: 0.25
+    height_kernel_dead_zone: 4.0
+    height_kernel_redistribute: false
+    height_kernel_gate: 0.0
+    height_kernel_dem_grid_suffix: dem_local_grid.bin
+    height_kernel_dsm_grid_suffix: dsm_local_grid.bin
+    dem_occupancy_strength: 0.0
+    dem_occupancy_margin: 3.0
+    # Best exp4 config: sidewalk-only with gentle τ=4.0. Improves road/sdwk/bldg, minimal collateral.
+    #              unlbl  road  sdwk  park  ognd  bldg   fnce   pole   tsgn   veg    2whl   vhcl   oobj
+    height_kernel_mu:  [0.0, 0.0, 0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    height_kernel_tau: [100000.0, 100000.0, 4.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0]
+
+    osm_in_sequence_dir: false
+    pose_format: mcd
+    publish_rate: 1.0
+    topic: /osm_geometries

@@ -778,7 +778,10 @@ class MCDData {
                                 const std::vector<float> &mu,
                                 const std::vector<float> &tau,
                                 float occ_strength,
-                                float occ_margin) {
+                                float occ_margin,
+                                float dead_zone = 0.f,
+                                bool redistribute = false,
+                                float gate = 0.f) {
       if (!map_) return false;
 
       auto dem = std::make_unique<osm_bki::DEMHeightQuery>();
@@ -805,11 +808,12 @@ class MCDData {
       }
 
       map_->set_dem_grids(std::move(dem), std::move(dsm));
-      map_->set_height_kernel_params(lambda, mu, tau);
+      map_->set_height_kernel_params(lambda, mu, tau, dead_zone, redistribute, gate);
       map_->set_dem_occupancy_prior(occ_strength, occ_margin);
 
       RCLCPP_INFO_STREAM(node_->get_logger(),
           "Height kernel: lambda=" << lambda
+          << ", dead_zone=" << dead_zone
           << ", " << mu.size() << " class priors, occ_strength=" << occ_strength);
       return dem_ok;
     }
