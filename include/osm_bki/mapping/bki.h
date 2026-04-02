@@ -35,6 +35,7 @@ namespace osm_bki {
             this->y_vec = y;
             this->w_vec.clear();
             this->y_soft.clear();
+            this->w_class.clear();
             train(_x, _y);
         }
 
@@ -45,6 +46,21 @@ namespace osm_bki {
             MatrixYType _y = Eigen::Map<const MatrixYType>(y.data(), y.size(), 1);
             this->y_vec = y;
             this->w_vec = w;
+            this->y_soft.clear();
+            this->w_class.clear();
+            train(_x, _y);
+        }
+
+        /// Train with hard labels, per-point weights, and per-class kernel weights.
+        void train(const std::vector<T> &x, const std::vector<T> &y, const std::vector<T> &w,
+                   const std::vector<std::vector<T>> &w_class) {
+            assert(x.size() % dim == 0 && (int) (x.size() / dim) == y.size());
+            assert(w.size() == y.size() && w_class.size() == y.size());
+            MatrixXType _x = Eigen::Map<const MatrixXType>(x.data(), x.size() / dim, dim);
+            MatrixYType _y = Eigen::Map<const MatrixYType>(y.data(), y.size(), 1);
+            this->y_vec = y;
+            this->w_vec = w;
+            this->w_class = w_class;
             this->y_soft.clear();
             train(_x, _y);
         }
@@ -74,6 +90,7 @@ namespace osm_bki {
             this->y_vec.clear();
             this->w_vec.clear();
             this->y_soft = y_soft;
+            this->w_class.clear();
             trained = true;
         }
 
@@ -89,6 +106,28 @@ namespace osm_bki {
             this->y_vec.clear();
             this->w_vec = w;
             this->y_soft = y_soft;
+            this->w_class.clear();
+            trained = true;
+        }
+
+        /// Train with soft labels, per-point weights, and per-point per-class kernel weights.
+        /// w_class[i][k] multiplies into class k's contribution for point i (e.g. OSM semantic kernel).
+        void train_soft(const std::vector<T> &x, const std::vector<std::vector<T>> &y_soft,
+                        const std::vector<T> &w, const std::vector<std::vector<T>> &w_class) {
+            assert(x.size() % dim == 0);
+            size_t n = x.size() / dim;
+            assert(y_soft.size() == n && w.size() == n);
+            assert(w_class.size() == n);
+            for (size_t i = 0; i < n; ++i) {
+                assert((int)y_soft[i].size() == nc);
+                assert((int)w_class[i].size() == nc);
+            }
+            MatrixXType _x = Eigen::Map<const MatrixXType>(x.data(), n, dim);
+            this->x = _x;
+            this->y_vec.clear();
+            this->w_vec = w;
+            this->y_soft = y_soft;
+            this->w_class = w_class;
             trained = true;
         }
 
@@ -100,24 +139,27 @@ namespace osm_bki {
           MatrixKType Ks;
 
           covSparse(_xs, x, Ks);
-          
+
           ybars.resize(_xs.rows());
           for (int r = 0; r < _xs.rows(); ++r)
             ybars[r].resize(nc);
 
             bool has_weights = !w_vec.empty();
+            bool has_class_weights = !w_class.empty();
             MatrixYType _y_vec = Eigen::Map<const MatrixYType>(y_vec.data(), y_vec.size(), 1);
             for (int k = 0; k < nc; ++k) {
               for (size_t i = 0; i < y_vec.size(); ++i) {
-                if (y_vec[i] == k)
-                  _y_vec(i, 0) = has_weights ? w_vec[i] : static_cast<T>(1);
-                else
+                if (y_vec[i] == k) {
+                  T w = has_weights ? w_vec[i] : static_cast<T>(1);
+                  T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
+                  _y_vec(i, 0) = w * wc;
+                } else
                   _y_vec(i, 0) = 0;
               }
-            
+
             MatrixYType _ybar;
             _ybar = (Ks * _y_vec);
-            
+
             for (int r = 0; r < _ybar.rows(); ++r)
               ybars[r][k] = _ybar(r, 0);
           }
@@ -130,21 +172,30 @@ namespace osm_bki {
           MatrixKType Ks;
 
           covCountingSensorModel(_xs, x, Ks);
-          
+
           ybars.resize(_xs.rows());
           for (int r = 0; r < _xs.rows(); ++r)
             ybars[r].resize(nc);
 
           bool use_soft = !y_soft.empty();
           bool has_weights = !w_vec.empty();
+          bool has_class_weights = !w_class.empty();
           MatrixYType _y_vec(use_soft ? y_soft.size() : y_vec.size(), 1);
           for (int k = 0; k < nc; ++k) {
             if (use_soft) {
-              for (size_t i = 0; i < y_soft.size(); ++i)
-                _y_vec(i, 0) = has_weights ? (y_soft[i][k] * w_vec[i]) : y_soft[i][k];
+              for (size_t i = 0; i < y_soft.size(); ++i) {
+                T w = has_weights ? w_vec[i] : static_cast<T>(1);
+                T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
+                _y_vec(i, 0) = y_soft[i][k] * w * wc;
+              }
             } else {
               for (size_t i = 0; i < y_vec.size(); ++i) {
-                _y_vec(i, 0) = (y_vec[i] == k) ? static_cast<T>(1) : static_cast<T>(0);
+                if (y_vec[i] == k) {
+                  T w = has_weights ? w_vec[i] : static_cast<T>(1);
+                  T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
+                  _y_vec(i, 0) = w * wc;
+                } else
+                  _y_vec(i, 0) = 0;
               }
             }
             MatrixYType _ybar;
@@ -215,6 +266,7 @@ namespace osm_bki {
         std::vector<T> y_vec;
         std::vector<T> w_vec;  // per-point weights (empty = all 1.0)
         std::vector<std::vector<T>> y_soft;  // soft labels (n x nc); when non-empty, predict_csm uses these
+        std::vector<std::vector<T>> w_class; // per-point per-class weights (n x nc); empty = all 1.0
 
         bool trained;    // true if bgkinference stored training data
     };

@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Octree parameter
-    block_depth: 1 # Test-data octree depth (see Wang & Englot ICRA 2016)
+    block_depth: 3 # Test-data octree depth (see Wang & Englot ICRA 2016)
 
     # Kernel parameters
     sf2: 10.0 # Actually sigma_0 in sparse kernel
@@ -13,7 +13,7 @@
     prior: 0.001 # each class
 
     # Threshold on variance to distinguish known/unknown
-    var_thresh: 0.09 # 0.09
+    var_thresh: 0.09
 
     # Free/Occupied Thresholds
     free_thresh: 0.4

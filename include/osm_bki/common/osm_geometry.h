@@ -168,4 +168,29 @@ namespace osm_bki {
         if (decay_m <= 0.f) return 0.f;
         return std::max(0.f, 1.f - d / decay_m);
     }
+
+    /// Check if a Geometry2D's bounding box overlaps a circle (cx, cy, radius).
+    inline bool geometry_overlaps_circle(const Geometry2D &geom, float cx, float cy, float radius) {
+        if (geom.coords.empty()) return false;
+        // Compute AABB of geometry
+        float min_x = std::numeric_limits<float>::max(), max_x = std::numeric_limits<float>::lowest();
+        float min_y = std::numeric_limits<float>::max(), max_y = std::numeric_limits<float>::lowest();
+        for (const auto &p : geom.coords) {
+            if (p.first < min_x) min_x = p.first;
+            if (p.first > max_x) max_x = p.first;
+            if (p.second < min_y) min_y = p.second;
+            if (p.second > max_y) max_y = p.second;
+        }
+        // Closest point on AABB to circle center
+        float nearest_x = std::max(min_x, std::min(cx, max_x));
+        float nearest_y = std::max(min_y, std::min(cy, max_y));
+        float dx = cx - nearest_x, dy = cy - nearest_y;
+        return (dx * dx + dy * dy) <= (radius * radius);
+    }
+
+    /// Check if a point (px, py) is within radius of circle (cx, cy, radius).
+    inline bool point_overlaps_circle(float px, float py, float cx, float cy, float radius) {
+        float dx = px - cx, dy = py - cy;
+        return (dx * dx + dy * dy) <= (radius * radius);
+    }
 }

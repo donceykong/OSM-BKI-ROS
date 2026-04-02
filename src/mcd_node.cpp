@@ -101,6 +101,8 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("config_datasets_dir", "");
     node->declare_parameter<std::string>("osm_confusion_matrix_file", "");
     node->declare_parameter<double>("osm_prior_strength", 0.0);
+    node->declare_parameter<double>("osm_dirichlet_prior_strength", 0.0);
+    node->declare_parameter<double>("osm_scan_radius_extension", 1.2);
     node->declare_parameter<bool>("osm_height_filtering", false);
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
@@ -425,6 +427,12 @@ int main(int argc, char **argv) {
       node->get_parameter<std::string>("semantic_uncertainty_topic", semantic_uncertainty_topic);
       mcd_data.set_publish_semantic_uncertainty(publish_semantic_uncertainty, semantic_uncertainty_topic);
       mcd_data.set_osm_prior_strength(static_cast<float>(osm_prior_str));
+      double osm_dirichlet_str = 0.0;
+      node->get_parameter<double>("osm_dirichlet_prior_strength", osm_dirichlet_str);
+      mcd_data.set_osm_dirichlet_prior_strength(static_cast<float>(osm_dirichlet_str));
+      double osm_scan_ext = 1.2;
+      node->get_parameter<double>("osm_scan_radius_extension", osm_scan_ext);
+      mcd_data.set_osm_scan_radius_extension(static_cast<float>(osm_scan_ext));
       mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
 
       bool publish_osm_prior_map = false;

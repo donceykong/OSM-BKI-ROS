@@ -115,6 +115,14 @@ namespace osm_bki {
         osm_height_min_z_ = lim_min.z();
         osm_height_max_z_ = lim_max.z();
 
+        // Pre-filter OSM geometry to scan vicinity
+        float cx = (lim_min.x() + lim_max.x()) * 0.5f;
+        float cy = (lim_min.y() + lim_max.y()) * 0.5f;
+        float half_dx = (lim_max.x() - lim_min.x()) * 0.5f;
+        float half_dy = (lim_max.y() - lim_min.y()) * 0.5f;
+        float max_xy = std::sqrt(half_dx * half_dx + half_dy * half_dy);
+        filter_osm_for_scan(cx, cy, max_xy);
+
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
 
@@ -147,19 +155,26 @@ namespace osm_bki {
             if (block_xy.size() < 1)
                 continue;
 
-            vector<float> block_x, block_y;
+            int nc_csm = SemanticOcTreeNode::num_class;
+            vector<float> block_x, block_y, block_w;
+            std::vector<std::vector<float>> block_w_class;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
-            
-            
-            //std::cout << search(it->first.x(), it->first.y(), it->first.z()) << std::endl;
+                block_w.push_back(1.0f);
+
+                // Per-class OSM semantic kernel (boost-only, no suppression)
+                std::vector<float> k_vec(nc_csm, 1.0f);
+                int lbl = static_cast<int>(it->second);
+                if (lbl > 0 && lbl < nc_csm)  // skip free-space (label 0)
+                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                block_w_class.push_back(std::move(k_vec));
             }
 
             SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
-            bgk->train(block_x, block_y);
+            bgk->train(block_x, block_y, block_w, block_w_class);
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -185,9 +200,12 @@ namespace osm_bki {
 #pragma omp critical
 #endif
             {
-                if (block_arr.find(key) == block_arr.end())
+                bool is_new_block = (block_arr.find(key) == block_arr.end());
+                if (is_new_block)
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                if (is_new_block)
+                    init_osm_prior_for_block(block);
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -207,12 +225,6 @@ namespace osm_bki {
             int j = 0;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                 SemanticOcTreeNode &node = leaf_it.get_node();
-                point3f loc = block->get_loc(leaf_it);
-
-                float ybar_sum = 0.f;
-                for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-
                 node.update(ybars[j]);
             }
 
@@ -226,6 +238,7 @@ namespace osm_bki {
         for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
             delete it->second;
 
+        clear_osm_scan_filter();
         rtree.RemoveAll();
     }
 
@@ -323,6 +336,60 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::set_osm_prior_strength(float strength) {
         osm_prior_strength_ = strength;
+    }
+
+    void SemanticBKIOctoMap::set_osm_dirichlet_prior_strength(float strength) {
+        osm_dirichlet_prior_strength_ = strength;
+    }
+
+    void SemanticBKIOctoMap::init_osm_prior_for_block(Block *block) {
+        if (!osm_cm_loaded_ || osm_dirichlet_prior_strength_ <= 0.0f || block == nullptr) return;
+
+        int nc = SemanticOcTreeNode::num_class;
+        float base_prior = SemanticOcTreeNode::prior;
+
+        for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
+            SemanticOcTreeNode &node = leaf_it.get_node();
+            if (node.classified) continue;  // already has sensor data, don't overwrite
+
+            point3f loc = block->get_loc(leaf_it);
+
+            // Query OSM at this voxel's location
+            float osm_vec[N_OSM_PRIOR_COLS];
+            compute_osm_prior_vec(loc.x(), loc.y(), osm_vec);
+
+            // OSM confidence
+            float c_x = 0.f;
+            for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
+                if (osm_vec[c] > c_x) c_x = osm_vec[c];
+            }
+            if (c_x <= 0.f) continue;  // no OSM coverage, keep uniform prior
+
+            // Compute Mm[r] = M * osm_vec and max(Mm)
+            std::vector<float> Mm(osm_cm_rows_, 0.f);
+            float max_Mm = 0.f;
+            for (int r = 0; r < osm_cm_rows_; ++r) {
+                for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
+                    Mm[r] += osm_cm_[r][c] * osm_vec[c];
+                if (Mm[r] > max_Mm) max_Mm = Mm[r];
+            }
+            if (max_Mm <= 0.f) continue;
+
+            // Build spatially varying prior: base_prior + boost for OSM-supported classes
+            std::vector<float> osm_prior(nc, base_prior);
+            for (int r = 0; r < osm_cm_rows_; ++r) {
+                float support = Mm[r] / max_Mm;
+                if (support <= 0.f) continue;
+                float boost = osm_dirichlet_prior_strength_ * c_x * support;
+                const auto &labels = osm_cm_row_to_labels_[r];
+                for (int lbl : labels) {
+                    if (lbl >= 0 && lbl < nc)
+                        osm_prior[lbl] = base_prior + boost;
+                }
+            }
+
+            node.set_osm_prior(osm_prior);
+        }
     }
 
     void SemanticBKIOctoMap::set_osm_height_filter_enabled(bool enabled) {
@@ -430,10 +497,105 @@ namespace osm_bki {
         }
     }
 
+    void SemanticBKIOctoMap::compute_osm_semantic_kernel(
+            float x, float y, float z, std::vector<float> &k_vec) const {
+        int nc = static_cast<int>(k_vec.size());
+        // Default: all classes get weight 1.0 (no modulation)
+        std::fill(k_vec.begin(), k_vec.end(), 1.0f);
+
+        if (!osm_cm_loaded_ || osm_prior_strength_ <= 0.0f) return;
+
+        // 1. Compute OSM prior vector m(x,y) at the training point location
+        float osm_vec[N_OSM_PRIOR_COLS];
+        compute_osm_prior_vec(x, y, osm_vec);
+
+        // 2. Apply height filter: modulate OSM prior by height confusion matrix
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
+                osm_vec[c] *= osm_height_cm_[bin][c];
+        }
+
+        // 3. OSM confidence c(x) = max of OSM prior (excluding "none" column)
+        float c_x = 0.f;
+        for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
+            if (osm_vec[c] > c_x) c_x = osm_vec[c];
+        }
+        if (c_x <= 0.f) return;  // No OSM coverage: all weights stay 1.0
+
+        // 4. Compute Mm[r] = sum_j M[r][j] * osm_vec[j] — per-superclass OSM support
+        std::vector<float> Mm(osm_cm_rows_, 0.f);
+        float max_Mm = 0.f;
+        for (int r = 0; r < osm_cm_rows_; ++r) {
+            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
+                Mm[r] += osm_cm_[r][c] * osm_vec[c];
+            if (Mm[r] > max_Mm) max_Mm = Mm[r];
+        }
+        if (max_Mm <= 0.f) return;
+
+        // 5. Per-class boost: classes supported by OSM get weight > 1.0
+        //    Classes not supported stay at 1.0 (no suppression)
+        //    k_vec[lbl] = 1.0 + strength * c(x) * Mm[r] / max(Mm)
+        for (int r = 0; r < osm_cm_rows_; ++r) {
+            float support = Mm[r] / max_Mm;  // normalized to [0, 1]
+            if (support <= 0.f) continue;     // no boost for unsupported classes
+            float boost = osm_prior_strength_ * c_x * support;
+            const auto &labels = osm_cm_row_to_labels_[r];
+            for (int lbl : labels) {
+                if (lbl >= 0 && lbl < nc)
+                    k_vec[lbl] = 1.0f + boost;
+            }
+        }
+    }
+
+    void SemanticBKIOctoMap::filter_osm_for_scan(float center_x, float center_y, float max_xy_dist) {
+        float radius = max_xy_dist * osm_scan_radius_extension_ + osm_decay_meters_;
+
+        auto filter_geom = [&](const std::vector<Geometry2D> &src, std::vector<Geometry2D> &dst) {
+            dst.clear();
+            for (const auto &g : src) {
+                if (geometry_overlaps_circle(g, center_x, center_y, radius))
+                    dst.push_back(g);
+            }
+        };
+        auto filter_pts = [&](const std::vector<std::pair<float,float>> &src,
+                              std::vector<std::pair<float,float>> &dst) {
+            dst.clear();
+            for (const auto &p : src) {
+                if (point_overlaps_circle(p.first, p.second, center_x, center_y, radius))
+                    dst.push_back(p);
+            }
+        };
+
+        filter_geom(osm_buildings_,  active_buildings_);
+        filter_geom(osm_roads_,      active_roads_);
+        filter_geom(osm_sidewalks_,  active_sidewalks_);
+        filter_geom(osm_cycleways_,  active_cycleways_);
+        filter_geom(osm_grasslands_, active_grasslands_);
+        filter_geom(osm_trees_,      active_trees_);
+        filter_geom(osm_forests_,    active_forests_);
+        filter_geom(osm_parking_,    active_parking_);
+        filter_geom(osm_fences_,     active_fences_);
+        filter_geom(osm_walls_,      active_walls_);
+        filter_geom(osm_stairs_,     active_stairs_);
+        filter_geom(osm_water_,      active_water_);
+        filter_pts(osm_tree_points_, active_tree_points_);
+        filter_pts(osm_pole_points_, active_pole_points_);
+
+        osm_scan_filtered_ = true;
+    }
+
+    void SemanticBKIOctoMap::clear_osm_scan_filter() {
+        osm_scan_filtered_ = false;
+    }
+
     float SemanticBKIOctoMap::compute_osm_building_prior(float x, float y) const {
-        if (osm_buildings_.empty()) return 0.f;
+        const auto &buildings = osm_scan_filtered_ ? active_buildings_ : osm_buildings_;
+        if (buildings.empty()) return 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : osm_buildings_) {
+        for (const auto &poly : buildings) {
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside a building
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -442,9 +604,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_road_prior(float x, float y) const {
-        if (osm_roads_.empty()) return 0.f;
+        const auto &roads = osm_scan_filtered_ ? active_roads_ : osm_roads_;
+        if (roads.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &road : osm_roads_) {
+        for (const auto &road : roads) {
             float signed_d = distance_to_polyline_band_signed(x, y, road, osm_road_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -453,9 +616,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_grassland_prior(float x, float y) const {
-        if (osm_grasslands_.empty()) return 0.f;
+        const auto &grasslands = osm_scan_filtered_ ? active_grasslands_ : osm_grasslands_;
+        if (grasslands.empty()) return 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : osm_grasslands_) {
+        for (const auto &poly : grasslands) {
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside grassland
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -464,9 +628,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_forest_prior(float x, float y) const {
-        if (osm_forests_.empty()) return 0.f;
+        const auto &forests = osm_scan_filtered_ ? active_forests_ : osm_forests_;
+        if (forests.empty()) return 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : osm_forests_) {
+        for (const auto &poly : forests) {
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside forest
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -475,11 +640,13 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_tree_prior(float x, float y) const {
+        const auto &trees = osm_scan_filtered_ ? active_trees_ : osm_trees_;
+        const auto &tree_pts = osm_scan_filtered_ ? active_tree_points_ : osm_tree_points_;
         float max_prior = 0.f;
         // Check tree polygons (forests/woods)
-        if (!osm_trees_.empty()) {
+        if (!trees.empty()) {
             float min_positive_d = std::numeric_limits<float>::max();
-            for (const auto &poly : osm_trees_) {
+            for (const auto &poly : trees) {
                 float signed_d = distance_to_polygon_boundary(x, y, poly);
                 if (signed_d <= 0.f) {
                     max_prior = 1.f;  // inside forest, max prior
@@ -493,9 +660,9 @@ namespace osm_bki {
             }
         }
         // Check tree points (single trees): treat as circles with radius; prior = 1 inside, decay outside (same as polygons)
-        if (!osm_tree_points_.empty()) {
+        if (!tree_pts.empty()) {
             float min_signed_d = std::numeric_limits<float>::max();
-            for (const auto& pt : osm_tree_points_) {
+            for (const auto& pt : tree_pts) {
                 float signed_d = distance_to_circle_signed(x, y, pt.first, pt.second, osm_tree_point_radius_);
                 if (signed_d <= 0.f) {
                     max_prior = 1.f;  // inside a tree circle
@@ -512,10 +679,11 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_parking_prior(float x, float y) const {
-        if (osm_parking_.empty()) return 0.f;
+        const auto &parking = osm_scan_filtered_ ? active_parking_ : osm_parking_;
+        if (parking.empty()) return 0.f;
         float max_prior = 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : osm_parking_) {
+        for (const auto &poly : parking) {
             if (poly.coords.size() < 3) {
                 float d = distance_to_polyline(x, y, poly);
                 float prior = osm_prior_from_distance(d, osm_decay_meters_);
@@ -531,9 +699,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_fence_prior(float x, float y) const {
-        if (osm_fences_.empty()) return 0.f;
+        const auto &fences = osm_scan_filtered_ ? active_fences_ : osm_fences_;
+        if (fences.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &fence : osm_fences_) {
+        for (const auto &fence : fences) {
             float signed_d = distance_to_polyline_band_signed(x, y, fence, osm_fence_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -542,9 +711,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_sidewalk_prior(float x, float y) const {
-        if (osm_sidewalks_.empty()) return 0.f;
+        const auto &sidewalks = osm_scan_filtered_ ? active_sidewalks_ : osm_sidewalks_;
+        if (sidewalks.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &sw : osm_sidewalks_) {
+        for (const auto &sw : sidewalks) {
             float signed_d = distance_to_polyline_band_signed(x, y, sw, osm_sidewalk_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -553,9 +723,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_cycleway_prior(float x, float y) const {
-        if (osm_cycleways_.empty()) return 0.f;
+        const auto &cycleways = osm_scan_filtered_ ? active_cycleways_ : osm_cycleways_;
+        if (cycleways.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &cw : osm_cycleways_) {
+        for (const auto &cw : cycleways) {
             float signed_d = distance_to_polyline_band_signed(x, y, cw, osm_cycleway_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -564,9 +735,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_wall_prior(float x, float y) const {
-        if (osm_walls_.empty()) return 0.f;
+        const auto &walls = osm_scan_filtered_ ? active_walls_ : osm_walls_;
+        if (walls.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &wall : osm_walls_) {
+        for (const auto &wall : walls) {
             float signed_d = distance_to_polyline_band_signed(x, y, wall, osm_wall_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -575,9 +747,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_water_prior(float x, float y) const {
-        if (osm_water_.empty()) return 0.f;
+        const auto &water = osm_scan_filtered_ ? active_water_ : osm_water_;
+        if (water.empty()) return 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : osm_water_) {
+        for (const auto &poly : water) {
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside water
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -586,9 +759,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_pole_prior(float x, float y) const {
-        if (osm_pole_points_.empty()) return 0.f;
+        const auto &poles = osm_scan_filtered_ ? active_pole_points_ : osm_pole_points_;
+        if (poles.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &pt : osm_pole_points_) {
+        for (const auto &pt : poles) {
             float signed_d = distance_to_circle_signed(x, y, pt.first, pt.second, osm_pole_point_radius_);
             if (signed_d <= 0.f) return 1.f;  // inside pole circle
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -597,9 +771,10 @@ namespace osm_bki {
     }
 
     float SemanticBKIOctoMap::compute_osm_stairs_prior(float x, float y) const {
-        if (osm_stairs_.empty()) return 0.f;
+        const auto &stairs = osm_scan_filtered_ ? active_stairs_ : osm_stairs_;
+        if (stairs.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &stair : osm_stairs_) {
+        for (const auto &stair : stairs) {
             float signed_d = distance_to_polyline_band_signed(x, y, stair, osm_stairs_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -631,6 +806,14 @@ namespace osm_bki {
         bbox(xy, lim_min, lim_max);
         osm_height_min_z_ = lim_min.z();
         osm_height_max_z_ = lim_max.z();
+
+        // Pre-filter OSM geometry to scan vicinity
+        float cx = (lim_min.x() + lim_max.x()) * 0.5f;
+        float cy = (lim_min.y() + lim_max.y()) * 0.5f;
+        float half_dx = (lim_max.x() - lim_min.x()) * 0.5f;
+        float half_dy = (lim_max.y() - lim_min.y()) * 0.5f;
+        float max_xy = std::sqrt(half_dx * half_dx + half_dy * half_dy);
+        filter_osm_for_scan(cx, cy, max_xy);
 
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
@@ -664,19 +847,26 @@ namespace osm_bki {
             if (block_xy.size() < 1)
                 continue;
 
-            vector<float> block_x, block_y;
+            int nc_basic = SemanticOcTreeNode::num_class;
+            vector<float> block_x, block_y, block_w;
+            std::vector<std::vector<float>> block_w_class;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
-            
-            
-            //std::cout << search(it->first.x(), it->first.y(), it->first.z()) << std::endl;
+                block_w.push_back(1.0f);
+
+                // Per-class OSM semantic kernel (boost-only, no suppression)
+                std::vector<float> k_vec(nc_basic, 1.0f);
+                int lbl = static_cast<int>(it->second);
+                if (lbl > 0 && lbl < nc_basic)
+                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                block_w_class.push_back(std::move(k_vec));
             }
 
             SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
-            bgk->train(block_x, block_y);
+            bgk->train(block_x, block_y, block_w, block_w_class);
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -702,9 +892,12 @@ namespace osm_bki {
 #pragma omp critical
 #endif
             {
-                if (block_arr.find(key) == block_arr.end())
+                bool is_new_block = (block_arr.find(key) == block_arr.end());
+                if (is_new_block)
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                if (is_new_block)
+                    init_osm_prior_for_block(block);
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -720,18 +913,13 @@ namespace osm_bki {
                 if (bgk == bgk_arr.end())
                     continue;
 
-               	vector<vector<float>> ybars;
-		            bgk->second->predict(xs, ybars);
+                vector<vector<float>> ybars;
+                bgk->second->predict(xs, ybars);
 
                 int j = 0;
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();
-                    point3f loc = block->get_loc(leaf_it);
-
-                    float ybar_sum = 0.f;
-                    for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-
+                    // OSM prior is now in the kernel weights — no post-prediction bias needed
                     node.update(ybars[j]);
                 }
             }
@@ -745,6 +933,7 @@ namespace osm_bki {
         for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
             delete it->second;
 
+        clear_osm_scan_filter();
         rtree.RemoveAll();
     }
 
@@ -1029,6 +1218,14 @@ namespace osm_bki {
         osm_height_min_z_ = lim_min.z();
         osm_height_max_z_ = lim_max.z();
 
+        // Pre-filter OSM geometry to scan vicinity
+        float cx = (lim_min.x() + lim_max.x()) * 0.5f;
+        float cy = (lim_min.y() + lim_max.y()) * 0.5f;
+        float half_dx = (lim_max.x() - lim_min.x()) * 0.5f;
+        float half_dy = (lim_max.y() - lim_min.y()) * 0.5f;
+        float max_xy = std::sqrt(half_dx * half_dx + half_dy * half_dy);
+        filter_osm_for_scan(cx, cy, max_xy);
+
         vector<BlockHashKey> blocks;
         get_blocks_in_bbox(lim_min, lim_max, blocks);
 
@@ -1057,31 +1254,37 @@ namespace osm_bki {
             if (block_xy.size() < 1) continue;
 
             vector<float> block_x, block_y, block_w;
-            std::vector<std::vector<float>> block_y_soft;
+            std::vector<std::vector<float>> block_y_soft, block_w_class;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
+                // Per-class OSM semantic kernel (boost-only, no suppression)
                 block_w.push_back(it->weight);
+                std::vector<float> k_vec(nc, 1.0f);
                 if (use_soft) {
-                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc))
+                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc)) {
                         block_y_soft.push_back(*it->soft_probs);
-                    else {
-                        // Free-space points (soft_probs == nullptr): use zero vector so they do not
-                        // swamp the semantic counts; otherwise class 0 would dominate and all voxels
-                        // would get semantics=0 (e.g. all blue). Hit points with label 0 have soft_probs.
+                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                    } else {
+                        // Free-space points: zero soft probs, no OSM modulation
                         std::vector<float> zero_vec(static_cast<size_t>(nc), 0.f);
                         block_y_soft.push_back(std::move(zero_vec));
                     }
+                } else {
+                    int lbl = static_cast<int>(it->second);
+                    if (lbl > 0 && lbl < nc)
+                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
                 }
+                block_w_class.push_back(std::move(k_vec));
             }
 
             SemanticBKI3f *bgk = new SemanticBKI3f(nc, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
             if (use_soft && block_y_soft.size() == block_xy.size())
-                bgk->train_soft(block_x, block_y_soft, block_w);
+                bgk->train_soft(block_x, block_y_soft, block_w, block_w_class);
             else
-                bgk->train(block_x, block_y, block_w);
+                bgk->train(block_x, block_y, block_w, block_w_class);
 #ifdef OPENMP
 #pragma omp critical
 #endif
@@ -1098,9 +1301,12 @@ namespace osm_bki {
 #pragma omp critical
 #endif
             {
-                if (block_arr.find(key) == block_arr.end())
+                bool is_new_block = (block_arr.find(key) == block_arr.end());
+                if (is_new_block)
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
+                if (is_new_block)
+                    init_osm_prior_for_block(block);
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -1122,12 +1328,7 @@ namespace osm_bki {
                 int j = 0;
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();
-                    point3f loc = block->get_loc(leaf_it);
-
-                    float ybar_sum = 0.f;
-                    for (auto v : ybars[j]) ybar_sum += std::abs(v);
-                    apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-
+                    // OSM prior is now in the kernel weights — no post-prediction bias needed
                     node.update(ybars[j]);
                 }
             }
@@ -1135,6 +1336,7 @@ namespace osm_bki {
 
         for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
             delete it->second;
+        clear_osm_scan_filter();
         rtree.RemoveAll();
     }
 

@@ -624,6 +624,12 @@ class MCDData {
     void set_osm_prior_strength(float strength) {
       if (map_) map_->set_osm_prior_strength(strength);
     }
+    void set_osm_dirichlet_prior_strength(float strength) {
+      if (map_) map_->set_osm_dirichlet_prior_strength(strength);
+    }
+    void set_osm_scan_radius_extension(float factor) {
+      if (map_) map_->set_osm_scan_radius_extension(factor);
+    }
 
     void set_osm_height_filter_enabled(bool enabled) {
       if (map_) map_->set_osm_height_filter_enabled(enabled);

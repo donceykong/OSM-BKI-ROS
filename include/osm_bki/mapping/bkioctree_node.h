@@ -44,6 +44,14 @@ namespace osm_bki {
          */
         void update(std::vector<float>& ybars);
 
+        /// Set spatially varying Dirichlet prior (replaces uniform prior).
+        /// Only applied to unclassified nodes (before any sensor updates).
+        void set_osm_prior(const std::vector<float>& osm_prior) {
+            if (!classified && static_cast<int>(osm_prior.size()) == num_class) {
+                ms = osm_prior;
+            }
+        }
+
         /// Get probability of occupancy.
         void get_probs(std::vector<float>& probs) const;
 
