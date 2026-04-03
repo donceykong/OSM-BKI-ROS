@@ -517,7 +517,7 @@ namespace osm_bki {
         bool osm_cm_loaded_{false};
         float osm_prior_strength_{0.0f};
         int osm_cm_rows_{0};      // K_pred (number of semantic super-classes)
-        float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
+        float osm_cm_[14][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 14 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
 

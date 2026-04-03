@@ -27,12 +27,13 @@ CLASS_NAMES = [
     "fence",          # 6
     "pole",           # 7
     "traffic-sign",   # 8
-    "vegetation",     # 9
+    "terrain",        # 9
     "two-wheeler",    # 10
     "vehicle",        # 11
     "other-object",   # 12
+    "vegetation",     # 13
 ]
-NUM_CLASSES = 13  # 0-12
+NUM_CLASSES = 14  # 0-13
 
 
 def load_predictions(eval_dir):

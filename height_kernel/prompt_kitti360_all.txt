@@ -1,0 +1,157 @@
+You are tuning the DEM-based height kernel for ALL KITTI-360 experiments. Your goal: make the height kernel show SIGNIFICANT POSITIVE improvement (mIoU and OA gains) for all 4 experiment pairs. Do not stop until all show clear improvement.
+
+IMPORTANT: Do NOT modify any files in config/methods/mcd_*.yaml — those are MCD configs tuned separately and must be preserved.
+
+## The 4 Experiment Pairs
+
+### Cross-domain (CENet trained on MCD, tested on KITTI-360)
+- **Exp A (seq 0000)**: kitti360_no_height.yaml vs kitti360_with_height.yaml
+  - Run script: `bash /ros2_ws/src/osm_bki/height_kernel/run_ablation.sh`
+  - Launch: `ros2 launch osm_bki kitti360_launch.py data_config:=kitti360_no_height` / `kitti360_with_height`
+  - Labels: inferred_labels/cenet_mcd_softmax, inferred_labels_key: mcd
+  - Eval dirs: evaluations/osm_prior_no_height/ and evaluations/osm_prior_with_height/
+  - KNOWN GOOD RESULT (full 1000 scans): +2.70% mIoU, +8.70% OA (building +19.66%, road +3.05%)
+  - These configs have scan_num: 1000 — CHANGE TO 15 FOR DEBUGGING, then 100 for validation
+
+### In-domain (CENet trained on KITTI-360, tested on KITTI-360)
+- **Exp 1 (seq 0000)**: kitti360_0000_indomain_no_height.yaml vs kitti360_0000_indomain_with_height.yaml
+- **Exp 2 (seq 0009)**: kitti360_0009_indomain_no_height.yaml vs kitti360_0009_indomain_with_height.yaml
+  - Run script: `bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_indomain.sh`
+  - Launch: `ros2 launch osm_bki kitti360_launch.py data_config:=kitti360_0000_indomain_no_height` etc
+  - Labels: inferred_labels/cenet_kitti360_softmax, inferred_labels_key: kitti360
+  - Eval dirs: evaluations/indomain_no_height/ and evaluations/indomain_with_height/
+  - KNOWN BAD RESULT (full 1000 scans): -5.03% mIoU (exp1), -9.88% mIoU (exp2). Catastrophic.
+  - These configs have scan_num: 100 — CHANGE TO 15 FOR DEBUGGING
+
+ALL configs have OSM priors enabled (osm_prior_strength: 2.0, osm_file: map_0000.osm or map_0009.osm). Both baseline and height kernel configs use the same OSM priors. The height kernel is the ONLY difference.
+
+## Workflow
+1. Set scan_num to 15 in ALL 6 KITTI-360 configs (both no_height and with_height) for fast iteration
+2. Edit the *_with_height.yaml configs to tune height kernel parameters
+3. Rebuild: `docker compose down && docker compose up -d --build` (takes ~25s)
+4. Run one experiment at a time to test:
+   - Cross-domain: `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation.sh"`
+   - In-domain: `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_indomain.sh"`
+   - Or run individual experiments: `run_ablation_indomain.sh exp1` or `run_ablation_indomain.sh exp2`
+5. Check results in output — look for COMPARISON section with per-class deltas
+6. Iterate on the *_with_height configs until positive
+7. When all 4 look good on 15 scans, bump to 100 and validate
+
+## System Setup
+- Working directory: /home/sgarimella34/OSM-BKI-ROS
+- Docker container: osm-bki (docker compose based)
+- Source is COPIED into Docker at build time — ANY config or code change requires rebuild
+- External drive: host hercules-collect2 → container hercules-collect1 paths (already configured in docker-compose.yml)
+
+## Height Kernel Formula (in src/mapping/bkioctomap.cpp, line ~366)
+```
+h = voxel_z - dem_grid_value  (height above ground from DEM)
+
+For each class k:
+  abs_diff = |h - mu_k|
+  if abs_diff <= dead_zone: phi_k = 1.0 (no effect)
+  else: phi_k = exp(-((abs_diff - dead_zone)^2) / (2 * tau_k^2))
+
+  ybars[k] *= (1 - lambda) + lambda * phi_k
+```
+
+Applied after OSM prior, before Dirichlet update. Also has:
+- `gate`: if phi of argmax class >= gate, skip kernel entirely (only fire on incompatible predictions)
+- `redistribute`: alternative mode that reweights rather than suppresses
+- `dem_occupancy_strength/margin`: free-space prior for voxels above DSM or below DEM
+
+## Parameters to Tune (in *_with_height.yaml configs)
+- height_kernel_lambda: strength (0=off, 1=full)
+- height_kernel_dead_zone: points within this distance of mu_k are untouched
+- height_kernel_gate: if argmax phi >= gate, skip kernel (0=disabled)
+- height_kernel_redistribute: true=reweight mode, false=suppress mode
+- height_kernel_mu: per-class expected height [13 values]
+- height_kernel_tau: per-class tolerance [13 values], larger=more permissive, 100000=disabled
+- dem_occupancy_strength: free-space evidence (0=disabled)
+- dem_occupancy_margin: tolerance in meters
+
+## Class Order (common taxonomy)
+0:unlabeled, 1:road, 2:sidewalk, 3:parking, 4:other-ground, 5:building, 6:fence, 7:pole, 8:traffic-sign, 9:vegetation, 10:two-wheeler, 11:vehicle, 12:other-object
+
+## DEM Quality
+The KITTI-360 DEM is HIGH QUALITY — German government survey (DGM025, 0.25m resolution), near 100% coverage, very low noise. This is much better than MCD. You can use tighter taus here.
+
+## Current Config States
+
+### kitti360_with_height.yaml (cross-domain, seq 0000)
+KNOWN GOOD at full 1000 scans. Current params:
+  lambda: 0.9, dem_occupancy: 0.5, margin: 1.5
+  mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 5.0, 0.7, 0.8, 1.0]
+  tau: [100.0, 0.8, 0.8, 0.8, 0.8, 4.0, 0.8, 2.5, 2.0, 3.0, 0.5, 0.6, 1.5]
+  NO dead_zone/gate/redistribute params yet — add them if needed
+
+### kitti360_0000_indomain_with_height.yaml and kitti360_0009_indomain_with_height.yaml
+CURRENTLY BROKEN (from failed tuning attempts). Current params:
+  lambda: 0.5, dem_occupancy: 0.0, margin: 3.0
+  mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 5.0, 0.7, 0.8, 1.0]
+  tau: [100.0, 100.0, 100.0, 100.0, 100.0, 8.0, 100.0, 100.0, 100.0, 8.0, 100.0, 100.0, 100.0]
+  NO dead_zone/gate/redistribute yet
+
+## What Failed for In-Domain (Previous Attempts)
+1. lambda=0.9, original tight taus → mIoU -5.03% (exp1), -9.88% (exp2). Vegetation destroyed (-20% to -40%)
+2. lambda=0.5, building+veg tau=8, rest tau=100 → mIoU -2.12%. Still hurting.
+3. lambda=0.15, all wide taus, no occupancy → mIoU -0.32%, OA +1.71%. Nearly neutral.
+4. lambda=0.7, building tau=4, veg tau=6 → mIoU -4.05%. Tau too tight.
+
+Root cause: When in-domain predictions are already good (27-31% mIoU baseline), the height kernel overrides correct answers. The kernel can only SUPPRESS (multiply ≤ 1), never boost.
+
+## What Worked for MCD (From Agent 1 — DO NOT CHANGE MCD CONFIGS)
+Agent 1 found that:
+- dead_zone parameter is critical — points within dz meters of expected height should NOT be touched
+- Only activating specific ground classes (sidewalk tau=2.5-4.0) while disabling everything else (tau=100000) works
+- gate parameter helps for cross-domain but not in-domain
+- DEM occupancy must be disabled (strength=0) for noisy DEM — but KITTI-360 DEM is high quality so it might work here
+
+## Strategy Suggestions
+1. Start with the cross-domain configs — they already work at full scale. Add dead_zone to make them even better, then validate at 15 scans.
+2. For in-domain, try the dead_zone + selective class approach:
+   - dead_zone=2.0 (KITTI-360 DEM is accurate, so 2m is generous)
+   - Only activate classes that have clear height separation from their confusion targets
+   - Building (mu=7, tau=4): suppress false building at ground level
+   - Sidewalk (mu=0.4, tau=2.5): suppress false sidewalk at height
+   - Everything else: tau=100000 (disabled)
+   - lambda=0.25-0.5
+3. Consider the gate parameter: gate=0.7 means kernel only fires when the top prediction is height-incompatible
+4. Try redistribute=true: it reweights evidence rather than suppressing, which preserves total evidence and avoids the "only suppress" limitation
+5. Consider enabling dem_occupancy_strength (0.3-0.5) with generous margin (2.0m) — the high-quality KITTI-360 DEM/DSM should make this work
+
+## Diagnostic Command
+Check per-class height distributions:
+```bash
+docker exec osm-bki bash -c 'python3 << "PYEOF"
+import struct, numpy as np
+path = "/media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/dem_local_grid.bin"
+with open(path, "rb") as f:
+    f.read(4); f.read(4)
+    ox, oy, cs = struct.unpack("<fff", f.read(12))
+    cols, rows = struct.unpack("<ii", f.read(8)); f.read(4)
+    dem = np.frombuffer(f.read(), dtype=np.float32).reshape(rows, cols)
+valid = dem[~np.isnan(dem)]
+print("DEM range: [%.2f, %.2f], NaN: %d/%d" % (valid.min(), valid.max(), np.isnan(dem).sum(), dem.size))
+PYEOF'
+```
+
+## Files You May Modify
+- config/methods/kitti360_with_height.yaml — cross-domain height config (seq 0000)
+- config/methods/kitti360_no_height.yaml — cross-domain baseline (seq 0000) — only change scan_num
+- config/methods/kitti360_0000_indomain_with_height.yaml — in-domain height config (seq 0000)
+- config/methods/kitti360_0000_indomain_no_height.yaml — in-domain baseline (seq 0000) — only change scan_num
+- config/methods/kitti360_0009_indomain_with_height.yaml — in-domain height config (seq 0009)
+- config/methods/kitti360_0009_indomain_no_height.yaml — in-domain baseline (seq 0009) — only change scan_num
+- src/mapping/bkioctomap.cpp — apply_height_kernel_to_ybars() if code changes needed
+- include/osm_bki/mapping/bkioctomap.h — if adding new members
+- src/kitti360_node.cpp — if adding new parameters
+- DO NOT MODIFY config/methods/mcd_*.yaml or src/mcd_node.cpp
+
+## Success Criteria
+All 4 experiments must show:
+- Positive mIoU delta (ideally +1% or more)
+- No single major class (road, building, vegetation) dropping more than -1%
+- Overall accuracy improvement
+
+Start with 15 scans for fast iteration. When all look good, set scan_num to 100 in all 6 configs and run final validation. DO NOT GIVE UP — keep iterating with different parameters and code changes if needed.

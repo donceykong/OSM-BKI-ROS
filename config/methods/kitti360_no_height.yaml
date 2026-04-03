@@ -8,9 +8,9 @@
     resolution: 0.5
     free_resolution: 100.0
     ds_resolution: 0.5
-    num_class: 13
+    num_class: 14
 
-    scan_num: 1000
+    scan_num: 100
     max_range: 200.0
     skip_frames: 25
 
@@ -61,8 +61,9 @@
     height_kernel_dsm_grid_suffix: dsm_local_grid.bin
     dem_occupancy_strength: 0.5
     dem_occupancy_margin: 1.0
-    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 1.0, 3.0, 2.5, 3.0, 0.8, 0.8, 1.0]
-    height_kernel_tau: [100.0, 0.5, 0.5, 0.5, 1.0, 15.0, 1.5, 4.0, 3.0, 8.0, 1.0, 1.0, 2.0]
+    # 14 classes: unlbl road sdwk park ognd bldg fnce pole tsgn terrain 2whl vhcl oobj vegetation
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 8.0, 1.0, 3.0, 2.5, 0.0, 0.8, 0.8, 1.0, 8.0]
+    height_kernel_tau: [100.0, 0.5, 0.5, 0.5, 1.0, 15.0, 1.5, 4.0, 3.0, 0.5, 1.0, 1.0, 2.0, 5.0]
 
     osm_in_sequence_dir: true
     pose_format: kitti360

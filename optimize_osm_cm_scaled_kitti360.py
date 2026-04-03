@@ -1030,11 +1030,11 @@ def read_label_bin(path, n_points_hint=None):
 # 5. Co-occurrence analysis
 # ═══════════════════════════════════════════════════════════════════
 
-N_CLASSES = 13
+N_CLASSES = 14
 CLASS_NAMES = [
     "unlabeled", "road", "sidewalk", "parking", "other-ground",
-    "building", "fence", "pole", "traffic-sign", "vegetation",
-    "two-wheeler", "vehicle", "other-object",
+    "building", "fence", "pole", "traffic-sign", "terrain",
+    "two-wheeler", "vehicle", "other-object", "vegetation",
 ]
 
 
@@ -1045,16 +1045,16 @@ OSM_GT_COMPATIBLE = {
     1: {2},              # sidewalks -> sidewalk
     2: {10},             # cycleways -> two-wheeler
     3: {3},              # parking -> parking
-    4: {4, 9},           # grasslands -> other-ground, vegetation
-    5: {9},              # trees -> vegetation
-    6: {9},              # forest -> vegetation
+    4: {4, 9},           # grasslands -> other-ground, terrain
+    5: {13},             # trees -> vegetation
+    6: {13},             # forest -> vegetation
     7: {5},              # buildings -> building
     8: {6},              # fences -> fence
     9: {6, 4},           # walls -> fence, other-ground (retaining walls)
     10: {4},             # stairs -> other-ground
     11: {4},             # water -> other-ground
     12: {7, 8},          # poles -> pole, traffic-sign
-    13: set(range(13)),  # none -> all (neutral)
+    13: set(range(14)),  # none -> all (neutral)
 }
 
 
@@ -1100,10 +1100,10 @@ def derive_matrix(counts, class_totals, positive_only=False, scale_by_class_poin
     """
     total_points = class_totals.sum()
     if total_points == 0:
-        return np.zeros((12, N_OSM))
+        return np.zeros((13, N_OSM))
     col_totals = counts.sum(axis=0)
-    matrix = np.zeros((12, N_OSM))
-    for ri, cls in enumerate(range(1, 13)):
+    matrix = np.zeros((13, N_OSM))
+    for ri, cls in enumerate(range(1, 14)):
         p_cls = class_totals[cls] / total_points
         for j in range(N_OSM):
             if col_totals[j] < 1.0 or p_cls < 1e-8:
@@ -1117,7 +1117,7 @@ def derive_matrix(counts, class_totals, positive_only=False, scale_by_class_poin
                 else:
                     matrix[ri][j] = raw
     if scale_by_class_points:
-        for ri, cls in enumerate(range(1, 13)):
+        for ri, cls in enumerate(range(1, 14)):
             if class_totals[cls] > 1e-10:
                 matrix[ri, :] *= class_totals[cls]
     # Normalize so each column sums to 1
@@ -1417,20 +1417,20 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
     cols_str = ", ".join(OSM_COLUMNS)
     lines = [
         "# Optimized OSM confusion matrix (derived from GT co-occurrence analysis).",
-        "# Rows  = common taxonomy semantic classes (1-12).",
+        "# Rows  = common taxonomy semantic classes (1-13).",
         f"# Cols  = OSM prior categories: [{cols_str}]",
         val_comment,
         "#",
-        "# Common taxonomy:",
+        "# Common taxonomy (14-class):",
         "#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,",
-        "#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,",
-        "#   11: vehicle, 12: other-object",
+        "#   6: fence, 7: pole, 8: traffic-sign, 9: terrain, 10: two-wheeler,",
+        "#   11: vehicle, 12: other-object, 13: vegetation",
         "",
         f"osm_prior_columns: [{cols_str}]",
         "",
         "confusion_matrix:",
     ]
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = ", ".join(f"{matrix[i, j]:6.2f}" for j in range(N_OSM))
         lines.append(f"  {i+1}:  [{vals}]   # {CLASS_NAMES[i+1]}")
     if height_matrix is not None:
@@ -1465,7 +1465,7 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
         ]
     lines += [
         "", "label_to_matrix_idx:",
-        *[f"  {i+1}: {i}" for i in range(12)],
+        *[f"  {i+1}: {i}" for i in range(N_CLASSES - 1)],
         "",
     ]
     with open(output_path, "w") as f:
@@ -1908,7 +1908,7 @@ def main():
     print("\nOptimized OSM confusion matrix:")
     header = "                " + "  ".join(f"{c:>7s}" for c in OSM_COLUMNS)
     print(header)
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = "  ".join(f"{matrix[i, j]:7.2f}" for j in range(N_OSM))
         print(f"  {CLASS_NAMES[i+1]:>14s}: {vals}")
 

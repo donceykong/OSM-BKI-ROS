@@ -8,9 +8,9 @@
     resolution: 0.5
     free_resolution: 100.0
     ds_resolution: 0.5
-    num_class: 13
+    num_class: 14
 
-    scan_num: 1000
+    scan_num: 100
     max_range: 200.0
     skip_frames: 25
 
@@ -71,12 +71,17 @@
     #   fence:     mu=1, tau=0.8 (low structures)
     #   pole:      mu=3, tau=2.5 (mid-height)
     #   traffic:   mu=3, tau=2.0 (signs at mid-height)
-    #   vegetation:mu=5, tau=3   (canopy, penalizes false veg at ground)
+    #   terrain:   mu=0, tau=0.5 (ground-level, tight)
     #   2-wheeler: mu=0.7,tau=0.5(near ground, tight)
     #   vehicle:   mu=0.8,tau=0.6(near ground, tight)
     #   other-obj: mu=1, tau=1.5 (flexible)
-    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 5.0, 0.7, 0.8, 1.0]
-    height_kernel_tau: [100.0, 0.8, 0.8, 0.8, 0.8, 4.0, 0.8, 2.5, 2.0, 3.0, 0.5, 0.6, 1.5]
+    #   vegetation:mu=8, tau=5   (trees at height, penalizes false veg at ground)
+    height_kernel_dead_zone: 1.5
+    height_kernel_gate: 0.0
+    height_kernel_redistribute: false
+    # 14 classes: unlbl road sdwk park ognd bldg fnce pole tsgn terrain 2whl vhcl oobj vegetation
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 0.0, 0.7, 0.8, 1.0, 5.0]
+    height_kernel_tau: [100.0, 0.8, 0.8, 0.8, 0.8, 4.0, 0.8, 2.5, 2.0, 0.5, 0.5, 0.6, 1.5, 100.0]
 
     osm_in_sequence_dir: true
     pose_format: kitti360

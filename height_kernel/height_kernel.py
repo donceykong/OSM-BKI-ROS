@@ -26,18 +26,19 @@ from dem_query import DEMQuery
 # Index 0 = unlabeled/ignore
 DEFAULT_HEIGHT_PRIORS = {
     0:  {"name": "unlabeled",   "mu": 0.0,  "tau": 100.0},  # no constraint
-    1:  {"name": "car",         "mu": 0.8,  "tau": 1.0},
-    2:  {"name": "bicycle",     "mu": 0.5,  "tau": 1.0},
-    3:  {"name": "motorcycle",  "mu": 0.5,  "tau": 1.0},
-    4:  {"name": "truck",       "mu": 1.5,  "tau": 2.0},
-    5:  {"name": "person",      "mu": 0.9,  "tau": 1.0},
-    6:  {"name": "road",        "mu": 0.0,  "tau": 0.5},
-    7:  {"name": "sidewalk",    "mu": 0.0,  "tau": 0.5},
-    8:  {"name": "building",    "mu": 8.0,  "tau": 15.0},
-    9:  {"name": "vegetation",  "mu": 3.0,  "tau": 8.0},
-    10: {"name": "terrain",     "mu": 0.0,  "tau": 1.0},
-    11: {"name": "fence",       "mu": 1.0,  "tau": 1.5},
-    12: {"name": "pole",        "mu": 3.0,  "tau": 4.0},
+    1:  {"name": "road",        "mu": 0.0,  "tau": 0.5},
+    2:  {"name": "sidewalk",    "mu": 0.0,  "tau": 0.5},
+    3:  {"name": "parking",     "mu": 0.0,  "tau": 0.5},
+    4:  {"name": "other-ground","mu": 0.0,  "tau": 1.0},
+    5:  {"name": "building",    "mu": 8.0,  "tau": 15.0},
+    6:  {"name": "fence",       "mu": 1.0,  "tau": 1.5},
+    7:  {"name": "pole",        "mu": 3.0,  "tau": 4.0},
+    8:  {"name": "traffic-sign","mu": 2.5,  "tau": 3.0},
+    9:  {"name": "terrain",     "mu": 0.0,  "tau": 0.5},
+    10: {"name": "two-wheeler", "mu": 0.8,  "tau": 1.0},
+    11: {"name": "vehicle",     "mu": 0.8,  "tau": 1.0},
+    12: {"name": "other-object","mu": 1.0,  "tau": 2.0},
+    13: {"name": "vegetation",  "mu": 8.0,  "tau": 5.0},
 }
 
 

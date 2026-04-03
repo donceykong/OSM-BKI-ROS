@@ -1,9 +1,9 @@
-# Common taxonomy: 13 classes shared across all datasets.
+# Common taxonomy: 14 classes shared across all datasets.
 # All raw dataset labels (SemanticKITTI, MCD, etc.) are mapped to these
-# contiguous indices at ingestion time so that num_class = 13.
+# contiguous indices at ingestion time so that num_class = 14.
 
 name: "common"
-num_class: 13
+num_class: 14
 
 labels:
   0: "unlabeled"
@@ -15,10 +15,11 @@ labels:
   6: "fence"
   7: "pole"
   8: "traffic-sign"
-  9: "vegetation"
+  9: "terrain"
   10: "two-wheeler"
   11: "vehicle"
   12: "other-object"
+  13: "vegetation"
 
 # RGB colors for visualization (one per common class)
 color_map:
@@ -31,10 +32,11 @@ color_map:
   6:  [255, 120, 50]     # fence
   7:  [255, 240, 150]    # pole
   8:  [255, 0, 0]        # traffic-sign
-  9:  [0, 175, 0]        # vegetation
+  9:  [152, 251, 152]    # terrain (light green)
   10: [245, 230, 100]    # two-wheeler
   11: [100, 150, 245]    # vehicle
   12: [50, 255, 255]     # other-object
+  13: [0, 175, 0]        # vegetation (dark green)
 
 # ---- Per-dataset mappings: raw label ID → common class index ---------------
 
@@ -59,9 +61,9 @@ semkitti_to_common:
   51: 6      # fence
   52: 12     # other-structure → other-object
   60: 1      # lane-marking → road
-  70: 9      # vegetation
-  71: 9      # trunk → vegetation
-  72: 9      # terrain → vegetation
+  70: 13     # vegetation → vegetation (trees)
+  71: 13     # trunk → vegetation (trees)
+  72: 9      # terrain → terrain
   80: 7      # pole
   81: 8      # traffic-sign
   99: 12     # other-object
@@ -99,8 +101,8 @@ mcd_to_common:
   21: 8      # traffic-cone → traffic-sign
   22: 8      # traffic-sign
   23: 12     # trashbin → other-object
-  24: 9      # treetrunk → vegetation
-  25: 9      # vegetation
+  24: 13     # treetrunk → vegetation (trees)
+  25: 13     # vegetation → vegetation (trees)
   26: 11     # vehicle-dynamic → vehicle
   27: 11     # vehicle-other → vehicle
   28: 11     # vehicle-static → vehicle
@@ -127,8 +129,8 @@ kitti360_to_common:
   18: 7      # polegroup → pole
   19: 8      # traffic light → traffic-sign
   20: 8      # traffic sign
-  21: 9      # vegetation
-  22: 9       # terrain → vegitation
+  21: 13     # vegetation → vegetation (trees)
+  22: 9       # terrain → terrain
   23: 0       # sky → unlabeled
   24: 12      # person → other-object
   25: 12      # rider → other-object

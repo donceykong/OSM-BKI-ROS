@@ -1,0 +1,200 @@
+You are implementing a 14-class taxonomy split for the OSM-BKI 3D semantic mapping system. The current 13-class "vegetation" class merges terrain (grass, h≈0m) and vegetation (trees, h≈2-20m). KITTI-360 GT labels distinguish them (label 21=vegetation, label 22=terrain). Splitting them unlocks the height kernel for 24% of all points.
+
+Your goal: implement the split, re-optimize the OSM confusion matrix, tune the height kernel, and achieve significant mIoU improvement (+5% or more) on both cross-domain and in-domain KITTI-360 experiments.
+
+## System Setup
+- Working directory: /home/sgarimella34/OSM-BKI-ROS
+- Docker: `docker compose down && docker compose up -d --build` to rebuild (~25s)
+- Run cross-domain: `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation.sh"`
+- Run in-domain: `docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_indomain.sh"`
+- Source is COPIED into Docker at build — ANY change requires rebuild
+- Drive: host hercules-collect2 → container hercules-collect1 paths (already in docker-compose.yml)
+- DO NOT modify config/methods/mcd_*.yaml — those are MCD configs tuned separately
+
+## Current 13-Class Taxonomy
+0:unlabeled, 1:road, 2:sidewalk, 3:parking, 4:other-ground, 5:building, 6:fence, 7:pole, 8:traffic-sign, 9:vegetation(merged terrain+trees), 10:two-wheeler, 11:vehicle, 12:other-object
+
+## New 14-Class Taxonomy
+0:unlabeled, 1:road, 2:sidewalk, 3:parking, 4:other-ground, 5:building, 6:fence, 7:pole, 8:traffic-sign, 9:terrain, 10:two-wheeler, 11:vehicle, 12:other-object, 13:vegetation
+(Class 9 becomes terrain-only, class 13 is new vegetation/trees class)
+
+## Phase 1: All Code/Config Changes (do ALL before testing)
+
+### 1.1 C++ constant
+File: include/osm_bki/dataset_devkit/mcd_util.h line 41
+Change: `static constexpr int N_COMMON = 13;` → `static constexpr int N_COMMON = 14;`
+
+### 1.2 C++ OSM confusion matrix array
+File: include/osm_bki/mapping/bkioctomap.h line ~520
+Change: `float osm_cm_[13][N_OSM_PRIOR_COLS]{};` → `float osm_cm_[14][N_OSM_PRIOR_COLS]{};`
+
+File: src/mapping/bkioctomap.cpp line ~452
+Change: `osm_cm_rows_ = std::min(static_cast<int>(matrix.size()), 13);` → `osm_cm_rows_ = std::min(static_cast<int>(matrix.size()), 14);`
+
+### 1.3 labels_common.yaml
+File: config/datasets/labels_common.yaml
+
+Changes needed:
+- `num_class: 13` → `num_class: 14`
+- In the labels section, rename class 9 from "vegetation" to "terrain", add class 13 as "vegetation"
+- In the colors section, give class 9 a terrain color (e.g., [152, 251, 152] light green), add class 13 with the old vegetation color [0, 175, 0]
+- In `kitti360_to_common` mapping: change `22: 9` (terrain → vegetation) to `22: 9` (terrain → terrain, which is now correct since 9=terrain). Change `21: 9` (vegetation → old merged class) to `21: 13` (vegetation → new vegetation class)
+- In `semkitti_to_common` mapping: find any entries that map to 9 and decide if they should be 9 (terrain) or 13 (vegetation). KITTI semantic labels: 40=road, 44=parking, 48=sidewalk, 49=other-ground, 60=other-structure, 70=vegetation, 71=trunk, 72=terrain, 80=person... So: `70: 13` (vegetation→new veg), `71: 13` (trunk→new veg), `72: 9` (terrain→terrain)
+- In `mcd_to_common` mapping: MCD doesn't distinguish terrain/trees. Map all MCD vegetation entries (24: treetrunk, 25: vegetation) to class 13 (vegetation/trees). This means MCD experiments won't have terrain predictions, which is fine — we're focusing on KITTI-360.
+
+### 1.4 OSM confusion matrix YAML files
+Files: config/datasets/osm_confusion_matrix_optimized_kitti360.yaml (and optionally the others)
+
+Read the file first. It has a `confusion_matrix` section with rows indexed by semantic class (1-12). You need to add row 13 for the new vegetation class. Copy the values from the old row 9 (vegetation) as a starting point for row 13. Then update row 9 to be terrain-appropriate (should have high weight for grassland OSM column).
+
+The OSM prior columns are: 0:roads, 1:sidewalks, 2:cycleways, 3:parking, 4:grasslands, 5:trees, 6:forest, 7:buildings, 8:fences, 9:walls, 10:stairs, 11:water, 12:poles, 13:none
+
+For row 9 (terrain): high weight for column 4 (grasslands), moderate for column 0 (roads, terrain often near roads)
+For row 13 (vegetation): high weight for columns 5 (trees) and 6 (forest)
+
+Also check if there's an `osm_height_confusion_matrix` section — that may also need a row 13.
+
+### 1.5 Method config YAML files (num_class + height kernel arrays)
+Update these files to use num_class: 14 and 14-element mu/tau arrays:
+
+config/methods/kitti360.yaml
+config/methods/kitti360_no_height.yaml
+config/methods/kitti360_with_height.yaml
+config/methods/kitti360_0000_indomain_no_height.yaml
+config/methods/kitti360_0000_indomain_with_height.yaml
+config/methods/kitti360_0009_indomain_no_height.yaml
+config/methods/kitti360_0009_indomain_with_height.yaml
+
+In ALL of these: change `num_class: 13` → `num_class: 14`
+
+In the *_with_height.yaml files, update height_kernel_mu and height_kernel_tau to 14 elements:
+```yaml
+# 14 classes: unlbl road sdwk park ognd bldg fnce pole tsgn terrain 2whl vhcl oobj vegetation
+height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 0.0, 7.0, 1.0, 3.0, 3.0, 0.0, 0.7, 0.8, 1.0, 8.0]
+height_kernel_tau: [100.0, 0.8, 0.8, 0.8, 0.8, 4.0, 0.8, 2.5, 2.0, 0.5, 0.5, 0.6, 1.5, 5.0]
+```
+Key: terrain (index 9) gets mu=0.0, tau=0.5 (ground level, tight). Vegetation (index 13) gets mu=8.0, tau=5.0 (elevated, wider).
+
+For the in-domain configs, use the dead_zone and redistribute params already in those files. Just add the 14th element to mu/tau arrays.
+
+### 1.6 Evaluation script
+File: height_kernel/evaluate_ablation.py
+- Add "terrain" at index 9, rename old index 9 entry
+- Add "vegetation" at index 13
+- Change NUM_CLASSES = 13 → 14
+The CLASS_NAMES list should be:
+```python
+CLASS_NAMES = [
+    "unlabeled",      # 0
+    "road",           # 1
+    "sidewalk",       # 2
+    "parking",        # 3
+    "other-ground",   # 4
+    "building",       # 5
+    "fence",          # 6
+    "pole",           # 7
+    "traffic-sign",   # 8
+    "terrain",        # 9
+    "two-wheeler",    # 10
+    "vehicle",        # 11
+    "other-object",   # 12
+    "vegetation",     # 13
+]
+NUM_CLASSES = 14
+```
+
+### 1.7 Python height kernel prototype (optional but good to keep in sync)
+File: height_kernel/height_kernel.py — add entry 13 to DEFAULT_HEIGHT_PRIORS
+
+### 1.8 OSM optimization scripts (for later re-optimization)
+Files: optimize_osm_cm.py, optimize_osm_cm_scaled.py, optimize_osm_cm_scaled_BEST.py, optimize_osm_cm_scaled_kitti360.py
+In each: change `N_CLASSES = 13` → `N_CLASSES = 14`, update `13: set(range(13))` → `14: set(range(14))`, update `range(1, 13)` → `range(1, 14)`
+
+## Phase 2: Test the 14-class pipeline (use 15 scans)
+
+Set scan_num: 15 in ALL kitti360 configs (both no_height and with_height variants).
+
+Rebuild and run the cross-domain experiment first:
+```bash
+docker compose down && docker compose up -d --build
+docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation.sh"
+```
+
+If it crashes, check the error and fix. Common issues:
+- Array size mismatch (mu/tau has wrong number of elements)
+- Confusion matrix row count mismatch
+- Label mapping producing class 13 but num_class still 13 somewhere
+
+Once cross-domain works, test in-domain:
+```bash
+docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_indomain.sh exp1"
+```
+
+## Phase 3: Tune height kernel parameters
+
+With the 14-class split working, tune for maximum improvement. The height kernel now has two separate levers:
+- Terrain (class 9, mu=0, tau=0.5): suppress false terrain at height → helps building, pole, traffic-sign
+- Vegetation (class 13, mu=8, tau=5): suppress false vegetation at ground → helps road, sidewalk, terrain
+
+Start with the cross-domain config (kitti360_with_height.yaml) since it has the most room for improvement. Current params already work well — the split itself should give a big boost.
+
+For in-domain, the key insight: the dominant error was "everything→vegetation" which was unfixable because vegetation spanned all heights. NOW vegetation means only trees (h≈8m). So false vegetation predictions at ground level (which were really terrain confusion) can be suppressed.
+
+Tune these parameters in the *_with_height configs:
+- height_kernel_lambda: start at 0.9 for cross-domain, 0.8 for in-domain
+- dead_zone: 1.5 for cross-domain (already set), 0.5-0.75 for in-domain
+- terrain tau: 0.3-0.5 (tight, ground level)
+- vegetation tau: 4.0-6.0 (moderate, trees vary in height)
+- Use redistribute: true for in-domain (already set)
+
+## Phase 4: Re-optimize OSM confusion matrix (if needed)
+
+If the initial 14-class results are good but could be better, re-run the OSM confusion matrix optimization:
+
+```bash
+docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && cd /ros2_ws/src/osm_bki && python3 optimize_osm_cm_scaled_kitti360.py --max-scans 200 --output config/datasets/osm_confusion_matrix_optimized_kitti360_14class.yaml"
+```
+
+Check the actual args the script expects first by reading it. Then update the configs to use the new confusion matrix file.
+
+## Phase 5: Validate at 100 scans
+
+Once everything looks good at 15 scans, set scan_num: 100 in all configs and run final validation for all experiments.
+
+## Reference: Current Baseline Results (13-class)
+
+Cross-domain (CENet-MCD → KITTI-360): Baseline 13.91% mIoU, +height kernel = 16.61% (+2.70%)
+In-domain (CENet-KITTI360 → KITTI-360): Baseline 27.81% mIoU, +height kernel = 28.27% (+0.46%)
+
+## Expected Outcomes
+
+The 14-class split should give:
+- Cross-domain: Larger gains than +2.70% because terrain at ground level can now be properly constrained
+- In-domain: Significant gains (target +5% or more) because the dominant "everything→vegetation" confusion at ground level is now distinguishable from real vegetation (trees at height)
+
+## Files Summary (all that need changes)
+
+C++:
+- include/osm_bki/dataset_devkit/mcd_util.h (N_COMMON)
+- include/osm_bki/mapping/bkioctomap.h (osm_cm_ array size)
+- src/mapping/bkioctomap.cpp (osm_cm_rows_ max)
+
+Config/YAML:
+- config/datasets/labels_common.yaml (num_class, labels, colors, all *_to_common mappings)
+- config/datasets/osm_confusion_matrix_optimized_kitti360.yaml (add row 13)
+- config/methods/kitti360*.yaml (7 files: num_class, height_kernel arrays)
+
+Python:
+- height_kernel/evaluate_ablation.py (CLASS_NAMES, NUM_CLASSES)
+- height_kernel/height_kernel.py (DEFAULT_HEIGHT_PRIORS)
+- optimize_osm_cm*.py (4 files: N_CLASSES, ranges)
+
+DO NOT MODIFY: config/methods/mcd_*.yaml, src/mcd_node.cpp (MCD stays 13-class)
+
+## CRITICAL: MCD Compatibility
+
+The mcd_node.cpp and all MCD configs use num_class: 13. Since N_COMMON changes to 14, you MUST verify that the MCD pipeline still works or that N_COMMON is only used in KITTI-360 code paths. If N_COMMON is used in shared code (like bkioctomap.cpp), you may need to make it runtime-configurable rather than compile-time. Check carefully!
+
+If N_COMMON causes MCD issues, the safer approach is to NOT change the compile-time constant and instead handle 14 classes purely through the runtime num_class parameter (which is already passed as a ROS param). Check if the code actually uses N_COMMON anywhere critical or if num_class (runtime) is what matters.
+
+DO NOT GIVE UP. This is a multi-phase implementation. Test after each phase. The vegetation/terrain split is the single biggest potential improvement to the system.

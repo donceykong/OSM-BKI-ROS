@@ -449,7 +449,7 @@ namespace osm_bki {
     void SemanticBKIOctoMap::set_osm_confusion_matrix(
             const std::vector<std::vector<float>> &matrix,
             const std::vector<std::vector<int>> &row_to_labels) {
-        osm_cm_rows_ = std::min(static_cast<int>(matrix.size()), 13);
+        osm_cm_rows_ = std::min(static_cast<int>(matrix.size()), 14);
         std::memset(osm_cm_, 0, sizeof(osm_cm_));
         for (int r = 0; r < osm_cm_rows_; ++r) {
             int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
@@ -1157,9 +1157,10 @@ namespace osm_bki {
                 block_y.push_back(it->second);
                 block_w.push_back(it->weight);
                 if (use_soft) {
-                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc))
-                        block_y_soft.push_back(*it->soft_probs);
-                    else {
+                    if (it->soft_probs && it->soft_probs->size() >= static_cast<size_t>(nc)) {
+                        // Truncate to num_class if soft_probs is larger (e.g. N_COMMON > num_class)
+                        block_y_soft.emplace_back(it->soft_probs->begin(), it->soft_probs->begin() + nc);
+                    } else {
                         // Free-space points (soft_probs == nullptr): use zero vector so they do not
                         // swamp the semantic counts; otherwise class 0 would dominate and all voxels
                         // would get semantics=0 (e.g. all blue). Hit points with label 0 have soft_probs.

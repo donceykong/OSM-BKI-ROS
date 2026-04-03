@@ -38,7 +38,7 @@
 // ---------------------------------------------------------------------------
 // Common taxonomy (13 classes) — loaded from labels_common.yaml at runtime.
 // ---------------------------------------------------------------------------
-static constexpr int N_COMMON = 13;
+static constexpr int N_COMMON = 14;
 
 struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
