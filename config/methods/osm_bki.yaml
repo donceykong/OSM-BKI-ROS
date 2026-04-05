@@ -13,7 +13,7 @@
     prior: 0.001 # each class
 
     # Threshold on variance to distinguish known/unknown
-    var_thresh: 0.09 # 0.09
+    var_thresh: 0.09
 
     # Free/Occupied Thresholds
     free_thresh: 0.4

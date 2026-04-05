@@ -98,7 +98,7 @@ def generate_launch_description():
 
 def launch_setup(context):
     method = context.launch_configurations.get('method', 'osm_bki')
-    dataset = context.launch_configurations.get('dataset', 'mcd')
+    dataset = context.launch_configurations.get('dataset_name', 'mcd')
     data_root_override = context.launch_configurations.get('data_root', '')
     color_mode = context.launch_configurations.get('color_mode', 'semantic')
     osm_file = context.launch_configurations.get('osm_file', '')

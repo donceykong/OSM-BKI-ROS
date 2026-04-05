@@ -13,7 +13,7 @@ Supports both MCD and KITTI-360 pose formats (auto-detected from config
 
 Usage:
     python3 optimize_osm_cm_scaled_kitti360.py [--config CONFIG_YAML] [--output OUTPUT_YAML]
-                               [--data-dir DATA_DIR] [--max-scans N] [--skip-frames K]
+                               [--data-dir DATA_DIR] [--max-scans N] [--keyframe-dist D]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
                                [--height-bins N] [--no-height-matrix]
@@ -1483,7 +1483,8 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None,
                         help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
     parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--skip-frames", type=int, default=2)
+    parser.add_argument("--keyframe-dist", type=float, default=1.0,
+                        help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
     parser.add_argument("--pole-radius", type=float, default=2.0)
@@ -1645,7 +1646,7 @@ def main():
         "pole_point_radius_meters",
     ):
         print(f"  {k}: {GEOM_PARAMS[k]:.3f}")
-    skip_frames = args.skip_frames if args.skip_frames is not None else cfg.get("skip_frames", 0)
+    keyframe_dist = args.keyframe_dist if args.keyframe_dist is not None else cfg.get("keyframe_dist", 0.0)
     max_range = cfg.get("max_range", 200.0)
     ds_resolution = cfg.get("ds_resolution", 1.0)
 
@@ -1710,9 +1711,9 @@ def main():
             p = first_inv @ np.array([x, y, 0, 1])
             geom[pt_key][k] = (float(p[0]), float(p[1]))
 
-    # Select scans
-    valid = 0
+    # Select scans using keyframe distance filtering
     scan_list = []
+    last_keyframe_pos = None
     inferred_label_dir = os.path.join(data_dir, inferred_label_prefix) if args.use_inferred_row else None
     for idx, T in poses:
         sp = os.path.join(scan_dir, f"{idx:010d}.bin")
@@ -1725,11 +1726,12 @@ def main():
                 continue
         else:
             ip = None
-        if skip_frames > 0 and valid % (skip_frames + 1) != 0:
-            valid += 1
-            continue
+        pos = T[:3, 3]
+        if last_keyframe_pos is not None and keyframe_dist > 0:
+            if np.linalg.norm(pos - last_keyframe_pos) < keyframe_dist:
+                continue
         scan_list.append((idx, T, sp, lp, ip))
-        valid += 1
+        last_keyframe_pos = pos
         if len(scan_list) >= args.max_scans:
             break
 
@@ -1751,7 +1753,7 @@ def main():
     )
     print(f"  Grid has {len(precomputed_grid)} cells (Shapely={'on' if osm_index else 'off'})")
 
-    print(f"Processing {len(scan_list)} scans (skip={skip_frames}, max={args.max_scans}, grid_res={args.grid_res}m)")
+    print(f"Processing {len(scan_list)} scans (keyframe_dist={keyframe_dist}m, max={args.max_scans}, grid_res={args.grid_res}m)")
 
     all_gt, all_osm = [], []
     all_inferred = [] if args.use_inferred_row else None

@@ -384,9 +384,29 @@ namespace osm_bki {
                                       const std::vector<std::vector<int>> &row_to_labels);
         void set_osm_prior_strength(float strength);
 
+        /// Set strength for spatially varying Dirichlet prior from OSM.
+        /// Controls how much OSM biases unobserved voxels toward expected classes.
+        /// 0.0 = uniform prior everywhere (standard BKI), higher = stronger OSM bias.
+        void set_osm_dirichlet_prior_strength(float strength);
+
+        /// Initialize OSM-derived Dirichlet priors for all leaf nodes in a block.
+        /// Only affects unclassified nodes (new blocks). Called during insert_pointcloud.
+        void init_osm_prior_for_block(Block *block);
+
         /// OSM height filter: per-scan relative bins, multiply OSM priors by height confusion matrix.
         void set_osm_height_filter_enabled(bool enabled);
         void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
+
+        /// Set scan radius extension factor for OSM geometry pre-filtering.
+        /// The filter radius = max_xy_distance * extension_factor + osm_decay_meters.
+        void set_osm_scan_radius_extension(float factor) { osm_scan_radius_extension_ = factor; }
+
+        /// Pre-filter OSM geometry to only polygons/points overlapping a circle.
+        /// Call once per scan before any per-point OSM queries.
+        void filter_osm_for_scan(float center_x, float center_y, float max_xy_dist);
+
+        /// Clear per-scan filtered geometry (called after scan processing).
+        void clear_osm_scan_filter();
 
         /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
@@ -398,6 +418,15 @@ namespace osm_bki {
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
         void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
+
+        /// Compute per-class semantic kernel weights from OSM prior at a training point.
+        /// Returns a vector of size num_class where each element is a multiplicative
+        /// factor for that class's contribution. Classes supported by OSM get boosted
+        /// (> 1.0), others stay at 1.0 (no suppression). Height filtering modulates
+        /// the OSM prior before computing per-class support.
+        /// Fills k_vec with all 1.0s when OSM is disabled (backward compatible).
+        void compute_osm_semantic_kernel(float x, float y, float z,
+                                         std::vector<float> &k_vec) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -508,6 +537,25 @@ namespace osm_bki {
         // OSM confusion matrix for semantic-OSM prior fusion
         bool osm_cm_loaded_{false};
         float osm_prior_strength_{0.0f};
+        float osm_dirichlet_prior_strength_{0.0f};
+        float osm_scan_radius_extension_{1.2f};  // multiply max_xy_dist by this to get filter radius
+
+        // Per-scan filtered OSM geometry (populated by filter_osm_for_scan, cleared after scan)
+        bool osm_scan_filtered_{false};
+        std::vector<Geometry2D> active_buildings_;
+        std::vector<Geometry2D> active_roads_;
+        std::vector<Geometry2D> active_sidewalks_;
+        std::vector<Geometry2D> active_cycleways_;
+        std::vector<Geometry2D> active_grasslands_;
+        std::vector<Geometry2D> active_trees_;
+        std::vector<Geometry2D> active_forests_;
+        std::vector<std::pair<float, float>> active_tree_points_;
+        std::vector<Geometry2D> active_parking_;
+        std::vector<Geometry2D> active_fences_;
+        std::vector<Geometry2D> active_walls_;
+        std::vector<Geometry2D> active_stairs_;
+        std::vector<Geometry2D> active_water_;
+        std::vector<std::pair<float, float>> active_pole_points_;
         int osm_cm_rows_{0};      // K_pred (number of semantic super-classes)
         float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
