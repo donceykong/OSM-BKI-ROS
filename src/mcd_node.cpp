@@ -41,7 +41,7 @@ int main(int argc, char **argv) {
     double ds_resolution = 0.1;
     int scan_num = 0;
     double max_range = -1;
-    int skip_frames = 0;
+    double keyframe_dist = 0.0;
     
     // MCD Dataset
     std::string dir;
@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("ds_resolution", ds_resolution);
     node->declare_parameter<int>("scan_num", scan_num);
     node->declare_parameter<double>("max_range", max_range);
-    node->declare_parameter<int>("skip_frames", skip_frames);
+    node->declare_parameter<double>("keyframe_dist", keyframe_dist);
     node->declare_parameter<std::string>("dir", dir);
     node->declare_parameter<std::string>("sequence_name", "");
     node->declare_parameter<std::string>("input_data_suffix", "");
@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
     node->get_parameter<double>("ds_resolution", ds_resolution);
     node->get_parameter<int>("scan_num", scan_num);
     node->get_parameter<double>("max_range", max_range);
-    node->get_parameter<int>("skip_frames", skip_frames);
+    node->get_parameter<double>("keyframe_dist", keyframe_dist);
     node->get_parameter<std::string>("dir", dir);
     std::string sequence_name, input_data_suffix, input_label_suffix, lidar_pose_suffix, gt_label_suffix;
     node->get_parameter<std::string>("sequence_name", sequence_name);
@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
       "ds_resolution: " << ds_resolution << std::endl <<
       "scan_num: " << scan_num << std::endl <<
       "max_range: " << max_range << std::endl <<
-      "skip_frames: " << skip_frames << std::endl <<
+      "keyframe_dist: " << keyframe_dist << std::endl <<
 
       "MCD:" << std::endl <<
       "dir: " << dir << std::endl <<
@@ -490,7 +490,7 @@ int main(int argc, char **argv) {
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Evaluation setup completed");
     
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: About to process scans. input_data_prefix=" << input_data_prefix << ", scan_num=" << scan_num);
-    mcd_data.process_scans(dir + '/' + input_data_prefix, dir + '/' + input_label_prefix, scan_num, skip_frames, query, visualize);
+    mcd_data.process_scans(dir + '/' + input_data_prefix, dir + '/' + input_label_prefix, scan_num, keyframe_dist, query, visualize);
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Scan processing completed, about to spin");
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Node pointer: " << node.get());
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Starting rclcpp::spin(node)...");

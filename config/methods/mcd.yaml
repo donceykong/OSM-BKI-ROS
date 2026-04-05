@@ -17,7 +17,7 @@
     # Information about range-finder data
     scan_num: 10000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 25   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    keyframe_dist: 1.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd

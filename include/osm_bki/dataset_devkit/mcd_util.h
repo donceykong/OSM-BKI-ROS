@@ -798,7 +798,7 @@ class MCDData {
       return true;
     }
 
-    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, int skip_frames, bool query, bool visualize) {
+    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, double keyframe_dist, bool query, bool visualize) {
       if (!map_) {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: process_scans: map_ is null!");
         return false;
@@ -811,7 +811,7 @@ class MCDData {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: process_scans: No poses loaded!");
         return false;
       }
-      
+
       // Build list of pose indices where both lidar bin and label file exist (matching file names)
       std::vector<int> valid_pose_indices;
       valid_pose_indices.reserve(lidar_poses_.size());
@@ -820,20 +820,25 @@ class MCDData {
         if (scan_and_label_exist(input_data_dir, input_label_dir, scan_file_num))
           valid_pose_indices.push_back(pose_idx);
       }
-      RCLCPP_INFO_STREAM(node_->get_logger(), "Found " << valid_pose_indices.size() << " scans with both lidar and label files (out of " << lidar_poses_.size() << " poses). Applying scan_num=" << scan_num << ", skip_frames=" << skip_frames);
-      
-      // Apply scan_num and skip_frames to the valid set: take every (skip_frames+1)-th valid scan, up to scan_num
-      int valid_count = 0;
+      RCLCPP_INFO_STREAM(node_->get_logger(), "Found " << valid_pose_indices.size() << " scans with both lidar and label files (out of " << lidar_poses_.size() << " poses). Applying scan_num=" << scan_num << ", keyframe_dist=" << keyframe_dist << "m");
+
+      // Apply keyframe_dist: only keep scans whose pose is at least keyframe_dist (m) from the last accepted keyframe, up to scan_num
       std::vector<int> indices_to_process;
+      Eigen::Vector3d last_keyframe_pos(0, 0, 0);
+      bool have_keyframe = false;
       for (size_t i = 0; i < valid_pose_indices.size(); ++i) {
-        if (skip_frames > 0 && valid_count % (skip_frames + 1) != 0) {
-          valid_count++;
-          continue;
+        int pose_idx = valid_pose_indices[i];
+        Eigen::Vector3d pos = lidar_poses_[pose_idx].block<3, 1>(0, 3);
+        if (have_keyframe && keyframe_dist > 0.0) {
+          double dist = (pos - last_keyframe_pos).norm();
+          if (dist < keyframe_dist)
+            continue;
         }
         if (static_cast<int>(indices_to_process.size()) >= scan_num)
           break;
-        indices_to_process.push_back(valid_pose_indices[i]);
-        valid_count++;
+        indices_to_process.push_back(pose_idx);
+        last_keyframe_pos = pos;
+        have_keyframe = true;
       }
       
       osm_bki::point3f origin;
