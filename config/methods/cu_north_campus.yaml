@@ -18,7 +18,7 @@
     # Information about range-finder data
     scan_num: 50000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    skip_frames: 25   # Number of frames to skip between insertions (0 = process every frame, 1 = process every other frame, etc.)
+    keyframe_dist: 2.0  # Minimum euclidean distance (m) between consecutive keyframe poses (0 = process every frame)
 
     # No static TF (poses already in world frame, like KITTI360).
     publish_static_tf: false
