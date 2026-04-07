@@ -9,7 +9,7 @@
     ds_resolution: 0.5
     num_class: 14
 
-    scan_num: 100
+    scan_num: 1000
     max_range: 200.0
     skip_frames: 25
 

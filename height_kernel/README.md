@@ -185,127 +185,118 @@ Outputs: per-run confusion matrices (`confusion_matrix.csv`), per-run results (`
 
 ---
 
-## Results: 14-Class Taxonomy (100 scans)
+## Results: 14-Class Taxonomy (Full Sequence)
 
 ### Experiment 1: Cross-Domain (CENet-MCD → KITTI-360 seq 0000)
 
 MCD model trained on SemanticKITTI/MCD, tested on KITTI-360. MCD does not distinguish terrain from vegetation — all vegetation predictions map to class 13 (vegetation/trees). Terrain IoU comes entirely from OSM priors.
 
-**1089 scans, 127.7M points**
+**4433 scans, 516.7M points**
 
 | Class | Baseline (IoU) | + Height Kernel (IoU) | Delta |
 |-------|:--------------:|:---------------------:|:-----:|
-| road | 51.12% | 50.94% | -0.18% |
-| sidewalk | 24.92% | 24.37% | -0.56% |
-| parking | 0.54% | 0.68% | +0.14% |
-| other-ground | 0.56% | 0.67% | +0.11% |
-| building | 37.39% | 50.62% | **+13.23%** |
-| fence | 2.65% | 5.17% | **+2.52%** |
-| pole | 0.84% | 1.41% | +0.57% |
-| traffic-sign | 0.15% | 0.13% | -0.02% |
-| terrain | 22.40% | 22.51% | +0.10% |
-| two-wheeler | 0.00% | 1.53% | **+1.53%** |
-| vehicle | 0.63% | 4.43% | **+3.80%** |
-| other-object | 0.05% | 0.69% | +0.64% |
-| vegetation | 18.17% | 25.51% | **+7.34%** |
-| **mIoU** | **12.26%** | **14.51%** | **+2.25%** |
-| **Overall Accuracy** | **45.28%** | **49.07%** | **+3.79%** |
+| road | 45.11% | 44.93% | -0.18% |
+| sidewalk | 33.22% | 31.19% | -2.03% |
+| parking | 0.63% | 1.02% | +0.39% |
+| other-ground | 0.74% | 1.11% | +0.37% |
+| building | 45.86% | 58.76% | **+12.90%** |
+| fence | 2.73% | 6.28% | **+3.55%** |
+| pole | 3.95% | 4.42% | +0.46% |
+| traffic-sign | 0.68% | 0.47% | -0.21% |
+| terrain | 15.99% | 16.03% | +0.04% |
+| two-wheeler | 0.00% | 0.25% | +0.25% |
+| vehicle | 0.63% | 2.87% | **+2.25%** |
+| other-object | 0.15% | 0.86% | +0.71% |
+| vegetation | 14.49% | 23.73% | **+9.24%** |
+| **mIoU** | **12.63%** | **14.76%** | **+2.13%** |
+| **Overall Accuracy** | **50.61%** | **54.13%** | **+3.52%** |
 
 Key takeaways:
-- **Building +13.23%**: Height prior strongly penalizes false building predictions at ground level (mu=7m, tau=4m)
-- **Vegetation +7.34%**: Split lets the height kernel cleanly separate trees from ground; vegetation no longer polluted by terrain confusion
-- **Vehicle +3.80%**: Near-ground prior (mu=0.8m, tau=0.6m) helps vehicle identification
-- **Terrain +0.10%**: MCD cannot predict terrain, so all terrain IoU comes from OSM grassland priors; height kernel has minimal effect on this class
-- **Road -0.18%, Sidewalk -0.56%**: Minor regression from height kernel interactions
+- **Building +12.90%**: Height prior strongly penalizes false building predictions at ground level (mu=7m, tau=4m)
+- **Vegetation +9.24%**: Split lets the height kernel cleanly separate trees from ground; vegetation no longer polluted by terrain confusion
+- **Fence +3.55%**: Low-structure prior (mu=1m, tau=0.8m) helps fence identification
+- **Vehicle +2.25%**: Near-ground prior (mu=0.8m, tau=0.6m) helps vehicle identification
+- **Terrain +0.04%**: MCD cannot predict terrain, so all terrain IoU comes from OSM grassland priors; height kernel has minimal effect on this class
+- **Sidewalk -2.03%**: Regression from height kernel interactions at full scale
 
 ### Experiment 2: In-Domain seq 0000 (CENet-KITTI360 → KITTI-360 seq 0000)
 
 CENet trained on KITTI-360, tested on same dataset. Model can predict both terrain and vegetation.
 
-**1089 scans, 127.7M points**
+**4433 scans, 516.7M points**
 
 | Class | Baseline (IoU) | + Height Kernel (IoU) | Delta |
 |-------|:--------------:|:---------------------:|:-----:|
-| road | 60.06% | 62.41% | **+2.34%** |
-| sidewalk | 39.52% | 39.03% | -0.49% |
-| parking | 26.17% | 28.52% | **+2.35%** |
-| other-ground | 8.52% | 8.61% | +0.09% |
-| building | 59.38% | 59.43% | +0.05% |
-| fence | 15.44% | 15.25% | -0.19% |
-| pole | 6.44% | 7.87% | **+1.43%** |
-| traffic-sign | 8.03% | 7.53% | -0.50% |
-| terrain | 59.74% | 61.76% | **+2.02%** |
-| two-wheeler | 8.52% | 7.50% | -1.02% |
-| vehicle | 34.70% | 37.62% | **+2.93%** |
-| other-object | 6.01% | 5.95% | -0.06% |
-| vegetation | 44.04% | 44.91% | +0.87% |
-| **mIoU** | **28.97%** | **29.72%** | **+0.76%** |
-| **Overall Accuracy** | **68.90%** | **69.79%** | **+0.89%** |
+| road | 52.97% | 55.55% | **+2.58%** |
+| sidewalk | 45.88% | 45.08% | -0.80% |
+| parking | 19.18% | 20.13% | +0.95% |
+| other-ground | 8.47% | 8.49% | +0.02% |
+| building | 67.02% | 67.02% | -0.00% |
+| fence | 21.69% | 21.32% | -0.37% |
+| pole | 10.54% | 9.97% | -0.58% |
+| traffic-sign | 13.41% | 14.00% | +0.59% |
+| terrain | 39.74% | 41.29% | **+1.55%** |
+| two-wheeler | 7.31% | 6.20% | -1.11% |
+| vehicle | 30.03% | 33.79% | **+3.76%** |
+| other-object | 7.96% | 7.11% | -0.85% |
+| vegetation | 45.14% | 45.84% | +0.70% |
+| **mIoU** | **28.41%** | **28.91%** | **+0.49%** |
+| **Overall Accuracy** | **68.48%** | **69.29%** | **+0.81%** |
 
 Key takeaways:
-- **Road +2.34%, Parking +2.35%**: Ground-class priors improve surface accuracy
-- **Vehicle +2.93%**: Near-ground prior helps distinguish vehicles
-- **Terrain +2.02%**: Tight terrain prior (mu=0, tau=0.5) correctly constrains terrain predictions to ground level
-- **Pole +1.43%**: Mid-height prior (mu=3m, tau=2.5m) helps pole detection
-- **Vegetation +0.87%**: Vegetation height kernel is disabled (tau=100000) to avoid suppressing trees at various heights; modest gain from other class improvements
+- **Vehicle +3.76%**: Near-ground prior helps distinguish vehicles
+- **Road +2.58%**: Ground-class prior improves road surface accuracy
+- **Terrain +1.55%**: Tight terrain prior (mu=0, tau=0.5) correctly constrains terrain predictions to ground level
+- **Vegetation +0.70%**: Vegetation height kernel is disabled (tau=100000) to avoid suppressing trees at various heights; modest gain from other class improvements
+- **Two-wheeler -1.11%**: Minor regression, possibly from near-ground prior interactions at full scale
 
 ### Experiment 3: In-Domain seq 0009 (CENet-KITTI360 → KITTI-360 seq 0009)
 
 Same model as Experiment 2, different sequence.
 
-**1089 scans, 128.5M points**
+**5566 scans, 650.8M points**
 
 | Class | Baseline (IoU) | + Height Kernel (IoU) | Delta |
 |-------|:--------------:|:---------------------:|:-----:|
-| road | 60.64% | 61.28% | +0.63% |
-| sidewalk | 50.82% | 50.43% | -0.39% |
-| parking | 29.05% | 29.04% | -0.02% |
-| other-ground | 9.55% | 9.51% | -0.04% |
-| building | 58.99% | 58.98% | -0.00% |
-| fence | 16.42% | 16.41% | -0.01% |
-| pole | 6.49% | 6.37% | -0.12% |
-| traffic-sign | 16.73% | 16.68% | -0.05% |
-| terrain | 22.81% | 23.92% | **+1.11%** |
-| two-wheeler | 22.64% | 24.43% | **+1.79%** |
-| vehicle | 26.04% | 26.81% | +0.76% |
-| other-object | 10.52% | 10.49% | -0.03% |
-| vegetation | 44.70% | 46.79% | **+2.09%** |
-| **mIoU** | **28.88%** | **29.32%** | **+0.44%** |
-| **Overall Accuracy** | **65.75%** | **66.83%** | **+1.09%** |
+| road | 64.67% | 64.22% | -0.46% |
+| sidewalk | 56.08% | 55.84% | -0.24% |
+| parking | 25.48% | 25.44% | -0.04% |
+| other-ground | 11.56% | 11.29% | -0.28% |
+| building | 65.74% | 65.74% | -0.00% |
+| fence | 20.83% | 21.43% | +0.59% |
+| pole | 13.45% | 13.33% | -0.11% |
+| traffic-sign | 18.63% | 18.59% | -0.04% |
+| terrain | 24.21% | 25.53% | **+1.31%** |
+| two-wheeler | 8.35% | 8.57% | +0.22% |
+| vehicle | 27.99% | 27.82% | -0.17% |
+| other-object | 12.33% | 12.29% | -0.03% |
+| vegetation | 49.19% | 50.51% | **+1.32%** |
+| **mIoU** | **30.65%** | **30.81%** | **+0.16%** |
+| **Overall Accuracy** | **70.91%** | **71.28%** | **+0.37%** |
 
 Key takeaways:
-- **Vegetation +2.09%**: Largest gain on this sequence, from improved separation of terrain/vegetation
-- **Two-wheeler +1.79%**: Near-ground prior helps two-wheeler detection
-- **Terrain +1.11%**: Ground-level constraint improves terrain predictions
+- **Vegetation +1.32%**: Improved separation of terrain/vegetation at height
+- **Terrain +1.31%**: Ground-level constraint improves terrain predictions
+- **Fence +0.59%**: Low-structure prior provides modest gains
 - Smaller overall gains than seq 0000 because seq 0009 has selective in-domain tuning (fewer active classes)
 
 ---
 
-## Summary: 14-Class vs Old 13-Class Comparison
+## Summary: Full-Scale 14-Class Results
 
-### Old 13-Class Results (for reference)
+| Experiment | Scans | Points | Baseline mIoU | +Height mIoU | Delta |
+|------------|:-----:|:------:|:-------------:|:------------:|:-----:|
+| Cross-domain (seq 0000) | 4433 | 516.7M | 12.63% | 14.76% | **+2.13%** |
+| In-domain (seq 0000) | 4433 | 516.7M | 28.41% | 28.91% | **+0.49%** |
+| In-domain (seq 0009) | 5566 | 650.8M | 30.65% | 30.81% | **+0.16%** |
 
-The old 13-class taxonomy merged terrain and vegetation into a single "vegetation" class, preventing the height kernel from distinguishing ground-level terrain from elevated tree canopy.
+### Key findings:
 
-| Experiment | 13-class Baseline | 13-class +Height | Height Delta |
-|------------|:-----------------:|:----------------:|:------------:|
-| Cross-domain (seq 0000) | 13.91% | 16.61% | +2.70% |
-| In-domain (seq 0000) | 27.81% | 28.27% | +0.46% |
-
-### New 14-Class Results
-
-| Experiment | 14-class Baseline | 14-class +Height | Height Delta |
-|------------|:-----------------:|:----------------:|:------------:|
-| Cross-domain (seq 0000) | 12.26% | 14.51% | +2.25% |
-| In-domain (seq 0000) | 28.97% | 29.72% | +0.76% |
-| In-domain (seq 0009) | 28.88% | 29.32% | +0.44% |
-
-### Key comparisons:
-
-- **In-domain baseline improved by +1.16%** (27.81% → 28.97%) from the taxonomy split alone, without any height kernel changes
-- **In-domain best improved by +1.45%** (28.27% → 29.72%) — the 14-class baseline already exceeds the old 13-class +height best
-- **Cross-domain baseline dropped by -1.65%** (13.91% → 12.26%) because MCD cannot predict terrain (class 9), adding a hard class that dilutes mIoU; however, the height kernel still provides a strong +2.25% gain
-- **Cross-domain vegetation improved dramatically**: 18.17% → 25.51% (+7.34%) with height kernel, because vegetation now only means trees and benefits from cleaner height separation
+- **Height kernel consistently improves mIoU** across all three experiments, with the largest gain in the cross-domain setting (+2.13%)
+- **Building class benefits most from height priors**: +12.90% in cross-domain, where false ground-level building predictions are strongly penalized
+- **Vegetation separation is highly effective**: +9.24% in cross-domain from cleaner height-based tree/ground distinction
+- **In-domain gains are modest but positive**: the in-domain model is already strong, leaving less room for height-based correction
+- **Overall accuracy improves consistently**: +3.52% cross-domain, +0.81% in-domain seq 0000, +0.37% in-domain seq 0009
 
 ---
 

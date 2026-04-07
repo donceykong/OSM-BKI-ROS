@@ -1,0 +1,35 @@
+Run ALL KITTI-360 14-class ablation experiments at full scale (scan_num: 1000) and record the results in the README. Do NOT change any parameters — just run and record.
+
+## Steps
+
+1. Verify scan_num is 1000 in all 6 configs. If not, change it:
+   - config/methods/kitti360_no_height.yaml
+   - config/methods/kitti360_with_height.yaml
+   - config/methods/kitti360_0000_indomain_no_height.yaml
+   - config/methods/kitti360_0000_indomain_with_height.yaml
+   - config/methods/kitti360_0009_indomain_no_height.yaml
+   - config/methods/kitti360_0009_indomain_with_height.yaml
+
+2. Rebuild and run all 3 experiment pairs sequentially:
+```bash
+docker compose down && docker compose up -d --build
+docker exec osm-bki bash -c "source /opt/ros/humble/setup.bash && source /ros2_ws/install/setup.bash && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation.sh && echo '=== CROSS-DOMAIN DONE ===' && bash /ros2_ws/src/osm_bki/height_kernel/run_ablation_indomain.sh && echo '=== ALL DONE ==='"
+```
+
+This will take several hours. Wait for it to complete. Do NOT interrupt or change parameters.
+
+3. Once ALL experiments finish, read the results from:
+   - Cross-domain (seq 0000): evaluations/osm_prior_no_height/results.csv and osm_prior_with_height/results.csv in /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/
+   - In-domain seq 0000: evaluations/indomain_no_height/results.csv and indomain_with_height/results.csv (same base path)
+   - In-domain seq 0009: same structure under /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0009_sync/evaluations/
+   Also read the ablation_comparison.csv files for the delta tables.
+
+4. Update height_kernel/README.md with the full-scale results. Replace the existing 100-scan tables with full-run tables. Keep the same format and structure that's already there, just update the numbers. Make sure to note these are full-sequence results (mention scan count and point count from the evaluation output). Keep the 14-class taxonomy section, tuning rationale, and all other documentation intact — only update the results tables and their descriptions.
+
+## Important
+- Do NOT change any height kernel parameters, lambda, tau, mu, dead_zone, or any other config
+- Do NOT change num_class — it should stay at 14
+- Do NOT modify any MCD configs (config/methods/mcd_*.yaml)
+- Do NOT modify any C++ code
+- The ONLY changes allowed are: scan_num to 1000 (if not already), and updating the README with results
+- The drive mounts host hercules-collect2 to container hercules-collect1 — this is already configured
