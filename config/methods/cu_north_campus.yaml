@@ -10,8 +10,8 @@
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
     ds_resolution: 0.1      # Voxel DS size for pointcloud (before insertion)
-    # num_class: when use_common_taxonomy true = common taxonomy size (13). When false = network n_classes (e.g. 29 for MCD).
-    num_class: 13
+    # num_class: when use_common_taxonomy true = common taxonomy size (11). When false = network n_classes (e.g. 30 for MCD with terrain).
+    num_class: 11
     # use_common_taxonomy: false = use network class indices and raw softmax (no mapping). Set num_class = network n_classes.
     use_common_taxonomy: true
 

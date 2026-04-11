@@ -1,5 +1,5 @@
 # OSM confusion matrix for semantic-OSM prior fusion.
-# Rows  = common taxonomy semantic classes (1-12).
+# Rows  = common taxonomy semantic classes (1-10).
 # Cols   = OSM prior categories: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
 # "none" column is active (1.0) when no OSM geometry covers the point.
 # forest = landuse=forest, natural=forest, natural=wood (larger wooded areas)
@@ -10,9 +10,8 @@
 #   0        = no effect
 #
 # Common taxonomy:
-#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,
-#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,
-#   11: vehicle, 12: other-object
+#   1: road, 2: sidewalk, 3: parking, 4: building, 5: fence,
+#   6: pole, 7: traffic-sign, 8: vegetation, 9: vehicle, 10: terrain
 
 osm_prior_columns: [roads, parking, grasslands, trees, forest, buildings, fences, stairs, none]
 
@@ -21,15 +20,13 @@ confusion_matrix:
   1:  [ 0.80, -0.50,  0.20,  0.50,  0.00,  0.00,  0.00,  0.00,  0.30]   # road
   2:  [ 0.00, -0.30,  0.20,  0.00,  0.00,  0.00,  0.00,  0.00,  0.30]   # sidewalk
   3:  [ 0.40,  1.00,  0.20,  0.50,  0.50,  0.00,  0.00,  0.00,  0.30]   # parking
-  4:  [ 0.30, -0.30,  0.20,  0.00,  0.00,  0.00,  1.00,  0.80,  0.30]   # other-ground
-  5:  [ 0.05,  0.00,  0.00, -0.80, -0.80,  1.00,  0.00,  0.00, -0.80]   # building
-  6:  [ 1.00,  0.00,  0.00,  0.00,  0.00,  0.00,  1.00,  0.00,  0.00]   # fence
-  7:  [ 1.00,  0.30,  0.00,  0.00,  0.00,  0.00,  0.10,  0.00,  0.00]   # pole
-  8:  [ 1.00,  0.50, -0.50,  0.00,  0.00,  0.00,  0.00,  0.00,  0.00]   # traffic-sign
-  9:  [ 0.50,  0.50,  1.00,  1.00,  1.00, -0.80,  0.00,  0.00,  0.80]   # vegetation
-  10: [ 1.00,  0.80,  0.00,  0.00,  0.00,  0.00,  0.00,  0.00,  0.50]   # two-wheeler
-  11: [ 1.00,  0.80,  0.00,  0.00,  0.00,  0.00,  0.00,  0.00,  0.50]   # vehicle
-  12: [ 0.10,  0.10,  0.10,  0.10,  0.10,  0.10,  0.10,  0.10,  0.30]   # other-object
+  4:  [ 0.05,  0.00,  0.00, -0.80, -0.80,  1.00,  0.00,  0.00, -0.80]   # building
+  5:  [ 1.00,  0.00,  0.00,  0.00,  0.00,  0.00,  1.00,  0.00,  0.00]   # fence
+  6:  [ 1.00,  0.30,  0.00,  0.00,  0.00,  0.00,  0.10,  0.00,  0.00]   # pole
+  7:  [ 1.00,  0.50, -0.50,  0.00,  0.00,  0.00,  0.00,  0.00,  0.00]   # traffic-sign
+  8:  [ 0.50,  0.50,  1.00,  1.00,  1.00, -0.80,  0.00,  0.00,  0.80]   # vegetation
+  9:  [ 1.00,  0.80,  0.00,  0.00,  0.00,  0.00,  0.00,  0.00,  0.50]   # vehicle
+  10: [ 0.30,  0.30,  1.00,  0.80,  0.80, -0.80,  0.00,  0.00,  0.60]   # terrain
 
 # OSM category to column index in confusion matrix
 osm_class_map:
@@ -55,5 +52,3 @@ label_to_matrix_idx:
   8: 7
   9: 8
   10: 9
-  11: 10
-  12: 11

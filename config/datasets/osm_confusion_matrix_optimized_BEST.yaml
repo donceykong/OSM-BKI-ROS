@@ -1,12 +1,11 @@
 # Optimized OSM confusion matrix (derived from GT co-occurrence analysis).
-# Rows  = common taxonomy semantic classes (1-12).
+# Rows  = common taxonomy semantic classes (1-10).
 # Cols  = OSM prior categories: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
 # Values in [0.0, 1.0]: boost only (no suppression).
 #
 # Common taxonomy:
-#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,
-#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,
-#   11: vehicle, 12: other-object
+#   1: road, 2: sidewalk, 3: parking, 4: building, 5: fence,
+#   6: pole, 7: traffic-sign, 8: vegetation, 9: vehicle, 10: terrain
 
 osm_prior_columns: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
 
@@ -14,15 +13,13 @@ confusion_matrix:
   1:  [  0.58,   0.00,   0.08,   0.08,   0.00,   0.40,   0.00,   0.00,   0.00,   0.08,   0.00,   0.00,   0.00,   0.11]   # road
   2:  [  0.17,   0.70,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.67,   0.00,   0.00,   0.57]   # sidewalk
   3:  [  0.02,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
-  4:  [  0.00,   0.13,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.13,   0.00,   0.00,   0.11]   # other-ground
-  5:  [  0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # building
-  6:  [  0.00,   0.00,   0.00,   0.02,   0.02,   0.00,   0.00,   0.00,   0.02,   0.00,   0.00,   0.00,   0.00,   0.02]   # fence
-  7:  [  0.02,   0.01,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.02,   0.00,   0.00,   0.00,   0.01]   # pole
-  8:  [  0.01,   0.00,   0.01,   0.01,   0.01,   0.00,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.01]   # traffic-sign
-  9:  [  0.00,   0.00,   0.91,   0.87,   0.96,   0.50,   1.00,   0.00,   0.97,   0.68,   0.00,   0.93,   0.00,   0.00]   # vegetation
-  10:  [  0.01,   0.02,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.02,   0.02,   0.00,   0.00,   0.01]   # two-wheeler
-  11:  [  0.04,   0.00,   0.01,   0.02,   0.00,   0.10,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # vehicle
-  12:  [  0.16,   0.15,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.20,   0.18,   0.07,   1.00,   0.15]   # other-object
+  4:  [  0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   1.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # building
+  5:  [  0.00,   0.00,   0.00,   0.02,   0.02,   0.00,   0.00,   0.00,   0.02,   0.00,   0.00,   0.00,   0.00,   0.02]   # fence
+  6:  [  0.02,   0.01,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.02,   0.00,   0.00,   0.00,   0.01]   # pole
+  7:  [  0.01,   0.00,   0.01,   0.01,   0.01,   0.00,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.01]   # traffic-sign
+  8:  [  0.00,   0.00,   0.91,   0.87,   0.96,   0.50,   1.00,   0.00,   0.97,   0.68,   0.00,   0.93,   0.00,   0.00]   # vegetation
+  9:  [  0.04,   0.00,   0.01,   0.02,   0.00,   0.10,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00]   # vehicle
+  10: [  0.00,   0.00,   0.91,   0.87,   0.96,   0.50,   1.00,   0.00,   0.97,   0.68,   0.00,   0.93,   0.00,   0.00]   # terrain
 
 # OSM height confusion matrix (per-scan relative bins). Rows = height bins (1=lowest, 100=highest). Cols = OSM categories. Multipliers in [0, 1].
 osm_height_confusion_matrix:
@@ -166,5 +163,3 @@ label_to_matrix_idx:
   8: 7
   9: 8
   10: 9
-  11: 10
-  12: 11

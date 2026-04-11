@@ -29,6 +29,7 @@ labels:
   26: "vehicle-dynamic"
   27: "vehicle-other"
   28: "vehicle-static"
+  29: "terrain"
 color_map: # rgb
   0: [128, 128, 128]  # barrier
   1: [32, 11, 119]    # bike
@@ -59,6 +60,7 @@ color_map: # rgb
   26: [100, 150, 245] # vehicle-dynamic
   27: [51, 0, 51]     # vehicle-other
   28: [142, 0, 0]     # vehicle-static
+  29: [144, 238, 144] # terrain
 content: # as a ratio with the total number of points
   0: 0.0004964098
   1: 0.0032825567
@@ -89,6 +91,7 @@ content: # as a ratio with the total number of points
   26: 0.0038553015
   27: 0.0000000000
   28: 0.0125089481
+  29: 0.0611581011
 # classes that are indistinguishable from single scan or inconsistent in
 # ground truth are mapped to their closest equivalent
 learning_map:
@@ -121,6 +124,7 @@ learning_map:
   26: 26  # vehicle-dynamic
   27: 27  # vehicle-other
   28: 28  # vehicle-static
+  29: 29  # terrain
 learning_map_inv: # inverse of previous map
   0: 0
   1: 1
@@ -151,3 +155,4 @@ learning_map_inv: # inverse of previous map
   26: 26
   27: 27
   28: 28
+  29: 29

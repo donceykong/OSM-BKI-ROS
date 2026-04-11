@@ -36,9 +36,9 @@
 #include "osm_geometry.h"
 
 // ---------------------------------------------------------------------------
-// Common taxonomy (13 classes) — loaded from labels_common.yaml at runtime.
+// Common taxonomy (11 classes) — loaded from labels_common.yaml at runtime.
 // ---------------------------------------------------------------------------
-static constexpr int N_COMMON = 13;
+static constexpr int N_COMMON = 11;
 
 struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
@@ -482,14 +482,14 @@ class MCDData {
           int pred_cls = it->first.as<int>();
           if (pred_cls < 0 || pred_cls >= N_COMMON) continue;
           auto row = it->second;
-          // Columns are classes 1..12, stored as a sequence of 12 values
-          if (row.size() != 12) {
+          // Columns are classes 1..(N_COMMON-1), stored as a sequence of (N_COMMON-1) values
+          if (static_cast<int>(row.size()) != N_COMMON - 1) {
             RCLCPP_WARN_STREAM(node_->get_logger(),
                 "Confusion matrix row " << pred_cls << " has " << row.size()
-                << " columns (expected 12), skipping");
+                << " columns (expected " << (N_COMMON - 1) << "), skipping");
             continue;
           }
-          for (int c = 0; c < 12; ++c) {
+          for (int c = 0; c < N_COMMON - 1; ++c) {
             confusion_matrix_[pred_cls][c + 1] = row[c].as<int>();
           }
         }
