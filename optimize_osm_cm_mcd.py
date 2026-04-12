@@ -298,19 +298,13 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             ways_coords[way.attrib["id"]] = coords
 
     buildings, roads, grasslands, trees_poly, forests = [], [], [], [], []
-    parking, fences, stairs, tree_points, pole_points = [], [], [], [], []
-    sidewalks, cycleways, walls, water = [], [], [], []
+    parking, fences, tree_points = [], [], []
+    sidewalks, cycleways = [], []
 
     for nd in root.iter("node"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in nd.iter("tag")}
         if tags.get("natural") == "tree":
             tree_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("highway") == "traffic_signals":
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("power") in ("pole", "tower"):
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("man_made") in ("street_cabinet", "mast"):
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
 
     for way in root.iter("way"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in way.iter("tag")}
@@ -328,13 +322,7 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         if tags.get("barrier") == "fence":
             fences.append(coords)
             continue
-        if tags.get("barrier") == "wall" or tags.get("man_made") == "wall":
-            walls.append(coords)
-            continue
         hw = tags.get("highway", "")
-        if hw == "steps":
-            stairs.append(coords)
-            continue
         if hw in SIDEWALK_HIGHWAY_TYPES:
             sidewalks.append(coords)
             continue
@@ -343,9 +331,6 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             continue
         if hw in ROAD_HIGHWAY_TYPES:
             roads.append(coords)
-            continue
-        if tags.get("natural") == "water" and len(coords) >= 3 and coords[0] == coords[-1]:
-            water.append((coords, []))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -394,14 +379,11 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             forests.extend(polys)
         elif tags.get("landcover") == "trees":
             trees_poly.extend(polys)
-        elif tags.get("natural") == "water":
-            water.extend(polys)
 
     return dict(buildings=buildings, roads=roads, grasslands=grasslands,
                 trees=trees_poly, forests=forests, parking=parking,
-                fences=fences, stairs=stairs, tree_points=tree_points,
-                sidewalks=sidewalks, cycleways=cycleways, walls=walls, water=water,
-                pole_points=pole_points)
+                fences=fences, tree_points=tree_points,
+                sidewalks=sidewalks, cycleways=cycleways)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -429,9 +411,9 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     """
     out = {}
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+                "parking", "fences", "sidewalks", "cycleways"):
         out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
-    for pt_key in ("tree_points", "pole_points"):
+    for pt_key in ("tree_points",):
         pts = geom.get(pt_key, [])
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
@@ -448,7 +430,7 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
 
 OSM_COLUMNS = [
     "roads", "sidewalks", "cycleways", "parking", "grasslands", "trees", "forest",
-    "buildings", "fences", "walls", "stairs", "water", "poles", "none"
+    "buildings", "fences", "none"
 ]
 N_OSM = len(OSM_COLUMNS)
 
@@ -457,10 +439,7 @@ DEFAULT_OSM_GEOMETRY_PARAMS = {
     "sidewalk_width_meters": 10.0,
     "cycleway_width_meters": 2.0,
     "fence_width_meters": 0.6,
-    "wall_width_meters": 0.8,
-    "stairs_width_meters": 10.0,
     "tree_point_radius_meters": 5.0,
-    "pole_point_radius_meters": 2.0,
 }
 GEOM_PARAMS = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
 
@@ -472,14 +451,14 @@ def _build_shapely_index(geom):
     """Build Shapely geometries + STRtrees for fast spatial queries. Returns dict or None if Shapely unavailable."""
     if not SHAPELY_AVAILABLE:
         return None
-    idx = {"geom": geom, "tree_points": geom.get("tree_points", []), "pole_points": geom.get("pole_points", [])}
-    for cat in ("roads", "sidewalks", "cycleways", "fences", "walls", "stairs"):
+    idx = {"geom": geom, "tree_points": geom.get("tree_points", [])}
+    for cat in ("roads", "sidewalks", "cycleways", "fences"):
         geoms = []
         for coords in geom.get(cat, []):
             if len(coords) >= 2:
                 geoms.append(LineString(coords))
         idx[cat] = (STRtree(geoms), geoms) if geoms else (None, [])
-    for cat in ("buildings", "grasslands", "trees", "forests", "parking", "water"):
+    for cat in ("buildings", "grasslands", "trees", "forests", "parking"):
         geoms = []
         for poly in geom.get(cat, []):
             outer = _poly_outer(poly)
@@ -671,51 +650,6 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
                 min_sd = sd
         return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
 
-    elif cat == "stairs":
-        half_w = 0.5 * GEOM_PARAMS["stairs_width_meters"]
-        min_sd = float("inf")
-        for g in _query_candidates(idx, "stairs", x, y):
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
-
-    elif cat == "walls":
-        half_w = 0.5 * GEOM_PARAMS["wall_width_meters"]
-        min_sd = float("inf")
-        for g in _query_candidates(idx, "walls", x, y):
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
-
-    elif cat == "water":
-        min_d = float("inf")
-        for g in _query_candidates(idx, "water", x, y):
-            sd, ok = _shapely_signed_distance(g, pt)
-            if not ok:
-                continue
-            if sd <= 0:
-                return 1.0
-            if sd < min_d:
-                min_d = sd
-        return _prior_signed(min_d) if min_d != float("inf") else 0.0
-
-    elif cat == "poles":
-        max_p = 0.0
-        pole_radius = GEOM_PARAMS["pole_point_radius_meters"]
-        for cx, cy in idx.get("pole_points", []):
-            d_center = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-            sd = d_center - pole_radius
-            p = _prior_signed(sd)
-            if p > max_p:
-                max_p = p
-        return max_p
-
     return 0.0
 
 
@@ -785,28 +719,6 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
         return osm_prior_from_signed_distance(min_d, decay_m)
     elif cat == "fences":
         return _line_prior("fences", GEOM_PARAMS["fence_width_meters"])
-    elif cat == "stairs":
-        return _line_prior("stairs", GEOM_PARAMS["stairs_width_meters"])
-    elif cat == "walls":
-        return _line_prior("walls", GEOM_PARAMS["wall_width_meters"])
-    elif cat == "water":
-        min_d = float("inf")
-        for poly in geom.get("water", []):
-            sd = distance_to_polygon_boundary(x, y, poly)
-            if sd <= 0:
-                return 1.0
-            if sd < min_d:
-                min_d = sd
-        return osm_prior_from_signed_distance(min_d, decay_m)
-    elif cat == "poles":
-        max_p = 0.0
-        pole_radius = GEOM_PARAMS["pole_point_radius_meters"]
-        for cx, cy in geom.get("pole_points", []):
-            d = math.sqrt((x - cx) ** 2 + (y - cy) ** 2) - pole_radius
-            p = osm_prior_from_signed_distance(d, decay_m)
-            if p > max_p:
-                max_p = p
-        return max_p
     return 0.0
 
 
@@ -976,31 +888,28 @@ def read_label_bin(path):
 # 5. Co-occurrence analysis
 # ═══════════════════════════════════════════════════════════════════
 
-N_CLASSES = 13
+N_CLASSES = 9
 CLASS_NAMES = [
-    "unlabeled", "road", "sidewalk", "parking", "other-ground",
-    "building", "fence", "pole", "traffic-sign", "vegetation",
-    "two-wheeler", "vehicle", "other-object",
+    "unlabeled", "road", "sidewalk", "parking", "building",
+    "fence", "vegetation", "vehicle", "terrain",
 ]
 
 
-# OSM column index -> set of GT common classes compatible with that OSM category.
+# OSM column index -> set of common GT classes compatible with that OSM category.
 # Used for inferred-row: only count OSM evidence when GT aligns (to learn correction).
+# Common taxonomy: 0=unlabeled, 1=road, 2=sidewalk, 3=parking, 4=building,
+# 5=fence, 6=vegetation, 7=vehicle, 8=terrain.
 OSM_GT_COMPATIBLE = {
-    0: {1, 2},           # roads -> road, sidewalk
+    0: {1},              # roads -> road
     1: {2},              # sidewalks -> sidewalk
-    2: {10},             # cycleways -> two-wheeler
+    2: {1, 2},           # cycleways -> road, sidewalk
     3: {3},              # parking -> parking
-    4: {4, 9},           # grasslands -> other-ground, vegetation
-    5: {9},              # trees -> vegetation
-    6: {9},              # forest -> vegetation
-    7: {5},              # buildings -> building
-    8: {6},              # fences -> fence
-    9: {6, 4},           # walls -> fence, other-ground (retaining walls)
-    10: {4},             # stairs -> other-ground
-    11: {4},             # water -> other-ground
-    12: {7, 8},          # poles -> pole, traffic-sign
-    13: set(range(13)),  # none -> all (neutral)
+    4: {6, 8},           # grasslands -> vegetation, terrain
+    5: {6},              # trees -> vegetation
+    6: {6},              # forest -> vegetation
+    7: {4},              # buildings -> building
+    8: {5},              # fences -> fence
+    9: set(range(N_CLASSES)),  # none -> all (neutral)
 }
 
 
@@ -1034,39 +943,36 @@ def build_cooccurrence_inferred(inferred_labels, gt_labels, osm_vecs):
     return counts, class_totals
 
 
-def derive_matrix(counts, class_totals, positive_only=False, scale_by_class_points=True):
-    """Derive 12xN_OSM matrix from co-occurrence (rows = classes 1..12).
+def derive_matrix(counts, class_totals, scale_by_class_points=True):
+    """Derive (N_CLASSES-1) x N_OSM matrix from co-occurrence (rows = classes 1..N_CLASSES-1).
 
-    If positive_only=True, values are in [0, 1] (boost only, no suppression).
-    Otherwise values are in [-1, 1] (positive=boost, negative=suppress).
+    Entries are non-negative and each column sums to 1, i.e. matrix[c-1, j] is
+    P(class=c | osm_col=j) restricted to classes 1..N_CLASSES-1 (excluding unlabeled).
 
     If scale_by_class_points=True, each row is weighted by the number of GT points
     for that class before column normalization, so classes with more points have
     proportionally more influence in the final matrix.
     """
+    n_rows = N_CLASSES - 1
     total_points = class_totals.sum()
     if total_points == 0:
-        return np.zeros((12, N_OSM))
+        return np.zeros((n_rows, N_OSM))
     col_totals = counts.sum(axis=0)
-    matrix = np.zeros((12, N_OSM))
-    for ri, cls in enumerate(range(1, 13)):
+    matrix = np.zeros((n_rows, N_OSM))
+    for ri, cls in enumerate(range(1, N_CLASSES)):
         p_cls = class_totals[cls] / total_points
         for j in range(N_OSM):
             if col_totals[j] < 1.0 or p_cls < 1e-8:
                 matrix[ri][j] = 0.0
             else:
+                # Boost = max(0, P(c|osm)/P(c) - 1): non-negative correction signal.
                 p_cls_given_osm = counts[cls][j] / col_totals[j]
-                raw = np.clip(p_cls_given_osm / p_cls - 1.0, -1.0, 1.0)
-                if positive_only:
-                    # Rescale [-1, 1] -> [0, 1]: positive = boost, negative -> 0 (no suppression)
-                    matrix[ri][j] = max(0.0, raw)
-                else:
-                    matrix[ri][j] = raw
+                matrix[ri][j] = max(0.0, p_cls_given_osm / p_cls - 1.0)
     if scale_by_class_points:
-        for ri, cls in enumerate(range(1, 13)):
+        for ri, cls in enumerate(range(1, N_CLASSES)):
             if class_totals[cls] > 1e-10:
                 matrix[ri, :] *= class_totals[cls]
-    # Normalize so each column sums to 1
+    # Per-column probability normalization: each column sums to 1.
     for j in range(N_OSM):
         col_sum = matrix[:, j].sum()
         if col_sum > 1e-10:
@@ -1136,7 +1042,7 @@ def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None,
     counts_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
     totals_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
     osm_thresh = 0.01
-    use_prior = prior_matrix is not None and prior_matrix.shape >= (12, N_OSM)
+    use_prior = prior_matrix is not None and prior_matrix.shape >= (N_CLASSES - 1, N_OSM)
     for item in scan_data_list:
         map_pts, gt, osm = item[:3]
         z = map_pts[:, 2]
@@ -1151,7 +1057,7 @@ def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None,
                     continue
                 totals_h[b, j] += osm[i, j]
                 if use_prior:
-                    if 1 <= c <= 12:
+                    if 1 <= c < N_CLASSES:
                         w = max(0.0, prior_matrix[c - 1, j])
                         counts_h[b, j] += osm[i, j] * w
                 else:
@@ -1325,11 +1231,11 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 
     ax.set_xticks(range(N_OSM))
     ax.set_xticklabels(OSM_COLUMNS, rotation=45, ha="right")
-    ax.set_yticks(range(12))
-    ax.set_yticklabels([CLASS_NAMES[i + 1] for i in range(12)])
+    ax.set_yticks(range(N_CLASSES - 1))
+    ax.set_yticklabels([CLASS_NAMES[i + 1] for i in range(N_CLASSES - 1)])
 
     # Add value annotations
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         for j in range(N_OSM):
             v = matrix[i, j]
             text_color = "white" if abs(v) > 0.5 else "black"
@@ -1355,28 +1261,25 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 # 7. YAML output
 # ═══════════════════════════════════════════════════════════════════
 
-def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=None, geometry_params=None):
-    if positive_only:
-        val_comment = "# Values in [0.0, 1.0]: boost only (no suppression)."
-    else:
-        val_comment = "# Values in [-1.0, 1.0]: positive = boost, negative = suppress, 0 = neutral."
+def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None):
+    val_comment = "# Values in [0.0, 1.0]: each column is a probability distribution that sums to 1."
     cols_str = ", ".join(OSM_COLUMNS)
+    n_rows = N_CLASSES - 1
+    class_legend = ", ".join(f"{i+1}: {CLASS_NAMES[i+1]}" for i in range(n_rows))
     lines = [
         "# Optimized OSM confusion matrix (derived from GT co-occurrence analysis).",
-        "# Rows  = common taxonomy semantic classes (1-12).",
+        f"# Rows  = common taxonomy semantic classes (1-{n_rows}).",
         f"# Cols  = OSM prior categories: [{cols_str}]",
         val_comment,
         "#",
         "# Common taxonomy:",
-        "#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,",
-        "#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,",
-        "#   11: vehicle, 12: other-object",
+        f"#   {class_legend}",
         "",
         f"osm_prior_columns: [{cols_str}]",
         "",
         "confusion_matrix:",
     ]
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = ", ".join(f"{matrix[i, j]:6.2f}" for j in range(N_OSM))
         lines.append(f"  {i+1}:  [{vals}]   # {CLASS_NAMES[i+1]}")
     if height_matrix is not None:
@@ -1404,14 +1307,11 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
             f"  sidewalk_width_meters: {geometry_params['sidewalk_width_meters']:.3f}",
             f"  cycleway_width_meters: {geometry_params['cycleway_width_meters']:.3f}",
             f"  fence_width_meters: {geometry_params['fence_width_meters']:.3f}",
-            f"  wall_width_meters: {geometry_params['wall_width_meters']:.3f}",
-            f"  stairs_width_meters: {geometry_params['stairs_width_meters']:.3f}",
             f"  tree_point_radius_meters: {geometry_params['tree_point_radius_meters']:.3f}",
-            f"  pole_point_radius_meters: {geometry_params['pole_point_radius_meters']:.3f}",
         ]
     lines += [
         "", "label_to_matrix_idx:",
-        *[f"  {i+1}: {i}" for i in range(12)],
+        *[f"  {i+1}: {i}" for i in range(N_CLASSES - 1)],
         "",
     ]
     with open(output_path, "w") as f:
@@ -1424,24 +1324,31 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data.")
+
+    # Base config options
     parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/mcd.yaml"))
-    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized.yaml"))
-    parser.add_argument("--data-dir", type=str, default=None,
-                        help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
+    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_MCD_NEW.yaml"))
+    parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--keyframe-dist", type=float, default=1.0,
-                        help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
+    parser.add_argument("--keyframe-dist", type=float, default=5.0)
     parser.add_argument("--decay", type=float, default=0.0)
-    parser.add_argument("--tree-radius", type=float, default=6.0)
-    parser.add_argument("--pole-radius", type=float, default=2.0)
-    parser.add_argument("--road-width", type=float, default=8.0)
-    parser.add_argument("--sidewalk-width", type=float, default=8.0)
-    parser.add_argument("--cycleway-width", type=float, default=8.0)
-    parser.add_argument("--fence-width", type=float, default=0.6)
-    parser.add_argument("--wall-width", type=float, default=0.8)
-    parser.add_argument("--stairs-width", type=float, default=10.0)
-    parser.add_argument("--grid-res", type=float, default=0.25,
-                        help="Grid resolution (m) for OSM prior caching (default: 2.0)")
+    parser.add_argument("--tree-radius", type=float, default=4.0)
+    parser.add_argument("--road-width", type=float, default=3.0)
+    parser.add_argument("--sidewalk-width", type=float, default=3.0)
+    parser.add_argument("--cycleway-width", type=float, default=3.0)
+    parser.add_argument("--fence-width", type=float, default=0.5)
+    parser.add_argument("--grid-res", type=float, default=0.5)
+
+    # Height matrix options
+    parser.add_argument("--height-bins", type=int, default=64)
+    parser.add_argument("--height-z-low-percentile", type=float, default=2.0,
+                        help="Per-scan Z low percentile for height bin extent; disregard points below (default: 2)")
+    parser.add_argument("--height-z-high-percentile", type=float, default=98.0,
+                        help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
+    parser.add_argument("--no-height-matrix", action="store_true",
+                        help="Skip computing and writing osm_height_confusion_matrix")
+    
+    # Visualization options
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
     parser.add_argument("--visualize-points", action="store_true",
@@ -1452,32 +1359,29 @@ def main():
                         help="With --visualize: path for matrix PNG (default: <output>.png)")
     parser.add_argument("--vis-points-output", type=str, default=None,
                         help="With --visualize-points: path for points+OSM PNG (default: <output>_points_osm.png)")
+    
+    # Options for inferred-row variant (alternative to GT-row)
     parser.add_argument("--use-inferred-row", action="store_true",
                         help="Use inferred (model) labels as matrix rows. Optimizes OSM to correct inferred toward GT.")
     parser.add_argument("--inferred-prefix", type=str, default=None,
                         help="Override input_label_prefix (e.g. kth_day_09/inferred_labels/cenet_mcd_EDL/multiclass_confidence_scores)")
     parser.add_argument("--inferred-key", type=str, default=None,
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
-    parser.add_argument("--positive-only", action="store_true",
-                        help="Output matrix with values in [0, 1] only (boost, no suppression)")
-    parser.add_argument("--scale-by-class-points", action="store_true", default=True,
+    
+    # Options for height-based analysis and matrix
+    parser.add_argument("--scale-by-class-points", action="store_true", default=False,
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    parser.add_argument("--height-bins", type=int, default=100,
-                        help="Number of per-scan height bins for osm_height_confusion_matrix (default: 20)")
-    parser.add_argument("--height-z-low-percentile", type=float, default=2.0,
-                        help="Per-scan Z low percentile for height bin extent; disregard points below (default: 2)")
-    parser.add_argument("--height-z-high-percentile", type=float, default=98.0,
-                        help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
-    parser.add_argument("--no-height-matrix", action="store_true",
-                        help="Skip computing and writing osm_height_confusion_matrix")
+    
+    # Other options
     parser.add_argument("--max-iters", type=int, default=10,
                         help="Max iterations for alternating prior/height optimization (default: 10)")
     parser.add_argument("--tol", type=float, default=1e-4,
                         help="Convergence tolerance: stop when max abs change < tol (default: 1e-4)")
     parser.add_argument("--flip-height-axis", action="store_true",
                         help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
+    
     args = parser.parse_args()
 
     print(f"Loading config from {args.config}")
@@ -1531,15 +1435,10 @@ def main():
     geom_params_cfg["tree_point_radius_meters"] = cfg.get(
         "osm_tree_point_radius_meters", geom_params_cfg["tree_point_radius_meters"]
     )
-    geom_params_cfg["stairs_width_meters"] = cfg.get(
-        "stairs_width_meters", geom_params_cfg["stairs_width_meters"]
-    )
     geom_params_cfg["road_width_meters"] = cfg.get("road_width_meters", geom_params_cfg["road_width_meters"])
     geom_params_cfg["sidewalk_width_meters"] = cfg.get("sidewalk_width_meters", geom_params_cfg["sidewalk_width_meters"])
     geom_params_cfg["cycleway_width_meters"] = cfg.get("cycleway_width_meters", geom_params_cfg["cycleway_width_meters"])
     geom_params_cfg["fence_width_meters"] = cfg.get("fence_width_meters", geom_params_cfg["fence_width_meters"])
-    geom_params_cfg["wall_width_meters"] = cfg.get("wall_width_meters", geom_params_cfg["wall_width_meters"])
-    geom_params_cfg["pole_point_radius_meters"] = cfg.get("pole_point_radius_meters", geom_params_cfg["pole_point_radius_meters"])
 
     if args.road_width is not None:
         geom_params_cfg["road_width_meters"] = args.road_width
@@ -1549,12 +1448,6 @@ def main():
         geom_params_cfg["cycleway_width_meters"] = args.cycleway_width
     if args.fence_width is not None:
         geom_params_cfg["fence_width_meters"] = args.fence_width
-    if args.wall_width is not None:
-        geom_params_cfg["wall_width_meters"] = args.wall_width
-    if args.stairs_width is not None:
-        geom_params_cfg["stairs_width_meters"] = args.stairs_width
-    if args.pole_radius is not None:
-        geom_params_cfg["pole_point_radius_meters"] = args.pole_radius
     if args.tree_radius is not None:
         geom_params_cfg["tree_point_radius_meters"] = args.tree_radius
 
@@ -1566,10 +1459,7 @@ def main():
         "sidewalk_width_meters",
         "cycleway_width_meters",
         "fence_width_meters",
-        "wall_width_meters",
-        "stairs_width_meters",
         "tree_point_radius_meters",
-        "pole_point_radius_meters",
     ):
         print(f"  {k}: {GEOM_PARAMS[k]:.3f}")
     keyframe_dist = args.keyframe_dist if args.keyframe_dist is not None else cfg.get("keyframe_dist", 0.0)
@@ -1613,7 +1503,7 @@ def main():
             p = first_inv @ np.array([x, y, 0, 1])
             ring[k] = (float(p[0]), float(p[1]))
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+                "parking", "fences", "sidewalks", "cycleways"):
         if cat not in geom:
             continue
         for item in geom[cat]:
@@ -1625,7 +1515,7 @@ def main():
             else:  # simple polyline or polygon
                 ring = _poly_outer(item)
                 _transform_ring(ring)
-    for pt_key in ("tree_points", "pole_points"):
+    for pt_key in ("tree_points",):
         if pt_key not in geom:
             continue
         for k in range(len(geom[pt_key])):
@@ -1775,7 +1665,7 @@ def main():
                     z_high_percentile=args.height_z_high_percentile,
                 )
                 counts, class_totals = build_cooccurrence(all_gt_eff, effective_osm)
-            matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only, scale_by_class_points=args.scale_by_class_points)
+            matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
 
             # Step 2: Optimize height matrix given current prior
             counts_h, totals_h = build_cooccurrence_height(
@@ -1806,7 +1696,7 @@ def main():
             print("Co-occurrence: inferred-row with GT compatibility")
         else:
             counts, class_totals = build_cooccurrence(all_gt, all_osm)
-        matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only, scale_by_class_points=args.scale_by_class_points)
+        matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
 
         height_matrix = None
         if scan_data_list is not None and len(scan_data_list) > 0:
@@ -1832,7 +1722,7 @@ def main():
     print("\nOptimized OSM confusion matrix:")
     header = "                " + "  ".join(f"{c:>7s}" for c in OSM_COLUMNS)
     print(header)
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = "  ".join(f"{matrix[i, j]:7.2f}" for j in range(N_OSM))
         print(f"  {CLASS_NAMES[i+1]:>14s}: {vals}")
 
@@ -1849,7 +1739,6 @@ def main():
     write_osm_cm_yaml(
         matrix,
         args.output,
-        positive_only=args.positive_only,
         height_matrix=height_matrix,
         geometry_params=geometry_params_out,
     )

@@ -27,6 +27,10 @@ namespace osm_bki {
      */
     class SemanticBKIOctoMap {
     public:
+        /// Number of OSM prior categories (matches columns of optimized confusion matrices):
+        /// roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, none.
+        static constexpr int N_OSM_PRIOR_COLS = 10;
+
         /// Types used internally
         typedef std::vector<point3f> PointCloud;
         struct GPPointType {
@@ -360,22 +364,15 @@ namespace osm_bki {
         void set_osm_tree_point_radius(float radius_m);
         void set_osm_parking(const std::vector<Geometry2D> &parking);
         void set_osm_fences(const std::vector<Geometry2D> &fences);
-        void set_osm_walls(const std::vector<Geometry2D> &walls);
-        void set_osm_stairs(const std::vector<Geometry2D> &stairs);
-        void set_osm_water(const std::vector<Geometry2D> &water);
-        void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points);
         void set_osm_road_width(float width_m);
         void set_osm_sidewalk_width(float width_m);
         void set_osm_cycleway_width(float width_m);
         void set_osm_fence_width(float width_m);
-        void set_osm_wall_width(float width_m);
-        void set_osm_pole_point_radius(float radius_m);
-        void set_osm_stairs_width(float width_m);
         void set_osm_decay_meters(float decay_m);
 
         /// OSM confusion matrix: set pre-parsed matrix and label mappings.
         /// K_pred rows (semantic super-classes) x K_prior cols (OSM categories).
-        /// Column order: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none].
+        /// Column order: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, none].
         /// Values in [-1, 1]: negative = decrease likelihood, positive = increase.
         /// "none" column is active (1.0) when no OSM geometry covers the point.
         /// @param matrix  rows x N_OSM_PRIOR_COLS values, outer index = row
@@ -408,13 +405,11 @@ namespace osm_bki {
         /// Clear per-scan filtered geometry (called after scan processing).
         void clear_osm_scan_filter();
 
-        /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence, stairs).
+        /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
-                                              float &tree, float &parking, float &fence, float &stairs) const;
+                                              float &tree, float &parking, float &fence) const;
 
     private:
-        static constexpr int N_OSM_PRIOR_COLS = 14;  // roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none
-
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
         void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
@@ -436,12 +431,8 @@ namespace osm_bki {
         float compute_osm_forest_prior(float x, float y) const;
         float compute_osm_parking_prior(float x, float y) const;
         float compute_osm_fence_prior(float x, float y) const;
-        float compute_osm_wall_prior(float x, float y) const;
-        float compute_osm_stairs_prior(float x, float y) const;
         float compute_osm_sidewalk_prior(float x, float y) const;
         float compute_osm_cycleway_prior(float x, float y) const;
-        float compute_osm_water_prior(float x, float y) const;
-        float compute_osm_pole_prior(float x, float y) const;
 
     private:
         /// @return true if point is inside a bounding box given min and max limits.
@@ -521,17 +512,10 @@ namespace osm_bki {
         float osm_tree_point_radius_{5.0f};  // Radius (m) for tree point circles; prior projected same as polygons
         std::vector<Geometry2D> osm_parking_;
         std::vector<Geometry2D> osm_fences_;
-        std::vector<Geometry2D> osm_walls_;
-        std::vector<Geometry2D> osm_stairs_;
-        std::vector<Geometry2D> osm_water_;
-        std::vector<std::pair<float, float>> osm_pole_points_;
-        float osm_pole_point_radius_{2.0f};  // Radius (m) for pole/traffic-sign points
         float osm_road_width_{6.0f};         // Width (m) for road polyline bands
         float osm_sidewalk_width_{2.0f};     // Width (m) for sidewalk polyline bands
         float osm_cycleway_width_{2.0f};     // Width (m) for cycleway polyline bands
         float osm_fence_width_{0.6f};        // Width (m) for fence polyline bands
-        float osm_wall_width_{0.8f};         // Width (m) for wall polyline bands
-        float osm_stairs_width_{1.5f};  // Width (m) for stairs polylines; prior = 1 inside width band, decays outside
         float osm_decay_meters_;
 
         // OSM confusion matrix for semantic-OSM prior fusion
@@ -552,10 +536,6 @@ namespace osm_bki {
         std::vector<std::pair<float, float>> active_tree_points_;
         std::vector<Geometry2D> active_parking_;
         std::vector<Geometry2D> active_fences_;
-        std::vector<Geometry2D> active_walls_;
-        std::vector<Geometry2D> active_stairs_;
-        std::vector<Geometry2D> active_water_;
-        std::vector<std::pair<float, float>> active_pole_points_;
         int osm_cm_rows_{0};      // K_pred (number of semantic super-classes)
         float osm_cm_[13][N_OSM_PRIOR_COLS]{};  // confusion matrix [row][col], max 13 rows
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it

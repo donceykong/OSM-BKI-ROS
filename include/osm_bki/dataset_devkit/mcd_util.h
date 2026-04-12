@@ -36,9 +36,9 @@
 #include "osm_geometry.h"
 
 // ---------------------------------------------------------------------------
-// Common taxonomy (11 classes) — loaded from labels_common.yaml at runtime.
+// Common taxonomy (9 classes) — loaded from labels_common.yaml at runtime.
 // ---------------------------------------------------------------------------
-static constexpr int N_COMMON = 11;
+static constexpr int N_COMMON = 9;
 
 struct MulticlassResult {
   pcl::PointCloud<pcl::PointXYZL>::Ptr cloud;
@@ -588,35 +588,12 @@ class MCDData {
       if (map_) map_->set_osm_fence_width(width_m);
     }
 
-    void set_osm_wall_width(float width_m) {
-      if (map_) map_->set_osm_wall_width(width_m);
-    }
-
-    void set_osm_pole_point_radius(float radius_m) {
-      if (map_) map_->set_osm_pole_point_radius(radius_m);
-    }
-
     void set_osm_parking(const std::vector<osm_bki::Geometry2D> &parking) {
       if (map_) map_->set_osm_parking(parking);
     }
 
     void set_osm_fences(const std::vector<osm_bki::Geometry2D> &fences) {
       if (map_) map_->set_osm_fences(fences);
-    }
-    void set_osm_walls(const std::vector<osm_bki::Geometry2D> &walls) {
-      if (map_) map_->set_osm_walls(walls);
-    }
-    void set_osm_stairs(const std::vector<osm_bki::Geometry2D> &stairs) {
-      if (map_) map_->set_osm_stairs(stairs);
-    }
-    void set_osm_water(const std::vector<osm_bki::Geometry2D> &water) {
-      if (map_) map_->set_osm_water(water);
-    }
-    void set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points) {
-      if (map_) map_->set_osm_pole_points(pole_points);
-    }
-    void set_osm_stairs_width(float width_m) {
-      if (map_) map_->set_osm_stairs_width(width_m);
     }
     void set_osm_decay_meters(float decay_m) {
       if (map_) map_->set_osm_decay_meters(decay_m);
@@ -652,10 +629,7 @@ class MCDData {
     ///     sidewalk_width_meters: ...
     ///     cycleway_width_meters: ...
     ///     fence_width_meters: ...
-    ///     wall_width_meters: ...
-    ///     stairs_width_meters: ...
     ///     tree_point_radius_meters: ...
-    ///     pole_point_radius_meters: ...
     ///     osm_decay_meters: ...
     bool load_osm_geometry_parameters(const std::string &yaml_path) {
       if (!map_) return false;
@@ -676,10 +650,7 @@ class MCDData {
         load_float("sidewalk_width_meters", [&](float v) { map_->set_osm_sidewalk_width(v); });
         load_float("cycleway_width_meters", [&](float v) { map_->set_osm_cycleway_width(v); });
         load_float("fence_width_meters", [&](float v) { map_->set_osm_fence_width(v); });
-        load_float("wall_width_meters", [&](float v) { map_->set_osm_wall_width(v); });
-        load_float("stairs_width_meters", [&](float v) { map_->set_osm_stairs_width(v); });
         load_float("tree_point_radius_meters", [&](float v) { map_->set_osm_tree_point_radius(v); });
-        load_float("pole_point_radius_meters", [&](float v) { map_->set_osm_pole_point_radius(v); });
         load_float("osm_decay_meters", [&](float v) { map_->set_osm_decay_meters(v); });
 
         if (loaded_any) {
@@ -710,17 +681,17 @@ class MCDData {
           max_row = std::max(max_row, it->second.as<int>());
         int n_rows = max_row + 1;
 
-        // Parse confusion matrix rows (keyed by common class ID)
-        // 14 columns: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, walls, stairs, water, poles, none]
-        static constexpr int N_OSM_COLS = 14;
-        std::vector<std::vector<float>> matrix(n_rows, std::vector<float>(N_OSM_COLS, 0.f));
+        // Parse confusion matrix rows (keyed by common class ID).
+        // Columns are the OSM prior categories defined in bkioctomap.h:
+        //   [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences, none]
+        std::vector<std::vector<float>> matrix(n_rows, std::vector<float>(osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS, 0.f));
         for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
           int common_class = it->first.as<int>();
           int row = -1;
           if (lm_node[common_class]) row = lm_node[common_class].as<int>();
           if (row < 0 || row >= n_rows) continue;
           auto vals = it->second;
-          for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
+          for (int c = 0; c < std::min(static_cast<int>(vals.size()), osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS); ++c)
             matrix[row][c] = vals[c].as<float>();
         }
 
@@ -736,7 +707,7 @@ class MCDData {
 
         map_->set_osm_confusion_matrix(matrix, row_to_labels);
         RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM confusion matrix loaded: " << n_rows << " rows x " << N_OSM_COLS << " cols");
+            "OSM confusion matrix loaded: " << n_rows << " rows x " << osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS << " cols");
         return true;
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
@@ -753,22 +724,21 @@ class MCDData {
         if (!root["osm_height_confusion_matrix"]) return false;
 
         auto cm_node = root["osm_height_confusion_matrix"];
-        static constexpr int N_OSM_COLS = 14;
         int max_bin = 0;
         for (auto it = cm_node.begin(); it != cm_node.end(); ++it)
           max_bin = std::max(max_bin, it->first.as<int>());
-        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(N_OSM_COLS, 0.f));
+        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS, 0.f));
         for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
           int bin_idx = it->first.as<int>();
           if (bin_idx < 1 || bin_idx > max_bin) continue;
           auto vals = it->second;
-          for (int c = 0; c < std::min(static_cast<int>(vals.size()), N_OSM_COLS); ++c)
+          for (int c = 0; c < std::min(static_cast<int>(vals.size()), osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS); ++c)
             matrix[bin_idx - 1][c] = vals[c].as<float>();
         }
         if (matrix.empty()) return false;
         map_->set_osm_height_confusion_matrix(matrix);
         RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << N_OSM_COLS << " cols");
+            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS << " cols");
         return true;
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
@@ -1237,11 +1207,11 @@ class MCDData {
           if (node.get_state() != osm_bki::State::OCCUPIED) continue;
           osm_bki::point3f p = it.get_loc();
           float size = it.get_size();
-          float building, road, grassland, tree, parking, fence, stairs;
-          map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland, tree, parking, fence, stairs);
+          float building, road, grassland, tree, parking, fence;
+          map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland, tree, parking, fence);
           if (mode == osm_bki::MapColorMode::OSMBlend) {
             osm_prior_map_pub_->insert_point3d_osm_blend(p.x(), p.y(), p.z(), size,
-                building, road, grassland, tree, parking, fence, stairs);
+                building, road, grassland, tree, parking, fence);
           } else {
             int prior_type = 0;
             float value = 0.f;
@@ -1252,7 +1222,6 @@ class MCDData {
               case osm_bki::MapColorMode::OSMTree:     prior_type = 3; value = tree; break;
               case osm_bki::MapColorMode::OSMParking:  prior_type = 4; value = parking; break;
               case osm_bki::MapColorMode::OSMFence:    prior_type = 5; value = fence; break;
-              case osm_bki::MapColorMode::OSStairs:    prior_type = 6; value = stairs; break;
               default: prior_type = 0; value = building; break;
             }
             osm_prior_map_pub_->insert_point3d_osm_prior(p.x(), p.y(), p.z(), size, value, prior_type);
