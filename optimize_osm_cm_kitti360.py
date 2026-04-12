@@ -434,7 +434,7 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
 
 OSM_COLUMNS = [
     "roads", "sidewalks", "cycleways", "parking", "grasslands", "trees", "forest",
-    "buildings", "fences", "none"
+    "buildings", "fences",
 ]
 N_OSM = len(OSM_COLUMNS)
 
@@ -728,7 +728,6 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
 
 def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     """Compute OSM prior vector for one grid cell. Uses Shapely if available."""
-    n_cats = len(cats)
     v = np.zeros(N_OSM, dtype=np.float32)
     if idx_shapely is not None:
         for ci, cat in enumerate(cats):
@@ -736,7 +735,6 @@ def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     else:
         for ci, cat in enumerate(cats):
             v[ci] = _compute_single_prior(cx, cy, geom, cat, decay_m, tree_radius)
-    v[n_cats] = max(0.0, 1.0 - v[:n_cats].max())
     return v
 
 
@@ -747,7 +745,7 @@ def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m,
     gy_min = int(np.floor((ymin - margin) / grid_res))
     gy_max = int(np.floor((ymax + margin) / grid_res))
     idx_shapely = _build_shapely_index(geom)
-    cats = [c for c in OSM_COLUMNS if c != "none"]
+    cats = list(OSM_COLUMNS)
     grid = {}
     for gx in range(gx_min, gx_max + 1):
         for gy in range(gy_min, gy_max + 1):
@@ -766,7 +764,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
     n = len(pts_xy)
     keys = np.floor(pts_xy / grid_res).astype(np.int64)
     osm_vecs = np.zeros((n, N_OSM), dtype=np.float32)
-    cats = [c for c in OSM_COLUMNS if c != "none"]
+    cats = list(OSM_COLUMNS)
 
     if precomputed_grid is not None:
         # Fast path: lookup only (rare fallback for points outside bbox)
@@ -779,7 +777,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
                 cy = (k[1] + 0.5) * grid_res
                 v = _compute_cell_prior(cx, cy, geom, osm_index, decay_m, tree_radius, cats)
                 precomputed_grid[k] = v  # cache for reuse
-            # Normalize so sum of priors (including 'none') is 1
+            # Normalize so the per-point OSM prior vector sums to 1 when any category fires.
             s = float(v.sum())
             if s > 1e-6:
                 osm_vecs[i] = v / s
@@ -799,7 +797,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
             cy = (k[1] + 0.5) * grid_res
             v = _compute_cell_prior(cx, cy, geom, idx, decay_m, tree_radius, cats)
             cache[k] = v
-        # Normalize so sum of priors (including 'none') is 1
+        # Normalize so the per-point OSM prior vector sums to 1 when any category fires.
         s = float(v.sum())
         if s > 1e-6:
             osm_vecs[i] = v / s
@@ -963,7 +961,6 @@ OSM_GT_COMPATIBLE = {
     6: {6},              # forest -> vegetation
     7: {4},              # buildings -> building
     8: {5},              # fences -> fence
-    9: set(range(N_CLASSES)),  # none -> all (neutral)
 }
 
 
@@ -1196,7 +1193,7 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         ix = int((xy[i, 0] - xmin) / grid_res)
         iy = int((xy[i, 1] - ymin) / grid_res)
         if 0 <= ix < nx and 0 <= iy < ny:
-            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i, :-1].max())  # exclude 'none'
+            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i].max())
     extent = (xmin, xmax, ymin, ymax)
     ax1.imshow(heatmap, origin="lower", extent=extent, aspect="auto",
                cmap="Greens", alpha=0.5, vmin=0, vmax=1)
@@ -1799,7 +1796,7 @@ def main():
         mask = all_gt == cls
         if mask.sum() == 0:
             continue
-        covered = (all_osm[mask, :-1].max(axis=1) > 0).mean() * 100  # exclude 'none'
+        covered = (all_osm[mask].max(axis=1) > 0).mean() * 100
         print(f"  {CLASS_NAMES[cls]:>14s}: {covered:5.1f}% of {mask.sum()} pts covered by OSM")
 
     geometry_params_out = dict(GEOM_PARAMS)
