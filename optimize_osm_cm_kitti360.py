@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Optimize the OSM confusion matrix for semantic-OSM prior fusion.
+Optimize the OSM confusion matrix for semantic-OSM prior fusion (KITTI-360 variant).
 
 Loads GT-labeled lidar scans, transforms them to map frame, queries OSM
 geometry for each voxel, then builds a co-occurrence matrix between GT
@@ -8,8 +8,11 @@ semantic classes and OSM categories.  The result is a new
 osm_confusion_matrix YAML that maximizes agreement between OSM priors
 and ground-truth labels.
 
+Supports both MCD and KITTI-360 pose formats (auto-detected from config
+``pose_format`` field or ``--pose-format`` flag).
+
 Usage:
-    python3 optimize_osm_cm.py [--config CONFIG_YAML] [--output OUTPUT_YAML]
+    python3 optimize_osm_cm_scaled_kitti360.py [--config CONFIG_YAML] [--output OUTPUT_YAML]
                                [--data-dir DATA_DIR] [--max-scans N] [--keyframe-dist D]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
@@ -20,16 +23,15 @@ Usage:
     --no-show             Save PNG only, do not block to show figure.
     --height-bins N       Number of per-scan height bins for osm_height_confusion_matrix (default: 20).
     --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
-    --max-iters N         Alternate prior/height optimization until convergence (default: 10).
-    --tol T               Convergence tolerance: stop when max abs change < T (default: 1e-4).
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
+    --pose-format FMT     Pose file format: "mcd" (CSV with quaternion) or "kitti360" (frame + 3x4/4x4 matrix).
 
     --data-dir DIR        Root directory for dataset (lidar, poses, labels, OSM). If not set,
                           uses data_root from config; if that is empty, uses <script_dir>/data/<dataset_name>.
 
-Defaults are read from config/methods/mcd.yaml relative to this script.
+Defaults are read from config/methods/kitti360.yaml relative to this script.
 """
 
 import argparse
@@ -298,19 +300,13 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             ways_coords[way.attrib["id"]] = coords
 
     buildings, roads, grasslands, trees_poly, forests = [], [], [], [], []
-    parking, fences, stairs, tree_points, pole_points = [], [], [], [], []
-    sidewalks, cycleways, walls, water = [], [], [], []
+    parking, fences, tree_points = [], [], []
+    sidewalks, cycleways = [], []
 
     for nd in root.iter("node"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in nd.iter("tag")}
         if tags.get("natural") == "tree":
             tree_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("highway") == "traffic_signals":
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("power") in ("pole", "tower"):
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
-        elif tags.get("man_made") in ("street_cabinet", "mast"):
-            pole_points.append(_latlon_to_xy(float(nd.attrib["lat"]), float(nd.attrib["lon"]), origin_lat, origin_lon))
 
     for way in root.iter("way"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in way.iter("tag")}
@@ -328,13 +324,7 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         if tags.get("barrier") == "fence":
             fences.append(coords)
             continue
-        if tags.get("barrier") == "wall" or tags.get("man_made") == "wall":
-            walls.append(coords)
-            continue
         hw = tags.get("highway", "")
-        if hw == "steps":
-            stairs.append(coords)
-            continue
         if hw in SIDEWALK_HIGHWAY_TYPES:
             sidewalks.append(coords)
             continue
@@ -343,9 +333,6 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             continue
         if hw in ROAD_HIGHWAY_TYPES:
             roads.append(coords)
-            continue
-        if tags.get("natural") == "water" and len(coords) >= 3 and coords[0] == coords[-1]:
-            water.append((coords, []))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -394,14 +381,11 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             forests.extend(polys)
         elif tags.get("landcover") == "trees":
             trees_poly.extend(polys)
-        elif tags.get("natural") == "water":
-            water.extend(polys)
 
     return dict(buildings=buildings, roads=roads, grasslands=grasslands,
                 trees=trees_poly, forests=forests, parking=parking,
-                fences=fences, stairs=stairs, tree_points=tree_points,
-                sidewalks=sidewalks, cycleways=cycleways, walls=walls, water=water,
-                pole_points=pole_points)
+                fences=fences, tree_points=tree_points,
+                sidewalks=sidewalks, cycleways=cycleways)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -429,9 +413,9 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     """
     out = {}
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+                "parking", "fences", "sidewalks", "cycleways"):
         out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
-    for pt_key in ("tree_points", "pole_points"):
+    for pt_key in ("tree_points",):
         pts = geom.get(pt_key, [])
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
@@ -448,7 +432,7 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
 
 OSM_COLUMNS = [
     "roads", "sidewalks", "cycleways", "parking", "grasslands", "trees", "forest",
-    "buildings", "fences", "walls", "stairs", "water", "poles", "none"
+    "buildings", "fences",
 ]
 N_OSM = len(OSM_COLUMNS)
 
@@ -457,10 +441,7 @@ DEFAULT_OSM_GEOMETRY_PARAMS = {
     "sidewalk_width_meters": 10.0,
     "cycleway_width_meters": 2.0,
     "fence_width_meters": 0.6,
-    "wall_width_meters": 0.8,
-    "stairs_width_meters": 10.0,
     "tree_point_radius_meters": 5.0,
-    "pole_point_radius_meters": 2.0,
 }
 GEOM_PARAMS = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
 
@@ -472,14 +453,14 @@ def _build_shapely_index(geom):
     """Build Shapely geometries + STRtrees for fast spatial queries. Returns dict or None if Shapely unavailable."""
     if not SHAPELY_AVAILABLE:
         return None
-    idx = {"geom": geom, "tree_points": geom.get("tree_points", []), "pole_points": geom.get("pole_points", [])}
-    for cat in ("roads", "sidewalks", "cycleways", "fences", "walls", "stairs"):
+    idx = {"geom": geom, "tree_points": geom.get("tree_points", [])}
+    for cat in ("roads", "sidewalks", "cycleways", "fences"):
         geoms = []
         for coords in geom.get(cat, []):
             if len(coords) >= 2:
                 geoms.append(LineString(coords))
         idx[cat] = (STRtree(geoms), geoms) if geoms else (None, [])
-    for cat in ("buildings", "grasslands", "trees", "forests", "parking", "water"):
+    for cat in ("buildings", "grasslands", "trees", "forests", "parking"):
         geoms = []
         for poly in geom.get(cat, []):
             outer = _poly_outer(poly)
@@ -671,51 +652,6 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
                 min_sd = sd
         return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
 
-    elif cat == "stairs":
-        half_w = 0.5 * GEOM_PARAMS["stairs_width_meters"]
-        min_sd = float("inf")
-        for g in _query_candidates(idx, "stairs", x, y):
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
-
-    elif cat == "walls":
-        half_w = 0.5 * GEOM_PARAMS["wall_width_meters"]
-        min_sd = float("inf")
-        for g in _query_candidates(idx, "walls", x, y):
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
-
-    elif cat == "water":
-        min_d = float("inf")
-        for g in _query_candidates(idx, "water", x, y):
-            sd, ok = _shapely_signed_distance(g, pt)
-            if not ok:
-                continue
-            if sd <= 0:
-                return 1.0
-            if sd < min_d:
-                min_d = sd
-        return _prior_signed(min_d) if min_d != float("inf") else 0.0
-
-    elif cat == "poles":
-        max_p = 0.0
-        pole_radius = GEOM_PARAMS["pole_point_radius_meters"]
-        for cx, cy in idx.get("pole_points", []):
-            d_center = math.sqrt((x - cx) ** 2 + (y - cy) ** 2)
-            sd = d_center - pole_radius
-            p = _prior_signed(sd)
-            if p > max_p:
-                max_p = p
-        return max_p
-
     return 0.0
 
 
@@ -785,34 +721,11 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
         return osm_prior_from_signed_distance(min_d, decay_m)
     elif cat == "fences":
         return _line_prior("fences", GEOM_PARAMS["fence_width_meters"])
-    elif cat == "stairs":
-        return _line_prior("stairs", GEOM_PARAMS["stairs_width_meters"])
-    elif cat == "walls":
-        return _line_prior("walls", GEOM_PARAMS["wall_width_meters"])
-    elif cat == "water":
-        min_d = float("inf")
-        for poly in geom.get("water", []):
-            sd = distance_to_polygon_boundary(x, y, poly)
-            if sd <= 0:
-                return 1.0
-            if sd < min_d:
-                min_d = sd
-        return osm_prior_from_signed_distance(min_d, decay_m)
-    elif cat == "poles":
-        max_p = 0.0
-        pole_radius = GEOM_PARAMS["pole_point_radius_meters"]
-        for cx, cy in geom.get("pole_points", []):
-            d = math.sqrt((x - cx) ** 2 + (y - cy) ** 2) - pole_radius
-            p = osm_prior_from_signed_distance(d, decay_m)
-            if p > max_p:
-                max_p = p
-        return max_p
     return 0.0
 
 
 def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     """Compute OSM prior vector for one grid cell. Uses Shapely if available."""
-    n_cats = len(cats)
     v = np.zeros(N_OSM, dtype=np.float32)
     if idx_shapely is not None:
         for ci, cat in enumerate(cats):
@@ -820,7 +733,6 @@ def _compute_cell_prior(cx, cy, geom, idx_shapely, decay_m, tree_radius, cats):
     else:
         for ci, cat in enumerate(cats):
             v[ci] = _compute_single_prior(cx, cy, geom, cat, decay_m, tree_radius)
-    v[n_cats] = max(0.0, 1.0 - v[:n_cats].max())
     return v
 
 
@@ -831,7 +743,7 @@ def precompute_osm_grid(geom, xmin, xmax, ymin, ymax, margin, grid_res, decay_m,
     gy_min = int(np.floor((ymin - margin) / grid_res))
     gy_max = int(np.floor((ymax + margin) / grid_res))
     idx_shapely = _build_shapely_index(geom)
-    cats = [c for c in OSM_COLUMNS if c != "none"]
+    cats = list(OSM_COLUMNS)
     grid = {}
     for gx in range(gx_min, gx_max + 1):
         for gy in range(gy_min, gy_max + 1):
@@ -850,7 +762,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
     n = len(pts_xy)
     keys = np.floor(pts_xy / grid_res).astype(np.int64)
     osm_vecs = np.zeros((n, N_OSM), dtype=np.float32)
-    cats = [c for c in OSM_COLUMNS if c != "none"]
+    cats = list(OSM_COLUMNS)
 
     if precomputed_grid is not None:
         # Fast path: lookup only (rare fallback for points outside bbox)
@@ -863,7 +775,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
                 cy = (k[1] + 0.5) * grid_res
                 v = _compute_cell_prior(cx, cy, geom, osm_index, decay_m, tree_radius, cats)
                 precomputed_grid[k] = v  # cache for reuse
-            # Normalize so sum of priors (including 'none') is 1
+            # Normalize so the per-point OSM prior vector sums to 1 when any category fires.
             s = float(v.sum())
             if s > 1e-6:
                 osm_vecs[i] = v / s
@@ -883,7 +795,7 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
             cy = (k[1] + 0.5) * grid_res
             v = _compute_cell_prior(cx, cy, geom, idx, decay_m, tree_radius, cats)
             cache[k] = v
-        # Normalize so sum of priors (including 'none') is 1
+        # Normalize so the per-point OSM prior vector sums to 1 when any category fires.
         s = float(v.sum())
         if s > 1e-6:
             osm_vecs[i] = v / s
@@ -896,7 +808,8 @@ def build_osm_grid(pts_xy, geom, decay_m, tree_radius, grid_res=2.0, precomputed
 # 4. Data loaders
 # ═══════════════════════════════════════════════════════════════════
 
-def load_poses(csv_path):
+def load_poses_mcd(csv_path):
+    """Load MCD-format poses: CSV with num, timestamp, x, y, z, qx, qy, qz, qw."""
     from scipy.spatial.transform import Rotation
     poses = []
     with open(csv_path) as f:
@@ -923,6 +836,43 @@ def load_poses(csv_path):
             T[:3, 3] = [x, y, z]
             poses.append((idx, T))
     return poses
+
+
+def load_poses_kitti360(pose_path):
+    """Load KITTI-360 velodyne_poses.txt: each line has frame_index then 12 or 16 floats (3x4 or 4x4 row-major)."""
+    poses = []
+    with open(pose_path) as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            try:
+                frame_index = int(parts[0])
+            except ValueError:
+                continue
+            values = []
+            for tok in parts[1:]:
+                try:
+                    values.append(float(tok))
+                except ValueError:
+                    continue
+            if len(values) == 12:
+                T = np.eye(4, dtype=np.float64)
+                T[:3, :4] = np.array(values).reshape(3, 4)
+            elif len(values) == 16:
+                T = np.array(values, dtype=np.float64).reshape(4, 4)
+            else:
+                continue
+            poses.append((frame_index, T))
+    return poses
+
+
+def load_poses(pose_path, pose_format="mcd"):
+    """Load poses using the appropriate format loader."""
+    if pose_format == "kitti360":
+        return load_poses_kitti360(pose_path)
+    else:
+        return load_poses_mcd(pose_path)
 
 
 def load_calibration(calib_path):
@@ -968,7 +918,19 @@ def read_scan_bin(path):
     return np.fromfile(path, dtype=np.float32).reshape(-1, 4)
 
 
-def read_label_bin(path):
+def read_label_bin(path, n_points_hint=None):
+    """Read label .bin file. Auto-detects uint16 vs uint32 based on file size and point count hint."""
+    file_size = os.path.getsize(path)
+    if n_points_hint is not None and n_points_hint > 0:
+        if file_size == n_points_hint * 2:
+            return np.fromfile(path, dtype=np.uint16).astype(np.uint32)
+        if file_size == n_points_hint * 4:
+            return np.fromfile(path, dtype=np.uint32)
+    # Fallback: try uint32 first, if that gives 0 labels try uint16
+    if file_size % 4 == 0:
+        return np.fromfile(path, dtype=np.uint32)
+    elif file_size % 2 == 0:
+        return np.fromfile(path, dtype=np.uint16).astype(np.uint32)
     return np.fromfile(path, dtype=np.uint32)
 
 
@@ -976,31 +938,27 @@ def read_label_bin(path):
 # 5. Co-occurrence analysis
 # ═══════════════════════════════════════════════════════════════════
 
-N_CLASSES = 13
+N_CLASSES = 9
 CLASS_NAMES = [
-    "unlabeled", "road", "sidewalk", "parking", "other-ground",
-    "building", "fence", "pole", "traffic-sign", "vegetation",
-    "two-wheeler", "vehicle", "other-object",
+    "unlabeled", "road", "sidewalk", "parking", "building",
+    "fence", "vegetation", "vehicle", "terrain",
 ]
 
 
-# OSM column index -> set of GT common classes compatible with that OSM category.
+# OSM column index -> set of common GT classes compatible with that OSM category.
 # Used for inferred-row: only count OSM evidence when GT aligns (to learn correction).
+# Common taxonomy: 0=unlabeled, 1=road, 2=sidewalk, 3=parking, 4=building,
+# 5=fence, 6=vegetation, 7=vehicle, 8=terrain.
 OSM_GT_COMPATIBLE = {
-    0: {1, 2},           # roads -> road, sidewalk
+    0: {1},              # roads -> road
     1: {2},              # sidewalks -> sidewalk
-    2: {10},             # cycleways -> two-wheeler
+    2: {1, 2},           # cycleways -> road, sidewalk
     3: {3},              # parking -> parking
-    4: {4, 9},           # grasslands -> other-ground, vegetation
-    5: {9},              # trees -> vegetation
-    6: {9},              # forest -> vegetation
-    7: {5},              # buildings -> building
-    8: {6},              # fences -> fence
-    9: {6, 4},           # walls -> fence, other-ground (retaining walls)
-    10: {4},             # stairs -> other-ground
-    11: {4},             # water -> other-ground
-    12: {7, 8},          # poles -> pole, traffic-sign
-    13: set(range(13)),  # none -> all (neutral)
+    4: {6, 8},           # grasslands -> vegetation, terrain
+    5: {6},              # trees -> vegetation
+    6: {6},              # forest -> vegetation
+    7: {4},              # buildings -> building
+    8: {5},              # fences -> fence
 }
 
 
@@ -1034,39 +992,35 @@ def build_cooccurrence_inferred(inferred_labels, gt_labels, osm_vecs):
     return counts, class_totals
 
 
-def derive_matrix(counts, class_totals, positive_only=False, scale_by_class_points=True):
-    """Derive 12xN_OSM matrix from co-occurrence (rows = classes 1..12).
+def derive_matrix(counts, class_totals, scale_by_class_points=True):
+    """Derive (N_CLASSES-1) x N_OSM matrix from co-occurrence (rows = classes 1..N_CLASSES-1).
 
-    If positive_only=True, values are in [0, 1] (boost only, no suppression).
-    Otherwise values are in [-1, 1] (positive=boost, negative=suppress).
+    Entries are non-negative and each column sums to 1, i.e. matrix[c-1, j] is
+    P(class=c | osm_col=j) restricted to classes 1..N_CLASSES-1 (excluding unlabeled).
 
     If scale_by_class_points=True, each row is weighted by the number of GT points
     for that class before column normalization, so classes with more points have
     proportionally more influence in the final matrix.
     """
+    n_rows = N_CLASSES - 1
     total_points = class_totals.sum()
     if total_points == 0:
-        return np.zeros((12, N_OSM))
+        return np.zeros((n_rows, N_OSM))
     col_totals = counts.sum(axis=0)
-    matrix = np.zeros((12, N_OSM))
-    for ri, cls in enumerate(range(1, 13)):
+    matrix = np.zeros((n_rows, N_OSM))
+    for ri, cls in enumerate(range(1, N_CLASSES)):
         p_cls = class_totals[cls] / total_points
         for j in range(N_OSM):
             if col_totals[j] < 1.0 or p_cls < 1e-8:
                 matrix[ri][j] = 0.0
             else:
                 p_cls_given_osm = counts[cls][j] / col_totals[j]
-                raw = np.clip(p_cls_given_osm / p_cls - 1.0, -1.0, 1.0)
-                if positive_only:
-                    # Rescale [-1, 1] -> [0, 1]: positive = boost, negative -> 0 (no suppression)
-                    matrix[ri][j] = max(0.0, raw)
-                else:
-                    matrix[ri][j] = raw
+                matrix[ri][j] = max(0.0, p_cls_given_osm / p_cls - 1.0)
     if scale_by_class_points:
-        for ri, cls in enumerate(range(1, 13)):
+        for ri, cls in enumerate(range(1, N_CLASSES)):
             if class_totals[cls] > 1e-10:
                 matrix[ri, :] *= class_totals[cls]
-    # Normalize so each column sums to 1
+    # Per-column probability normalization: each column sums to 1.
     for j in range(N_OSM):
         col_sum = matrix[:, j].sum()
         if col_sum > 1e-10:
@@ -1088,101 +1042,62 @@ def _z_range_per_scan(z, z_low_percentile=0.0, z_high_percentile=100.0):
     return min_z, max_z
 
 
-def apply_height_filter(scan_data_list, height_matrix, num_bins, include_inferred=False,
-                         z_low_percentile=0.0, z_high_percentile=100.0):
-    """Apply height matrix to osm_vecs and concatenate. Returns (all_gt, effective_osm) or
-    (all_gt, effective_osm, all_inferred) if include_inferred and scan_data has 4-tuples.
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those percentiles
-    so outliers in Z do not stretch the bin extent."""
-    gt_list, osm_list = [], []
-    inf_list = [] if include_inferred else None
-    for item in scan_data_list:
-        if include_inferred and len(item) == 4:
-            map_pts, gt, osm, inf = item
-        else:
-            map_pts, gt, osm = item[:3]
-            inf = None
-        z = map_pts[:, 2]
-        min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
-        z_range = max_z - min_z + 1e-6
-        bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
-        effective = osm.copy()
-        for i in range(len(gt)):
-            b = int(bins[i])
-            effective[i] = osm[i] * height_matrix[b]
-        gt_list.append(gt)
-        osm_list.append(effective)
-        if include_inferred and inf is not None:
-            inf_list.append(inf)
-    all_gt = np.concatenate(gt_list)
-    effective_osm = np.concatenate(osm_list)
-    if include_inferred and inf_list:
-        return all_gt, effective_osm, np.concatenate(inf_list)
-    return all_gt, effective_osm
+def build_cooccurrence_height_class(scan_data_list, num_bins=20,
+                                    z_low_percentile=0.0, z_high_percentile=100.0):
+    """Per-scan height bins: counts_h[bin][class_idx] accumulates weighted counts of GT
+    points in each bin, indexed by common class (1..N_CLASSES-1 mapped to 0..N_CLASSES-2).
 
-
-def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None,
-                              z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan height bins: for each (bin, OSM_col), accumulate weighted counts.
-    scan_data_list: list of (map_pts, gt_common, osm_vecs) or 4-tuples with inferred.
-    counts_h[bin][col] = sum of osm_vec[col] weighted by compatibility (prior or binary).
-    totals_h[bin][col] = sum of osm_vec[col] over all points in bin (with prior > threshold).
-
-    When prior_matrix is given: weight by max(0, prior_matrix[gt_row][col]) - height step
-    depends on prior, favoring (bin,col) where prior strongly boosts the correct class.
-    When prior_matrix is None: use binary OSM_GT_COMPATIBLE (original behavior).
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those percentiles
-    so outliers in Z do not stretch the bin extent."""
-    counts_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
-    totals_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
-    osm_thresh = 0.01
-    use_prior = prior_matrix is not None and prior_matrix.shape >= (12, N_OSM)
+    Each GT point contributes a weight equal to its OSM prior sum (points where OSM is
+    silent contribute less, so bins dominated by uninformative points don't skew the
+    per-class height histogram). Points with OSM sum == 0 contribute a fallback weight of 1.
+    When z_low_percentile / z_high_percentile are set, Z range per scan uses those
+    percentiles so outliers in Z do not stretch the bin extent."""
+    n_rows = N_CLASSES - 1
+    counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
     for item in scan_data_list:
         map_pts, gt, osm = item[:3]
         z = map_pts[:, 2]
         min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
         z_range = max_z - min_z + 1e-6
         bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
+        osm_sums = osm.sum(axis=1)
         for i in range(len(gt)):
-            b = int(bins[i])
             c = int(gt[i])
-            for j in range(N_OSM):
-                if osm[i, j] < osm_thresh:
-                    continue
-                totals_h[b, j] += osm[i, j]
-                if use_prior:
-                    if 1 <= c <= 12:
-                        w = max(0.0, prior_matrix[c - 1, j])
-                        counts_h[b, j] += osm[i, j] * w
-                else:
-                    if c in OSM_GT_COMPATIBLE.get(j, set()):
-                        counts_h[b, j] += osm[i, j]
-    return counts_h, totals_h
+            if not (1 <= c < N_CLASSES):
+                continue
+            b = int(bins[i])
+            w = float(osm_sums[i])
+            if w <= 0.0:
+                w = 1.0
+            counts_h[b, c - 1] += w
+    return counts_h
 
 
-def derive_height_matrix(counts_h, totals_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
-    """Derive height confusion matrix: matrix[bin][col] = trust multiplier in [0, 1].
-    When totals_h[bin][col] is negligible, use 1.0 (neutral).
-    Outliers are removed by clipping each column to [low_percentile, high_percentile] of that column."""
-    matrix = np.zeros((num_bins, N_OSM))
-    for b in range(num_bins):
-        for j in range(N_OSM):
-            if totals_h[b, j] < 1e-6:
-                matrix[b, j] = 1.0
-            else:
-                matrix[b, j] = np.clip(counts_h[b, j] / totals_h[b, j], 0.0, 1.0)
-    # Remove outliers: per-column clip to percentile range
-    for j in range(N_OSM):
-        col = matrix[:, j]
+def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
+    """Derive class-indexed height trust matrix: H[bin][class_idx] in [0, 1].
+
+    For each common class c (column), H[:, c-1] is the bin-histogram of class c points
+    normalized so that the peak bin equals 1.0. A high value means "class c is typical
+    at this height"; a low value means "unusual for class c at this height". Classes
+    with no observations are set to neutral (1.0).
+
+    Outliers are smoothed by clipping each column to [low_percentile, high_percentile]
+    of that column's values before the final per-column max-normalization."""
+    n_rows = counts_h.shape[1]
+    matrix = np.zeros((num_bins, n_rows))
+    for c in range(n_rows):
+        col = counts_h[:, c].astype(np.float64)
+        if col.sum() <= 1e-10:
+            matrix[:, c] = 1.0
+            continue
         lo = np.percentile(col, low_percentile)
         hi = np.percentile(col, high_percentile)
-        matrix[:, j] = np.clip(col, lo, hi)
-    # Ensure each column has maximum exactly 1.0 (scale so max = 1.0) and no value exceeds 1.0
-    for j in range(N_OSM):
-        col = matrix[:, j]
-        max_val = float(np.max(col))
-        if max_val > 1e-10:
-            matrix[:, j] = col / max_val
+        col = np.clip(col, lo, hi)
+        peak = float(col.max())
+        if peak > 1e-10:
+            matrix[:, c] = col / peak
+        else:
+            matrix[:, c] = 1.0
     matrix = np.clip(matrix, 0.0, 1.0)
     return matrix
 
@@ -1237,7 +1152,7 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         ix = int((xy[i, 0] - xmin) / grid_res)
         iy = int((xy[i, 1] - ymin) / grid_res)
         if 0 <= ix < nx and 0 <= iy < ny:
-            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i, :-1].max())  # exclude 'none'
+            heatmap[iy, ix] = max(heatmap[iy, ix], osm[i].max())
     extent = (xmin, xmax, ymin, ymax)
     ax1.imshow(heatmap, origin="lower", extent=extent, aspect="auto",
                cmap="Greens", alpha=0.5, vmin=0, vmax=1)
@@ -1325,11 +1240,11 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 
     ax.set_xticks(range(N_OSM))
     ax.set_xticklabels(OSM_COLUMNS, rotation=45, ha="right")
-    ax.set_yticks(range(12))
-    ax.set_yticklabels([CLASS_NAMES[i + 1] for i in range(12)])
+    ax.set_yticks(range(N_CLASSES - 1))
+    ax.set_yticklabels([CLASS_NAMES[i + 1] for i in range(N_CLASSES - 1)])
 
     # Add value annotations
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         for j in range(N_OSM):
             v = matrix[i, j]
             text_color = "white" if abs(v) > 0.5 else "black"
@@ -1355,40 +1270,41 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 # 7. YAML output
 # ═══════════════════════════════════════════════════════════════════
 
-def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=None, geometry_params=None):
-    if positive_only:
-        val_comment = "# Values in [0.0, 1.0]: boost only (no suppression)."
-    else:
-        val_comment = "# Values in [-1.0, 1.0]: positive = boost, negative = suppress, 0 = neutral."
+def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None):
+    val_comment = "# Values in [0.0, 1.0]: each column is a probability distribution that sums to 1."
     cols_str = ", ".join(OSM_COLUMNS)
+    n_rows = N_CLASSES - 1
+    class_legend = ", ".join(f"{i+1}: {CLASS_NAMES[i+1]}" for i in range(n_rows))
     lines = [
         "# Optimized OSM confusion matrix (derived from GT co-occurrence analysis).",
-        "# Rows  = common taxonomy semantic classes (1-12).",
+        f"# Rows  = common taxonomy semantic classes (1-{n_rows}).",
         f"# Cols  = OSM prior categories: [{cols_str}]",
         val_comment,
         "#",
         "# Common taxonomy:",
-        "#   1: road, 2: sidewalk, 3: parking, 4: other-ground, 5: building,",
-        "#   6: fence, 7: pole, 8: traffic-sign, 9: vegetation, 10: two-wheeler,",
-        "#   11: vehicle, 12: other-object",
+        f"#   {class_legend}",
         "",
         f"osm_prior_columns: [{cols_str}]",
         "",
         "confusion_matrix:",
     ]
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = ", ".join(f"{matrix[i, j]:6.2f}" for j in range(N_OSM))
         lines.append(f"  {i+1}:  [{vals}]   # {CLASS_NAMES[i+1]}")
     if height_matrix is not None:
         n_bins = height_matrix.shape[0]
+        n_class_cols = height_matrix.shape[1]
+        class_cols_str = ", ".join(CLASS_NAMES[i + 1] for i in range(n_class_cols))
         lines += [
             "",
-            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins (1=lowest, "
-            f"{n_bins}=highest). Cols = OSM categories. Multipliers in [0, 1].",
+            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins "
+            f"(1=lowest, {n_bins}=highest). Cols = common-taxonomy classes 1..{n_class_cols}: "
+            f"[{class_cols_str}]. Multipliers in [0, 1] applied to p_super[class] after the "
+            "OSM→common projection.",
             "osm_height_confusion_matrix:",
         ]
         for b in range(n_bins):
-            vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(N_OSM))
+            vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(n_class_cols))
             lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} Height")
     lines += [
         "", "osm_class_map:",
@@ -1404,14 +1320,11 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
             f"  sidewalk_width_meters: {geometry_params['sidewalk_width_meters']:.3f}",
             f"  cycleway_width_meters: {geometry_params['cycleway_width_meters']:.3f}",
             f"  fence_width_meters: {geometry_params['fence_width_meters']:.3f}",
-            f"  wall_width_meters: {geometry_params['wall_width_meters']:.3f}",
-            f"  stairs_width_meters: {geometry_params['stairs_width_meters']:.3f}",
             f"  tree_point_radius_meters: {geometry_params['tree_point_radius_meters']:.3f}",
-            f"  pole_point_radius_meters: {geometry_params['pole_point_radius_meters']:.3f}",
         ]
     lines += [
         "", "label_to_matrix_idx:",
-        *[f"  {i+1}: {i}" for i in range(12)],
+        *[f"  {i+1}: {i}" for i in range(N_CLASSES - 1)],
         "",
     ]
     with open(output_path, "w") as f:
@@ -1423,24 +1336,21 @@ def write_osm_cm_yaml(matrix, output_path, positive_only=False, height_matrix=No
 # ═══════════════════════════════════════════════════════════════════
 
 def main():
-    parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data.")
-    parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/mcd.yaml"))
-    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized.yaml"))
+    parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data (KITTI-360).")
+    parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/kitti360.yaml"))
+    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_kitti360.yaml"))
     parser.add_argument("--data-dir", type=str, default=None,
                         help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
     parser.add_argument("--max-scans", type=int, default=50000)
     parser.add_argument("--keyframe-dist", type=float, default=1.0,
                         help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
     parser.add_argument("--decay", type=float, default=0.0)
-    parser.add_argument("--tree-radius", type=float, default=6.0)
-    parser.add_argument("--pole-radius", type=float, default=2.0)
-    parser.add_argument("--road-width", type=float, default=8.0)
-    parser.add_argument("--sidewalk-width", type=float, default=8.0)
-    parser.add_argument("--cycleway-width", type=float, default=8.0)
+    parser.add_argument("--tree-radius", type=float, default=4.0)
+    parser.add_argument("--road-width", type=float, default=4.0)
+    parser.add_argument("--sidewalk-width", type=float, default=2.0)
+    parser.add_argument("--cycleway-width", type=float, default=2.0)
     parser.add_argument("--fence-width", type=float, default=0.6)
-    parser.add_argument("--wall-width", type=float, default=0.8)
-    parser.add_argument("--stairs-width", type=float, default=10.0)
-    parser.add_argument("--grid-res", type=float, default=0.25,
+    parser.add_argument("--grid-res", type=float, default=2.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
@@ -1458,8 +1368,11 @@ def main():
                         help="Override input_label_prefix (e.g. kth_day_09/inferred_labels/cenet_mcd_EDL/multiclass_confidence_scores)")
     parser.add_argument("--inferred-key", type=str, default=None,
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
-    parser.add_argument("--positive-only", action="store_true",
-                        help="Output matrix with values in [0, 1] only (boost, no suppression)")
+    parser.add_argument("--pose-format", type=str, default=None,
+                        help="Pose file format: 'mcd' (CSV with quaternion) or 'kitti360' (frame + 3x4/4x4). "
+                             "Auto-detected from config pose_format if not set.")
+    parser.add_argument("--sequence", type=str, default=None,
+                        help="Override sequence_name from config (e.g. 2013_05_28_drive_0009_sync)")
     parser.add_argument("--scale-by-class-points", action="store_true", default=True,
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
@@ -1472,10 +1385,6 @@ def main():
                         help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
-    parser.add_argument("--max-iters", type=int, default=10,
-                        help="Max iterations for alternating prior/height optimization (default: 10)")
-    parser.add_argument("--tol", type=float, default=1e-4,
-                        help="Convergence tolerance: stop when max abs change < tol (default: 1e-4)")
     parser.add_argument("--flip-height-axis", action="store_true",
                         help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
     args = parser.parse_args()
@@ -1489,9 +1398,10 @@ def main():
     elif "ros__parameters" in cfg:
         cfg = cfg["ros__parameters"]
 
-    # Resolve paths from sequence_name + suffix when present (matches config/methods/mcd.yaml)
-    seq = cfg.get("sequence_name")
+    # Resolve paths from sequence_name + suffix when present
+    seq = args.sequence if args.sequence else cfg.get("sequence_name")
     if seq:
+        print(f"Sequence: {seq}")
         if cfg.get("lidar_pose_suffix"):
             cfg["lidar_pose_file"] = f"{seq}/{cfg['lidar_pose_suffix']}"
         if cfg.get("input_data_suffix"):
@@ -1501,28 +1411,42 @@ def main():
         if cfg.get("input_label_suffix"):
             cfg["input_label_prefix"] = f"{seq}/{cfg['input_label_suffix']}"
 
+    # Pose format: CLI override > config > auto-detect
+    pose_format = args.pose_format if args.pose_format else cfg.get("pose_format", "mcd")
+    print(f"Pose format: {pose_format}")
+
     # Data directory: --data-dir override, else data_root from config, else package data/<dataset_name>
     if args.data_dir is not None and args.data_dir.strip():
         data_dir = os.path.abspath(args.data_dir.strip())
     else:
         data_root = (cfg.get("data_root") or "").strip()
-        dataset_name = cfg.get("dataset_name", "mcd")
+        dataset_name = cfg.get("dataset_name", "kitti360")
         if data_root:
             data_dir = os.path.join(data_root, dataset_name)
         else:
             data_dir = os.path.join(SCRIPT_DIR, "data", dataset_name)
     print(f"Using data directory: {data_dir}")
     pose_file = os.path.join(data_dir, cfg["lidar_pose_file"])
-    gt_label_dir = os.path.join(data_dir, cfg.get("gt_label_prefix", "kth_day_09/gt_labels"))
-    gt_labels_key = cfg.get("gt_labels_key", "mcd")
-    scan_dir = os.path.join(data_dir, cfg.get("input_data_prefix", "kth_day_09/lidar_bin/data"))
+    gt_label_dir = os.path.join(data_dir, cfg.get("gt_label_prefix", f"{seq}/gt_labels" if seq else "gt_labels"))
+    gt_labels_key = cfg.get("gt_labels_key", "kitti360")
+    scan_dir = os.path.join(data_dir, cfg.get("input_data_prefix", f"{seq}/velodyne_points/data" if seq else "velodyne_points/data"))
     inferred_label_prefix = args.inferred_prefix if args.inferred_prefix else cfg.get(
-        "input_label_prefix", "kth_day_09/inferred_labels/cenet_semkitti/multiclass_confidence_scores"
+        "input_label_prefix", f"{seq}/inferred_labels/cenet_mcd/multiclass_confidence_scores" if seq else "inferred_labels/cenet_mcd/multiclass_confidence_scores"
     )
-    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "semkitti")
+    inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "mcd")
     inferred_use_multiclass = cfg.get("inferred_use_multiclass", True)
+
+    # Calibration: KITTI-360 poses are already in world frame (identity transform)
     calib_file = os.path.join(data_dir, "hhs_calib.yaml")
-    osm_file = os.path.join(data_dir, cfg.get("osm_file", "kth_large.osm"))
+    use_identity_calib = (pose_format == "kitti360") or not os.path.isfile(calib_file)
+
+    # OSM file: check if osm_in_sequence_dir is set (KITTI-360 stores OSM per sequence)
+    osm_in_seq = cfg.get("osm_in_sequence_dir", pose_format == "kitti360")
+    osm_filename = cfg.get("osm_file", "map_0009.osm")
+    if osm_in_seq and seq:
+        osm_file = os.path.join(data_dir, seq, osm_filename)
+    else:
+        osm_file = os.path.join(data_dir, osm_filename)
     origin_lat = cfg.get("osm_origin_lat", 0.0)
     origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
@@ -1531,15 +1455,10 @@ def main():
     geom_params_cfg["tree_point_radius_meters"] = cfg.get(
         "osm_tree_point_radius_meters", geom_params_cfg["tree_point_radius_meters"]
     )
-    geom_params_cfg["stairs_width_meters"] = cfg.get(
-        "stairs_width_meters", geom_params_cfg["stairs_width_meters"]
-    )
     geom_params_cfg["road_width_meters"] = cfg.get("road_width_meters", geom_params_cfg["road_width_meters"])
     geom_params_cfg["sidewalk_width_meters"] = cfg.get("sidewalk_width_meters", geom_params_cfg["sidewalk_width_meters"])
     geom_params_cfg["cycleway_width_meters"] = cfg.get("cycleway_width_meters", geom_params_cfg["cycleway_width_meters"])
     geom_params_cfg["fence_width_meters"] = cfg.get("fence_width_meters", geom_params_cfg["fence_width_meters"])
-    geom_params_cfg["wall_width_meters"] = cfg.get("wall_width_meters", geom_params_cfg["wall_width_meters"])
-    geom_params_cfg["pole_point_radius_meters"] = cfg.get("pole_point_radius_meters", geom_params_cfg["pole_point_radius_meters"])
 
     if args.road_width is not None:
         geom_params_cfg["road_width_meters"] = args.road_width
@@ -1549,12 +1468,6 @@ def main():
         geom_params_cfg["cycleway_width_meters"] = args.cycleway_width
     if args.fence_width is not None:
         geom_params_cfg["fence_width_meters"] = args.fence_width
-    if args.wall_width is not None:
-        geom_params_cfg["wall_width_meters"] = args.wall_width
-    if args.stairs_width is not None:
-        geom_params_cfg["stairs_width_meters"] = args.stairs_width
-    if args.pole_radius is not None:
-        geom_params_cfg["pole_point_radius_meters"] = args.pole_radius
     if args.tree_radius is not None:
         geom_params_cfg["tree_point_radius_meters"] = args.tree_radius
 
@@ -1566,10 +1479,7 @@ def main():
         "sidewalk_width_meters",
         "cycleway_width_meters",
         "fence_width_meters",
-        "wall_width_meters",
-        "stairs_width_meters",
         "tree_point_radius_meters",
-        "pole_point_radius_meters",
     ):
         print(f"  {k}: {GEOM_PARAMS[k]:.3f}")
     keyframe_dist = args.keyframe_dist if args.keyframe_dist is not None else cfg.get("keyframe_dist", 0.0)
@@ -1588,8 +1498,8 @@ def main():
         inferred_label_dir = os.path.join(data_dir, inferred_label_prefix)
         print(f"Inferred-row mode: using {inferred_label_prefix} (key={inferred_labels_key}, multiclass={inferred_use_multiclass})")
 
-    print(f"Loading poses from {pose_file}")
-    poses = load_poses(pose_file)
+    print(f"Loading poses from {pose_file} (format={pose_format})")
+    poses = load_poses(pose_file, pose_format=pose_format)
     print(f"  Loaded {len(poses)} poses")
 
     first_pose = poses[0][1].copy()
@@ -1597,9 +1507,13 @@ def main():
     for i in range(len(poses)):
         poses[i] = (poses[i][0], first_inv @ poses[i][1])
 
-    print(f"Loading calibration from {calib_file}")
-    body_to_lidar = load_calibration(calib_file)
-    lidar_to_body = np.linalg.inv(body_to_lidar)
+    if use_identity_calib:
+        print("Using identity calibration (poses are already in sensor frame)")
+        lidar_to_body = np.eye(4, dtype=np.float64)
+    else:
+        print(f"Loading calibration from {calib_file}")
+        body_to_lidar = load_calibration(calib_file)
+        lidar_to_body = np.linalg.inv(body_to_lidar)
 
     print(f"Parsing OSM geometry from {osm_file}")
     geom = parse_osm_xml(osm_file, origin_lat, origin_lon)
@@ -1613,7 +1527,7 @@ def main():
             p = first_inv @ np.array([x, y, 0, 1])
             ring[k] = (float(p[0]), float(p[1]))
     for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "stairs", "sidewalks", "cycleways", "walls", "water"):
+                "parking", "fences", "sidewalks", "cycleways"):
         if cat not in geom:
             continue
         for item in geom[cat]:
@@ -1625,7 +1539,7 @@ def main():
             else:  # simple polyline or polygon
                 ring = _poly_outer(item)
                 _transform_ring(ring)
-    for pt_key in ("tree_points", "pole_points"):
+    for pt_key in ("tree_points",):
         if pt_key not in geom:
             continue
         for k in range(len(geom[pt_key])):
@@ -1684,7 +1598,7 @@ def main():
 
     for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(tqdm(scan_list, desc="scans", unit="scan")):
         pts = read_scan_bin(scan_path)
-        labels_raw = read_label_bin(label_path)
+        labels_raw = read_label_bin(label_path, n_points_hint=len(pts))
         n = min(len(pts), len(labels_raw))
         pts, labels_raw = pts[:n], labels_raw[:n]
 
@@ -1740,88 +1654,32 @@ def main():
         all_inferred = np.concatenate(all_inferred)
     print(f"\nTotal points: {len(all_gt)}")
 
-    use_iteration = (
+    # Single-pass optimization: in the class-indexed height-filter scheme, the OSM→common
+    # confusion matrix M and the class-indexed height matrix H decouple (H is a post-hoc
+    # per-class scalar applied after M·osm_vec), so there is no benefit to alternating.
+    if args.use_inferred_row and all_inferred is not None:
+        counts, class_totals = build_cooccurrence_inferred(all_inferred, all_gt, all_osm)
+        print("Co-occurrence: inferred-row with GT compatibility")
+    else:
+        counts, class_totals = build_cooccurrence(all_gt, all_osm)
+    matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
+
+    height_matrix = None
+    if (
         scan_data_list is not None
         and len(scan_data_list) > 0
         and not args.no_height_matrix
-        and args.max_iters >= 1
-    )
-
-    if use_iteration:
-        # Iterative alternating optimization: prior <-> height until steady state
-        num_bins = args.height_bins
-        height_matrix = np.ones((num_bins, N_OSM), dtype=np.float64)
-        matrix = None
-        use_inferred = args.use_inferred_row and all_inferred is not None
-
-        for it in range(args.max_iters):
-            prev_matrix = matrix.copy() if matrix is not None else None
-            prev_height = height_matrix.copy()
-
-            # Step 1: Optimize prior matrix given current height
-            if use_inferred:
-                all_gt_eff, effective_osm, all_inf_eff = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=True,
-                    z_low_percentile=args.height_z_low_percentile,
-                    z_high_percentile=args.height_z_high_percentile,
-                )
-                counts, class_totals = build_cooccurrence_inferred(
-                    all_inf_eff, all_gt_eff, effective_osm
-                )
-            else:
-                all_gt_eff, effective_osm = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=False,
-                    z_low_percentile=args.height_z_low_percentile,
-                    z_high_percentile=args.height_z_high_percentile,
-                )
-                counts, class_totals = build_cooccurrence(all_gt_eff, effective_osm)
-            matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only, scale_by_class_points=args.scale_by_class_points)
-
-            # Step 2: Optimize height matrix given current prior
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=num_bins, prior_matrix=matrix,
-                z_low_percentile=args.height_z_low_percentile,
-                z_high_percentile=args.height_z_high_percentile,
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=num_bins
-            )
-
-            # Convergence check
-            if prev_matrix is not None:
-                delta_prior = np.abs(matrix - prev_matrix).max()
-                delta_height = np.abs(height_matrix - prev_height).max()
-                delta = max(delta_prior, delta_height)
-                print(f"  Iter {it + 1}: max change prior={delta_prior:.2e} height={delta_height:.2e}")
-                if delta < args.tol:
-                    print(f"  Converged at iteration {it + 1} (tol={args.tol})")
-                    break
-        print(f"\nOSM height confusion matrix: {num_bins} bins x {N_OSM} cols")
+    ):
+        counts_h = build_cooccurrence_height_class(
+            scan_data_list, num_bins=args.height_bins,
+            z_low_percentile=args.height_z_low_percentile,
+            z_high_percentile=args.height_z_high_percentile,
+        )
+        height_matrix = derive_height_matrix(counts_h, num_bins=args.height_bins)
+        print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_CLASSES - 1} class cols")
+        print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
         if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
             print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
-    else:
-        # Single-pass (no iteration)
-        if args.use_inferred_row and all_inferred is not None:
-            counts, class_totals = build_cooccurrence_inferred(all_inferred, all_gt, all_osm)
-            print("Co-occurrence: inferred-row with GT compatibility")
-        else:
-            counts, class_totals = build_cooccurrence(all_gt, all_osm)
-        matrix = derive_matrix(counts, class_totals, positive_only=args.positive_only, scale_by_class_points=args.scale_by_class_points)
-
-        height_matrix = None
-        if scan_data_list is not None and len(scan_data_list) > 0:
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=args.height_bins,
-                z_low_percentile=args.height_z_low_percentile,
-                z_high_percentile=args.height_z_high_percentile,
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=args.height_bins
-            )
-            print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_OSM} cols")
-            print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
-            if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
-                print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
 
     # Optionally flip height axis so that bin 1 corresponds to highest Z instead of lowest
     if height_matrix is not None and args.flip_height_axis:
@@ -1832,7 +1690,7 @@ def main():
     print("\nOptimized OSM confusion matrix:")
     header = "                " + "  ".join(f"{c:>7s}" for c in OSM_COLUMNS)
     print(header)
-    for i in range(12):
+    for i in range(N_CLASSES - 1):
         vals = "  ".join(f"{matrix[i, j]:7.2f}" for j in range(N_OSM))
         print(f"  {CLASS_NAMES[i+1]:>14s}: {vals}")
 
@@ -1841,7 +1699,7 @@ def main():
         mask = all_gt == cls
         if mask.sum() == 0:
             continue
-        covered = (all_osm[mask, :-1].max(axis=1) > 0).mean() * 100  # exclude 'none'
+        covered = (all_osm[mask].max(axis=1) > 0).mean() * 100
         print(f"  {CLASS_NAMES[cls]:>14s}: {covered:5.1f}% of {mask.sum()} pts covered by OSM")
 
     geometry_params_out = dict(GEOM_PARAMS)
@@ -1849,7 +1707,6 @@ def main():
     write_osm_cm_yaml(
         matrix,
         args.output,
-        positive_only=args.positive_only,
         height_matrix=height_matrix,
         geometry_params=geometry_params_out,
     )

@@ -68,13 +68,9 @@ Visualization Manager:
         osm_forests: true
         osm_grasslands: true
         osm_parking: true
-        osm_pole_points: true
         osm_roads: true
         osm_sidewalks: true
-        osm_stairs: true
         osm_tree_points: true
-        osm_walls: true
-        osm_water: true
       Topic:
         Depth: 5
         Durability Policy: Volatile

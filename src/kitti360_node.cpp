@@ -268,17 +268,10 @@ int main(int argc, char **argv) {
             mcd_data.set_osm_tree_points(osm_vis.getTreePoints());
             mcd_data.set_osm_parking(osm_vis.getParking());
             mcd_data.set_osm_fences(osm_vis.getFences());
-            mcd_data.set_osm_walls(osm_vis.getWalls());
-            mcd_data.set_osm_stairs(osm_vis.getStairs());
-            mcd_data.set_osm_water(osm_vis.getWater());
-            mcd_data.set_osm_pole_points(osm_vis.getPolePoints());
             mcd_data.set_osm_road_width(osm_vis.getRoadWidth());
             mcd_data.set_osm_sidewalk_width(osm_vis.getSidewalkWidth());
             mcd_data.set_osm_cycleway_width(osm_vis.getCyclewayWidth());
             mcd_data.set_osm_fence_width(osm_vis.getFenceWidth());
-            mcd_data.set_osm_wall_width(osm_vis.getWallWidth());
-            mcd_data.set_osm_pole_point_radius(osm_vis.getPolePointRadius());
-            mcd_data.set_osm_stairs_width(osm_vis.getStairsWidth());
             RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM from " << full_osm_path);
         } else {
             RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM: " << full_osm_path);

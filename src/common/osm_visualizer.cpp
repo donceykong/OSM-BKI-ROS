@@ -87,7 +87,7 @@ namespace {
         }
     }
 
-    // Handler class for extracting buildings, roads, sidewalks, cycleways, walls, water, pole points, etc. from OSM
+    // Handler class for extracting buildings, roads, sidewalks, cycleways, etc. from OSM
     class OSMGeometryHandler : public osmium::handler::Handler {
     public:
         static constexpr double EARTH_RADIUS_M = 6378137.0;
@@ -97,20 +97,15 @@ namespace {
                           std::vector<osm_bki::Geometry2D>& roads,
                           std::vector<osm_bki::Geometry2D>& sidewalks,
                           std::vector<osm_bki::Geometry2D>& cycleways,
-                          std::vector<osm_bki::Geometry2D>& walls,
-                          std::vector<osm_bki::Geometry2D>& water,
-                          std::vector<std::pair<float, float>>& pole_points,
                           std::vector<osm_bki::Geometry2D>& parking,
                           std::vector<osm_bki::Geometry2D>& fences,
-                          std::vector<osm_bki::Geometry2D>& stairs,
                           std::vector<osm_bki::Geometry2D>& grasslands,
                           std::vector<osm_bki::Geometry2D>& trees,
                           std::vector<osm_bki::Geometry2D>& forests,
                           std::vector<std::pair<float, float>>& tree_points)
             : origin_lat_(origin_lat), origin_lon_(origin_lon),
               buildings_(buildings), roads_(roads), sidewalks_(sidewalks), cycleways_(cycleways),
-              walls_(walls), water_(water), pole_points_(pole_points),
-              parking_(parking), fences_(fences), stairs_(stairs),
+              parking_(parking), fences_(fences),
               grasslands_(grasslands), trees_(trees), forests_(forests), tree_points_(tree_points) {
             scale_ = std::cos(origin_lat * M_PI / 180.0);
             double origin_lon_rad = origin_lon * M_PI / 180.0;
@@ -137,22 +132,6 @@ namespace {
             if (natural_tag && std::string(natural_tag) == "tree") {
                 tree_points_.push_back(xy);
                 return;
-            }
-
-            // Pole-like points: traffic signals, power poles, street cabinets, masts
-            const char* highway_tag = node.tags()["highway"];
-            if (highway_tag && std::string(highway_tag) == "traffic_signals") {
-                pole_points_.push_back(xy);
-                return;
-            }
-            const char* power_tag = node.tags()["power"];
-            if (power_tag && (std::string(power_tag) == "pole" || std::string(power_tag) == "tower")) {
-                pole_points_.push_back(xy);
-                return;
-            }
-            const char* man_made_tag = node.tags()["man_made"];
-            if (man_made_tag && (std::string(man_made_tag) == "street_cabinet" || std::string(man_made_tag) == "mast")) {
-                pole_points_.push_back(xy);
             }
         }
 
@@ -190,30 +169,15 @@ namespace {
                 return;
             }
 
-            // --- FENCES (barrier=fence) and WALLS (barrier=wall, man_made=wall) ---
+            // --- FENCES (barrier=fence) ---
             const char* barrier_tag = way.tags()["barrier"];
             if (barrier_tag && std::string(barrier_tag) == "fence") {
                 fences_.push_back(geom);
                 return;
             }
-            if (barrier_tag && std::string(barrier_tag) == "wall") {
-                walls_.push_back(geom);
-                return;
-            }
-            const char* man_made_way_tag = way.tags()["man_made"];
-            if (man_made_way_tag && std::string(man_made_way_tag) == "wall") {
-                walls_.push_back(geom);
-                return;
-            }
-
-            // --- STAIRS (highway=steps) ---
-            const char* highway_tag = way.tags()["highway"];
-            if (highway_tag && std::string(highway_tag) == "steps") {
-                stairs_.push_back(geom);
-                return;
-            }
 
             // --- CYCLEWAYS (highway=cycleway or highway=path + bicycle=yes) ---
+            const char* highway_tag = way.tags()["highway"];
             if (highway_tag && std::string(highway_tag) == "cycleway") {
                 cycleways_.push_back(geom);
                 return;
@@ -240,13 +204,6 @@ namespace {
                     sidewalks_.push_back(geom);
                     return;
                 }
-            }
-
-            // --- WATER (natural=water ways) ---
-            const char* natural_way_tag = way.tags()["natural"];
-            if (natural_way_tag && std::string(natural_way_tag) == "water") {
-                water_.push_back(geom);
-                return;
             }
 
             // --- ROADS (exclude footway, path, pedestrian, cycleway - handled above) ---
@@ -386,12 +343,7 @@ namespace {
             //     }
             // }
 
-            // Check for water (natural=water multipolygons)
             const char* natural_tag = area.tags()["natural"];
-            if (natural_tag && std::string(natural_tag) == "water") {
-                push_area_with_holes(area, water_);
-                return;
-            }
             if (natural_tag) {
                 std::string natural(natural_tag);
                 if (natural == "wood" || natural == "forest") {
@@ -417,12 +369,8 @@ namespace {
         std::vector<osm_bki::Geometry2D>& roads_;
         std::vector<osm_bki::Geometry2D>& sidewalks_;
         std::vector<osm_bki::Geometry2D>& cycleways_;
-        std::vector<osm_bki::Geometry2D>& walls_;
-        std::vector<osm_bki::Geometry2D>& water_;
-        std::vector<std::pair<float, float>>& pole_points_;
         std::vector<osm_bki::Geometry2D>& parking_;
         std::vector<osm_bki::Geometry2D>& fences_;
-        std::vector<osm_bki::Geometry2D>& stairs_;
         std::vector<osm_bki::Geometry2D>& grasslands_;
         std::vector<osm_bki::Geometry2D>& trees_;
         std::vector<osm_bki::Geometry2D>& forests_;
@@ -465,12 +413,8 @@ namespace osm_bki {
         roads_.clear();
         sidewalks_.clear();
         cycleways_.clear();
-        walls_.clear();
-        water_.clear();
-        pole_points_.clear();
         parking_.clear();
         fences_.clear();
-        stairs_.clear();
         grasslands_.clear();
         trees_.clear();
         forests_.clear();
@@ -489,7 +433,7 @@ namespace osm_bki {
             osmium::handler::NodeLocationsForWays<osmium::index::map::SparseMemArray<osmium::unsigned_object_id_type, osmium::Location>> 
                 location_handler(index);
             
-            OSMGeometryHandler handler(origin_lat, origin_lon, buildings_, roads_, sidewalks_, cycleways_, walls_, water_, pole_points_, parking_, fences_, stairs_, grasslands_, trees_, forests_, tree_points_);
+            OSMGeometryHandler handler(origin_lat, origin_lon, buildings_, roads_, sidewalks_, cycleways_, parking_, fences_, grasslands_, trees_, forests_, tree_points_);
             
             // MultipolygonManager to convert multipolygon relations (type=multipolygon) to areas
             // Filter: which relations to assemble. Each rule accepts relations with matching tags.
@@ -512,7 +456,6 @@ namespace osm_bki {
             filter.add_rule(true, "leisure", "park");
             filter.add_rule(true, "leisure", "garden");
             filter.add_rule(true, "amenity", "parking");
-            filter.add_rule(true, "natural", "water");
             using MultipolygonManager = osmium::area::MultipolygonManager<osmium::area::Assembler>;
             MultipolygonManager mp_manager(assembler_config, filter);
             
@@ -542,7 +485,7 @@ namespace osm_bki {
             
             // RCLCPP_INFO_STREAM(node_->get_logger(), "Loaded " << buildings_.size() << " buildings, " << roads_.size() << " roads/sidewalks, " << grasslands_.size() << " grasslands, " << trees_.size() << " tree/forest polygons, " << tree_points_.size() << " tree points from OSM file using libosmium");
             
-            if (buildings_.empty() && roads_.empty() && sidewalks_.empty() && cycleways_.empty() && walls_.empty() && water_.empty() && pole_points_.empty() && parking_.empty() && fences_.empty() && stairs_.empty() && grasslands_.empty() && trees_.empty() && forests_.empty() && tree_points_.empty()) {
+            if (buildings_.empty() && roads_.empty() && sidewalks_.empty() && cycleways_.empty() && parking_.empty() && fences_.empty() && grasslands_.empty() && trees_.empty() && forests_.empty() && tree_points_.empty()) {
                 // RCLCPP_WARN(node_->get_logger(), "WARNING: No buildings, roads, grasslands, or trees found in OSM file.");
             }
             
@@ -739,37 +682,6 @@ namespace osm_bki {
             }
             if (has_invalid) continue;
             addPolylineBandOutlineToMarker(fence.coords, fence_width_meters_, marker);
-        }
-        return marker;
-    }
-
-    visualization_msgs::msg::Marker OSMVisualizer::createStairsMarker(const std::vector<Geometry2D>& stairs) {
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = frame_id_;
-        marker.header.stamp = node_->now();
-        marker.ns = "osm_stairs";
-        marker.id = 9;
-        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.12;
-        marker.color.r = 0.6f;
-        marker.color.g = 0.4f;
-        marker.color.b = 0.2f;
-        marker.color.a = 1.0f;  // Brown/tan for stairs
-
-        for (const auto& stair : stairs) {
-            if (stair.coords.size() < 2) continue;
-            bool has_invalid = false;
-            for (const auto& coord : stair.coords) {
-                if (std::isnan(coord.first) || std::isnan(coord.second) ||
-                    std::isinf(coord.first) || std::isinf(coord.second)) {
-                    has_invalid = true;
-                    break;
-                }
-            }
-            if (has_invalid) continue;
-            addPolylineBandOutlineToMarker(stair.coords, stairs_width_meters_, marker);
         }
         return marker;
     }
@@ -973,68 +885,6 @@ namespace osm_bki {
         return marker;
     }
 
-    visualization_msgs::msg::Marker OSMVisualizer::createWallMarker(const std::vector<Geometry2D>& walls) {
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = frame_id_;
-        marker.header.stamp = node_->now();
-        marker.ns = "osm_walls";
-        marker.id = 12;
-        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.12;
-        marker.color.r = 0.5f; marker.color.g = 0.5f; marker.color.b = 0.5f; marker.color.a = 1.0f;
-        for (const auto& w : walls) {
-            if (w.coords.size() < 2) continue;
-            addPolylineBandOutlineToMarker(w.coords, wall_width_meters_, marker);
-        }
-        return marker;
-    }
-
-    visualization_msgs::msg::Marker OSMVisualizer::createWaterMarker(const std::vector<Geometry2D>& water) {
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = frame_id_;
-        marker.header.stamp = node_->now();
-        marker.ns = "osm_water";
-        marker.id = 13;
-        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.25;
-        marker.color.r = 0.0f; marker.color.g = 0.0f; marker.color.b = 1.0f; marker.color.a = 0.8f;
-        for (const auto& wa : water) {
-            addPolygonOutlineToMarker(wa, marker);
-        }
-        return marker;
-    }
-
-    visualization_msgs::msg::Marker OSMVisualizer::createPolePointsMarker() const {
-        visualization_msgs::msg::Marker marker;
-        marker.header.frame_id = frame_id_;
-        marker.header.stamp = node_->now();
-        marker.ns = "osm_pole_points";
-        marker.id = 14;
-        marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-        marker.action = visualization_msgs::msg::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.2;
-        marker.color.r = 0.8f; marker.color.g = 0.4f; marker.color.b = 0.0f; marker.color.a = 1.0f;
-        const float r = pole_point_radius_meters_;
-        const int circle_segments = 16;
-        for (const auto& pt : pole_points_) {
-            if (std::isnan(pt.first) || std::isnan(pt.second) || std::isinf(pt.first) || std::isinf(pt.second)) continue;
-            for (int i = 0; i < circle_segments; ++i) {
-                float a1 = 2.0f * static_cast<float>(M_PI) * i / circle_segments;
-                float a2 = 2.0f * static_cast<float>(M_PI) * (i + 1) / circle_segments;
-                geometry_msgs::msg::Point p1, p2;
-                p1.x = pt.first + r * std::cos(a1); p1.y = pt.second + r * std::sin(a1); p1.z = 0.0;
-                p2.x = pt.first + r * std::cos(a2); p2.y = pt.second + r * std::sin(a2); p2.z = 0.0;
-                marker.points.push_back(p1); marker.points.push_back(p2);
-            }
-        }
-        return marker;
-    }
-
     void OSMVisualizer::publish() {
         // RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: publish() called, buildings_.size()=" << buildings_.size());
         
@@ -1082,11 +932,6 @@ namespace osm_bki {
             marker_array.markers.push_back(marker);
         }
 
-        if (!stairs_.empty()) {
-            auto marker = createStairsMarker(stairs_);
-            marker_array.markers.push_back(marker);
-        }
-        
         if (!grasslands_.empty()) {
             auto marker = createGrasslandMarker(grasslands_);
             marker_array.markers.push_back(marker);
@@ -1107,15 +952,6 @@ namespace osm_bki {
         }
         if (!cycleways_.empty()) {
             marker_array.markers.push_back(createCyclewayMarker(cycleways_));
-        }
-        if (!walls_.empty()) {
-            marker_array.markers.push_back(createWallMarker(walls_));
-        }
-        if (!water_.empty()) {
-            marker_array.markers.push_back(createWaterMarker(water_));
-        }
-        if (!pole_points_.empty()) {
-            marker_array.markers.push_back(createPolePointsMarker());
         }
         
         if (marker_array.markers.empty()) {
@@ -1283,12 +1119,6 @@ namespace osm_bki {
                 transformPoint(coord.first, coord.second);
             }
         }
-        for (auto& stair : stairs_) {
-            for (auto& coord : stair.coords) {
-                transformPoint(coord.first, coord.second);
-            }
-        }
-        
         // Transform grasslands, trees, forests
         for (auto& grassland : grasslands_) {
             for (auto& coord : grassland.coords) {
@@ -1325,17 +1155,6 @@ namespace osm_bki {
         }
         for (auto& cw : cycleways_) {
             for (auto& coord : cw.coords) transformPoint(coord.first, coord.second);
-        }
-        for (auto& w : walls_) {
-            for (auto& coord : w.coords) transformPoint(coord.first, coord.second);
-        }
-        for (auto& wa : water_) {
-            for (auto& coord : wa.coords) transformPoint(coord.first, coord.second);
-            for (auto& hole : wa.holes)
-                for (auto& coord : hole.coords) transformPoint(coord.first, coord.second);
-        }
-        for (auto& pt : pole_points_) {
-            transformPoint(pt.first, pt.second);
         }
         
         // Log bounding box after transformation
@@ -1394,14 +1213,6 @@ namespace osm_bki {
             }
             for (const auto& f : fences_) {
                 for (const auto& coord : f.coords) {
-                    min_x_after = std::min(min_x_after, coord.first);
-                    max_x_after = std::max(max_x_after, coord.first);
-                    min_y_after = std::min(min_y_after, coord.second);
-                    max_y_after = std::max(max_y_after, coord.second);
-                }
-            }
-            for (const auto& st : stairs_) {
-                for (const auto& coord : st.coords) {
                     min_x_after = std::min(min_x_after, coord.first);
                     max_x_after = std::max(max_x_after, coord.first);
                     min_y_after = std::min(min_y_after, coord.second);

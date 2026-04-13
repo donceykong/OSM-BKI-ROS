@@ -286,22 +286,6 @@ namespace osm_bki {
         osm_fences_ = fences;
     }
 
-    void SemanticBKIOctoMap::set_osm_walls(const std::vector<Geometry2D> &walls) {
-        osm_walls_ = walls;
-    }
-
-    void SemanticBKIOctoMap::set_osm_stairs(const std::vector<Geometry2D> &stairs) {
-        osm_stairs_ = stairs;
-    }
-
-    void SemanticBKIOctoMap::set_osm_water(const std::vector<Geometry2D> &water) {
-        osm_water_ = water;
-    }
-
-    void SemanticBKIOctoMap::set_osm_pole_points(const std::vector<std::pair<float, float>> &pole_points) {
-        osm_pole_points_ = pole_points;
-    }
-
     void SemanticBKIOctoMap::set_osm_road_width(float width_m) {
         osm_road_width_ = std::max(0.1f, width_m);
     }
@@ -316,18 +300,6 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::set_osm_fence_width(float width_m) {
         osm_fence_width_ = std::max(0.1f, width_m);
-    }
-
-    void SemanticBKIOctoMap::set_osm_wall_width(float width_m) {
-        osm_wall_width_ = std::max(0.1f, width_m);
-    }
-
-    void SemanticBKIOctoMap::set_osm_pole_point_radius(float radius_m) {
-        osm_pole_point_radius_ = std::max(0.1f, radius_m);
-    }
-
-    void SemanticBKIOctoMap::set_osm_stairs_width(float width_m) {
-        osm_stairs_width_ = std::max(0.1f, width_m);
     }
 
     void SemanticBKIOctoMap::set_osm_decay_meters(float decay_m) {
@@ -397,29 +369,25 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
+        // Variant A: rows = height bins, cols = common-class rows (same index space as osm_cm_ rows).
         osm_height_num_bins_ = static_cast<int>(matrix.size());
         osm_height_cm_.clear();
         osm_height_cm_.resize(static_cast<size_t>(osm_height_num_bins_));
-        for (auto &row : osm_height_cm_) row.fill(0.f);
-
         for (int r = 0; r < osm_height_num_bins_; ++r) {
-            int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
-            for (int c = 0; c < ncols; ++c)
-                osm_height_cm_[static_cast<size_t>(r)][static_cast<size_t>(c)] = matrix[r][c];
+            osm_height_cm_[static_cast<size_t>(r)] = matrix[r];
         }
         osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
     }
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
                                                               float &grassland, float &tree, float &parking,
-                                                              float &fence, float &stairs) const {
+                                                              float &fence) const {
         building = compute_osm_building_prior(x, y);
         road = compute_osm_road_prior(x, y);
         grassland = compute_osm_grassland_prior(x, y);
         tree = compute_osm_tree_prior(x, y);
         parking = compute_osm_parking_prior(x, y);
         fence = compute_osm_fence_prior(x, y);
-        stairs = compute_osm_stairs_prior(x, y);
     }
 
     void SemanticBKIOctoMap::set_osm_confusion_matrix(
@@ -448,15 +416,11 @@ namespace osm_bki {
         osm_vec[6] = compute_osm_forest_prior(x, y);
         osm_vec[7] = compute_osm_building_prior(x, y);
         osm_vec[8] = compute_osm_fence_prior(x, y);
-        osm_vec[9] = compute_osm_wall_prior(x, y);
-        osm_vec[10] = compute_osm_stairs_prior(x, y);
-        osm_vec[11] = compute_osm_water_prior(x, y);
-        osm_vec[12] = compute_osm_pole_prior(x, y);
         // "none" = 1 when no OSM geometry covers this point, 0 when fully covered
         float max_geom = 0.f;
-        for (int c = 0; c < 13; ++c)
+        for (int c = 0; c < 9; ++c)
             if (osm_vec[c] > max_geom) max_geom = osm_vec[c];
-        osm_vec[13] = 1.0f - max_geom;
+        osm_vec[9] = 1.0f - max_geom;
     }
 
     void SemanticBKIOctoMap::apply_osm_prior_to_ybars(std::vector<float> &ybars,
@@ -466,21 +430,23 @@ namespace osm_bki {
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // OSM height filter: multiply osm_vec by height confusion matrix row (per-scan relative bins)
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                osm_vec[c] *= osm_height_cm_[bin][c];
-        }
-
+        // Variant A: project OSM -> common first, then apply per-class height filter.
         // p_super[row] = sum_j(M[row][j] * osm_vec[j])
-        // M values in [-1, 1]; negative decreases likelihood, positive increases.
         std::vector<float> p_super(osm_cm_rows_, 0.f);
         for (int r = 0; r < osm_cm_rows_; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 p_super[r] += osm_cm_[r][c] * osm_vec[c];
+
+        // Height filter applied to common-class rows (not raw OSM cols).
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+            for (int r = 0; r < ncols; ++r)
+                p_super[r] *= hrow[r];
+        }
 
         // Add OSM contribution directly to ybars so it accumulates with every
         // observation, maintaining a constant proportion of the total evidence.
@@ -509,30 +475,32 @@ namespace osm_bki {
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // 2. Apply height filter: modulate OSM prior by height confusion matrix
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                osm_vec[c] *= osm_height_cm_[bin][c];
-        }
-
-        // 3. OSM confidence c(x) = max of OSM prior (excluding "none" column)
+        // 2. OSM confidence c(x) = max of OSM prior (excluding "none" column)
         float c_x = 0.f;
         for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
             if (osm_vec[c] > c_x) c_x = osm_vec[c];
         }
         if (c_x <= 0.f) return;  // No OSM coverage: all weights stay 1.0
 
-        // 4. Compute Mm[r] = sum_j M[r][j] * osm_vec[j] — per-superclass OSM support
+        // 3. Variant A: project OSM -> common, then apply per-class height filter.
         std::vector<float> Mm(osm_cm_rows_, 0.f);
-        float max_Mm = 0.f;
-        for (int r = 0; r < osm_cm_rows_; ++r) {
+        for (int r = 0; r < osm_cm_rows_; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 Mm[r] += osm_cm_[r][c] * osm_vec[c];
-            if (Mm[r] > max_Mm) max_Mm = Mm[r];
+
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+            for (int r = 0; r < ncols; ++r)
+                Mm[r] *= hrow[r];
         }
+
+        float max_Mm = 0.f;
+        for (int r = 0; r < osm_cm_rows_; ++r)
+            if (Mm[r] > max_Mm) max_Mm = Mm[r];
         if (max_Mm <= 0.f) return;
 
         // 5. Per-class boost: classes supported by OSM get weight > 1.0
@@ -578,11 +546,7 @@ namespace osm_bki {
         filter_geom(osm_forests_,    active_forests_);
         filter_geom(osm_parking_,    active_parking_);
         filter_geom(osm_fences_,     active_fences_);
-        filter_geom(osm_walls_,      active_walls_);
-        filter_geom(osm_stairs_,     active_stairs_);
-        filter_geom(osm_water_,      active_water_);
         filter_pts(osm_tree_points_, active_tree_points_);
-        filter_pts(osm_pole_points_, active_pole_points_);
 
         osm_scan_filtered_ = true;
     }
@@ -728,54 +692,6 @@ namespace osm_bki {
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &cw : cycleways) {
             float signed_d = distance_to_polyline_band_signed(x, y, cw, osm_cycleway_width_);
-            if (signed_d <= 0.f) return 1.f;
-            if (signed_d < min_signed_d) min_signed_d = signed_d;
-        }
-        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
-    }
-
-    float SemanticBKIOctoMap::compute_osm_wall_prior(float x, float y) const {
-        const auto &walls = osm_scan_filtered_ ? active_walls_ : osm_walls_;
-        if (walls.empty()) return 0.f;
-        float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &wall : walls) {
-            float signed_d = distance_to_polyline_band_signed(x, y, wall, osm_wall_width_);
-            if (signed_d <= 0.f) return 1.f;
-            if (signed_d < min_signed_d) min_signed_d = signed_d;
-        }
-        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
-    }
-
-    float SemanticBKIOctoMap::compute_osm_water_prior(float x, float y) const {
-        const auto &water = osm_scan_filtered_ ? active_water_ : osm_water_;
-        if (water.empty()) return 0.f;
-        float min_positive_d = std::numeric_limits<float>::max();
-        for (const auto &poly : water) {
-            float signed_d = distance_to_polygon_boundary(x, y, poly);
-            if (signed_d <= 0.f) return 1.f;  // inside water
-            if (signed_d < min_positive_d) min_positive_d = signed_d;
-        }
-        return osm_prior_from_signed_distance(min_positive_d, osm_decay_meters_);
-    }
-
-    float SemanticBKIOctoMap::compute_osm_pole_prior(float x, float y) const {
-        const auto &poles = osm_scan_filtered_ ? active_pole_points_ : osm_pole_points_;
-        if (poles.empty()) return 0.f;
-        float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &pt : poles) {
-            float signed_d = distance_to_circle_signed(x, y, pt.first, pt.second, osm_pole_point_radius_);
-            if (signed_d <= 0.f) return 1.f;  // inside pole circle
-            if (signed_d < min_signed_d) min_signed_d = signed_d;
-        }
-        return osm_prior_from_signed_distance(min_signed_d, osm_decay_meters_);
-    }
-
-    float SemanticBKIOctoMap::compute_osm_stairs_prior(float x, float y) const {
-        const auto &stairs = osm_scan_filtered_ ? active_stairs_ : osm_stairs_;
-        if (stairs.empty()) return 0.f;
-        float min_signed_d = std::numeric_limits<float>::max();
-        for (const auto &stair : stairs) {
-            float signed_d = distance_to_polyline_band_signed(x, y, stair, osm_stairs_width_);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
         }

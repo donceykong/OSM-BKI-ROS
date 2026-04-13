@@ -67,17 +67,6 @@ namespace osm_bki {
 
         float getTreePointRadius() const { return tree_point_radius_meters_; }
 
-        void setPolePointRadius(float radius_meters) { pole_point_radius_meters_ = std::max(0.1f, radius_meters); }
-        float getPolePointRadius() const { return pole_point_radius_meters_; }
-
-        /**
-         * Set width (meters) for stairs (highway=steps). Each polyline segment is drawn as a rectangle
-         * with this width perpendicular to the segment.
-         * @param width_meters Width in meters (default 1.5)
-         */
-        void setStairsWidth(float width_meters) { stairs_width_meters_ = std::max(0.1f, width_meters); }
-
-        float getStairsWidth() const { return stairs_width_meters_; }
         void setRoadWidth(float width_meters) { road_width_meters_ = std::max(0.1f, width_meters); }
         float getRoadWidth() const { return road_width_meters_; }
         void setSidewalkWidth(float width_meters) { sidewalk_width_meters_ = std::max(0.1f, width_meters); }
@@ -86,8 +75,6 @@ namespace osm_bki {
         float getCyclewayWidth() const { return cycleway_width_meters_; }
         void setFenceWidth(float width_meters) { fence_width_meters_ = std::max(0.1f, width_meters); }
         float getFenceWidth() const { return fence_width_meters_; }
-        void setWallWidth(float width_meters) { wall_width_meters_ = std::max(0.1f, width_meters); }
-        float getWallWidth() const { return wall_width_meters_; }
 
         /// Return OSM geometries (after transform if applied). Used to set voxel OSM priors.
         const std::vector<Geometry2D>& getBuildings() const { return buildings_; }
@@ -95,15 +82,11 @@ namespace osm_bki {
         const std::vector<Geometry2D>& getSidewalks() const { return sidewalks_; }
         const std::vector<Geometry2D>& getParking() const { return parking_; }
         const std::vector<Geometry2D>& getFences() const { return fences_; }
-        const std::vector<Geometry2D>& getStairs() const { return stairs_; }
         const std::vector<Geometry2D>& getGrasslands() const { return grasslands_; }
         const std::vector<Geometry2D>& getTrees() const { return trees_; }
         const std::vector<Geometry2D>& getForests() const { return forests_; }
         const std::vector<std::pair<float, float>>& getTreePoints() const { return tree_points_; }
         const std::vector<Geometry2D>& getCycleways() const { return cycleways_; }
-        const std::vector<Geometry2D>& getWalls() const { return walls_; }
-        const std::vector<Geometry2D>& getWater() const { return water_; }
-        const std::vector<std::pair<float, float>>& getPolePoints() const { return pole_points_; }
 
     private:
         /**
@@ -137,11 +120,6 @@ namespace osm_bki {
         visualization_msgs::msg::Marker createFenceMarker(const std::vector<Geometry2D>& fences);
 
         /**
-         * Create Marker message for stairs (highway=steps). Each segment drawn as rectangle with stairs_width_meters_.
-         */
-        visualization_msgs::msg::Marker createStairsMarker(const std::vector<Geometry2D>& stairs);
-
-        /**
          * Create Marker message for lidar path (green polyline).
          */
         visualization_msgs::msg::Marker createPathMarker() const;
@@ -167,9 +145,6 @@ namespace osm_bki {
         visualization_msgs::msg::Marker createTreePointsMarker() const;
 
         visualization_msgs::msg::Marker createCyclewayMarker(const std::vector<Geometry2D>& cycleways);
-        visualization_msgs::msg::Marker createWallMarker(const std::vector<Geometry2D>& walls);
-        visualization_msgs::msg::Marker createWaterMarker(const std::vector<Geometry2D>& water);
-        visualization_msgs::msg::Marker createPolePointsMarker() const;
 
         rclcpp::Node::SharedPtr node_;
         rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pub_;
@@ -182,24 +157,17 @@ namespace osm_bki {
         std::vector<Geometry2D> sidewalks_;
         std::vector<Geometry2D> parking_;
         std::vector<Geometry2D> fences_;
-        std::vector<Geometry2D> stairs_;
         std::vector<Geometry2D> grasslands_;
         std::vector<Geometry2D> trees_;           // landcover=trees, orchard, vineyard
         std::vector<Geometry2D> forests_;         // landuse=forest, natural=forest/wood
         std::vector<std::pair<float, float>> tree_points_;  // Single-point trees (natural=tree nodes)
         std::vector<Geometry2D> cycleways_;
-        std::vector<Geometry2D> walls_;
-        std::vector<Geometry2D> water_;
-        std::vector<std::pair<float, float>> pole_points_;  // traffic_signals, power poles, etc.
         std::vector<std::pair<float, float>> path_;  // Lidar trajectory for debugging
         float tree_point_radius_meters_{5.0f};  // Radius for tree point circles (visualization and prior)
-        float pole_point_radius_meters_{2.0f};  // Radius for pole point circles (visualization and prior)
         float road_width_meters_{6.0f};         // Width for road polyline rectangles
         float sidewalk_width_meters_{2.0f};     // Width for sidewalk polyline rectangles
         float cycleway_width_meters_{2.0f};     // Width for cycleway polyline rectangles
         float fence_width_meters_{0.6f};        // Width for fence polyline rectangles
-        float wall_width_meters_{0.8f};         // Width for wall polyline rectangles
-        float stairs_width_meters_{1.5f};       // Width of rectangle enclosing each stairs segment
 
         bool transformed_; // Flag to track if data has already been transformed
     };

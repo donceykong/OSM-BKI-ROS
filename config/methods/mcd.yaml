@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_02/datasets/"
+    data_root: "/media/donceykong/doncey_ssd_011/datasets/"
 
     # Map information
     resolution: 0.5
@@ -12,31 +12,31 @@
     ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
-    num_class: 13
+    num_class: 9
 
     # Information about range-finder data
     scan_num: 10000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    keyframe_dist: 1.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
+    keyframe_dist: 5.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
-    sequence_name: kth_day_09
+    sequence_name: kth_night_05
 
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
     lidar_pose_suffix: pose_inW.csv
     input_label_suffix: inferred_labels/cenet_kitti360_softmax
-    gt_label_suffix: gt_labels
+    gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/vanilla_block_depth_3/
+    evaluation_result_prefix: evaluations/osm_bki  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
     visualize: true
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
-    gt_use_multiclass: false         # GT labels from gt_label_suffix
-    inferred_labels_key: kitti360   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    gt_use_multiclass: false        # GT labels from gt_label_suffix
+    inferred_labels_key: kitti360        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
@@ -73,8 +73,6 @@
     # --------------------------------
     # OSM prior configuration 
     # --------------------------------
-    # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 3.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
     osm_file: kth_large.osm
     osm_origin_lat: 59.347671416
@@ -87,11 +85,11 @@
     #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
-    osm_confusion_matrix_file: osm_confusion_matrix_optimized_mcd.yaml
-    osm_prior_strength: 0.0  # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.0  # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
-    osm_scan_radius_extension: 1.5  # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
-    osm_height_filtering: false  # use height-based filtering for OSM priors
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
+    osm_prior_strength: 1.0  # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.5   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
+    osm_height_filtering: true           # use height-based filtering for OSM priors
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch

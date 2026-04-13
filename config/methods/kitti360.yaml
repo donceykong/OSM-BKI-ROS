@@ -12,7 +12,7 @@
     ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
-    num_class: 13
+    num_class: 9
 
     # Information about range-finder data
     scan_num: 1000   # How many scans to use
