@@ -99,6 +99,18 @@ namespace osm_bki {
                                float free_res = 2.0f,
                                float max_range = -1);
 
+        /// Weighted variant: per-point weights discount uncertain training points.
+        void insert_pointcloud_csm(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights);
+
+        /// Weighted + soft labels: when multiclass_probs is non-null and matches cloud size,
+        /// uses train_soft + predict_csm with per-point multiclass distributions.
+        void insert_pointcloud_csm(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                               float free_res, float max_range,
+                               const std::vector<float> &point_weights,
+                               const std::vector<std::vector<float>> *multiclass_probs);
+
 
         void insert_pointcloud(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
                                float free_res = 2.0f,
@@ -411,8 +423,6 @@ namespace osm_bki {
 
     private:
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
-
-        void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
 
         /// Compute per-class semantic kernel weights from OSM prior at a training point.
         /// Returns a vector of size num_class where each element is a multiplicative

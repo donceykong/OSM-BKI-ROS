@@ -37,6 +37,7 @@ int main(int argc, char **argv) {
     int scan_num = 0;
     double max_range = -1;
     double keyframe_dist = 0.0;
+    std::string map_mode = "bki";  // "bki" or "csm"
 
     std::string dir;
     std::string input_data_prefix;
@@ -62,6 +63,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<int>("scan_num", scan_num);
     node->declare_parameter<double>("max_range", max_range);
     node->declare_parameter<double>("keyframe_dist", keyframe_dist);
+    node->declare_parameter<std::string>("map_mode", map_mode);
     node->declare_parameter<std::string>("dir", dir);
     node->declare_parameter<std::string>("sequence_name", "");
     node->declare_parameter<std::string>("input_data_suffix", "");
@@ -121,6 +123,7 @@ int main(int argc, char **argv) {
     node->get_parameter<int>("scan_num", scan_num);
     node->get_parameter<double>("max_range", max_range);
     node->get_parameter<double>("keyframe_dist", keyframe_dist);
+    node->get_parameter<std::string>("map_mode", map_mode);
     node->get_parameter<std::string>("dir", dir);
     std::string sequence_name, input_data_suffix, input_label_suffix, lidar_pose_suffix, gt_label_suffix;
     node->get_parameter<std::string>("sequence_name", sequence_name);
@@ -159,6 +162,7 @@ int main(int argc, char **argv) {
     // No static TF for KITTI360 (poses are already in world frame, no base-to-lidar TF needed).
 
     MCDData mcd_data(node, resolution, block_depth, sf2, ell, num_class, free_thresh, occupied_thresh, var_thresh, ds_resolution, free_resolution, max_range, map_topic, prior);
+    mcd_data.set_map_mode(map_mode);
 
     std::string pose_path = dir + "/" + lidar_pose_file;
     RCLCPP_INFO_STREAM(node->get_logger(), "Reading KITTI360 poses from: " << pose_path);

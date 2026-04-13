@@ -92,30 +92,47 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::insert_pointcloud_csm(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
                                       float free_res, float max_range) {
+        insert_pointcloud_csm(cloud, origin, ds_resolution, free_res, max_range,
+                              std::vector<float>{}, nullptr);
+    }
+
+    void SemanticBKIOctoMap::insert_pointcloud_csm(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_res, float max_range,
+                                      const std::vector<float> &point_weights) {
+        insert_pointcloud_csm(cloud, origin, ds_resolution, free_res, max_range, point_weights, nullptr);
+    }
+
+    void SemanticBKIOctoMap::insert_pointcloud_csm(const PCLPointCloud &cloud, const point3f &origin, float ds_resolution,
+                                      float free_res, float max_range,
+                                      const std::vector<float> &point_weights,
+                                      const std::vector<std::vector<float>> *multiclass_probs) {
 
 #ifdef DEBUG
-        Debug_Msg("Insert pointcloud: " << "cloud size: " << cloud.size() << " origin: " << origin);
+        Debug_Msg("Insert pointcloud (CSM): " << "cloud size: " << cloud.size() << " origin: " << origin);
 #endif
+
+        bool use_soft = (multiclass_probs != nullptr && !multiclass_probs->empty() &&
+                         multiclass_probs->size() == cloud.size());
+        bool has_weights = (!point_weights.empty() && point_weights.size() == cloud.size());
 
         ////////// Preparation //////////////////////////
-        /////////////////////////////////////////////////
         GPPointCloud xy;
-        get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy);
-#ifdef DEBUG
-        Debug_Msg("Training data size: " << xy.size());
-#endif
-        // If pointcloud after max_range filtering is empty
-        //  no need to do anything
-        if (xy.size() == 0) {
+        if (use_soft)
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights, multiclass_probs);
+        else if (has_weights)
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy, point_weights);
+        else
+            get_training_data(cloud, origin, ds_resolution, free_res, max_range, xy);
+
+        if (xy.size() == 0)
             return;
-        }
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
         osm_height_min_z_ = lim_min.z();
         osm_height_max_z_ = lim_max.z();
 
-        // Pre-filter OSM geometry to scan vicinity
+        // Pre-filter OSM geometry to scan vicinity (used by init_osm_prior_for_block).
         float cx = (lim_min.x() + lim_max.x()) * 0.5f;
         float cy = (lim_min.y() + lim_max.y()) * 0.5f;
         float half_dx = (lim_max.x() - lim_min.x()) * 0.5f;
@@ -130,10 +147,11 @@ namespace osm_bki {
             float p[] = {it->first.x(), it->first.y(), it->first.z()};
             rtree.Insert(p, p, const_cast<GPPointType *>(&*it));
         }
-        /////////////////////////////////////////////////
 
         ////////// Training /////////////////////////////
-        /////////////////////////////////////////////////
+        // Reference-faithful CSM: no per-class OSM kernel boost, no kernel weights.
+        // Only Dirichlet prior (init_osm_prior_for_block) carries OSM signal.
+        int nc = SemanticOcTreeNode::num_class;
         vector<BlockHashKey> test_blocks;
         std::unordered_map<BlockHashKey, SemanticBKI3f *> bgk_arr;
 #ifdef OPENMP
@@ -146,50 +164,42 @@ namespace osm_bki {
 #ifdef OPENMP
 #pragma omp critical
 #endif
-            {
-                test_blocks.push_back(key);
-            };
+            { test_blocks.push_back(key); };
 
             GPPointCloud block_xy;
             get_gp_points_in_bbox(key, block_xy);
             if (block_xy.size() < 1)
                 continue;
 
-            int nc_csm = SemanticOcTreeNode::num_class;
-            vector<float> block_x, block_y, block_w;
-            std::vector<std::vector<float>> block_w_class;
+            vector<float> block_x, block_y;
+            std::vector<std::vector<float>> block_y_soft;
             for (auto it = block_xy.cbegin(); it != block_xy.cend(); ++it) {
                 block_x.push_back(it->first.x());
                 block_x.push_back(it->first.y());
                 block_x.push_back(it->first.z());
                 block_y.push_back(it->second);
-                block_w.push_back(1.0f);
-
-                // Per-class OSM semantic kernel (boost-only, no suppression)
-                std::vector<float> k_vec(nc_csm, 1.0f);
-                int lbl = static_cast<int>(it->second);
-                if (lbl > 0 && lbl < nc_csm)  // skip free-space (label 0)
-                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
-                block_w_class.push_back(std::move(k_vec));
+                if (use_soft) {
+                    if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc)) {
+                        block_y_soft.push_back(*it->soft_probs);
+                    } else {
+                        // Free-space points: zero soft probs
+                        block_y_soft.emplace_back(static_cast<size_t>(nc), 0.f);
+                    }
+                }
             }
 
-            SemanticBKI3f *bgk = new SemanticBKI3f(SemanticOcTreeNode::num_class, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
-            bgk->train(block_x, block_y, block_w, block_w_class);
+            SemanticBKI3f *bgk = new SemanticBKI3f(nc, SemanticOcTreeNode::sf2, SemanticOcTreeNode::ell);
+            if (use_soft && block_y_soft.size() == block_xy.size())
+                bgk->train_soft(block_x, block_y_soft);
+            else
+                bgk->train(block_x, block_y);
 #ifdef OPENMP
 #pragma omp critical
 #endif
-            {
-                bgk_arr.emplace(key, bgk);
-            };
+            { bgk_arr.emplace(key, bgk); };
         }
-#ifdef DEBUG
-        Debug_Msg("Training done");
-        Debug_Msg("Prediction: block number: " << test_blocks.size());
-#endif
-        /////////////////////////////////////////////////
 
         ////////// Prediction ///////////////////////////
-        /////////////////////////////////////////////////
 #ifdef OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -215,6 +225,7 @@ namespace osm_bki {
                 xs.push_back(p.z());
             }
 
+            // Reference CSM: predict only from this block's own GP (no extended block loop).
             auto bgk = bgk_arr.find(key);
             if (bgk == bgk_arr.end())
               continue;
@@ -227,14 +238,9 @@ namespace osm_bki {
                 SemanticOcTreeNode &node = leaf_it.get_node();
                 node.update(ybars[j]);
             }
-
         }
-#ifdef DEBUG
-        Debug_Msg("Prediction done");
-#endif
 
         ////////// Cleaning /////////////////////////////
-        /////////////////////////////////////////////////
         for (auto it = bgk_arr.begin(); it != bgk_arr.end(); ++it)
             delete it->second;
 
@@ -337,14 +343,28 @@ namespace osm_bki {
             }
             if (c_x <= 0.f) continue;  // no OSM coverage, keep uniform prior
 
-            // Compute Mm[r] = M * osm_vec and max(Mm)
+            // Compute Mm[r] = M * osm_vec
             std::vector<float> Mm(osm_cm_rows_, 0.f);
-            float max_Mm = 0.f;
             for (int r = 0; r < osm_cm_rows_; ++r) {
                 for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                     Mm[r] += osm_cm_[r][c] * osm_vec[c];
-                if (Mm[r] > max_Mm) max_Mm = Mm[r];
             }
+
+            // Variant A: apply per-class height filter to common-class rows before
+            // computing max(Mm). Uses the same per-scan relative z bounds as the kernel path.
+            if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+                float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+                int bin = static_cast<int>((loc.z() - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+                bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+                const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+                int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+                for (int r = 0; r < ncols; ++r)
+                    Mm[r] *= hrow[r];
+            }
+
+            float max_Mm = 0.f;
+            for (int r = 0; r < osm_cm_rows_; ++r)
+                if (Mm[r] > max_Mm) max_Mm = Mm[r];
             if (max_Mm <= 0.f) continue;
 
             // Build spatially varying prior: base_prior + boost for OSM-supported classes
@@ -421,46 +441,6 @@ namespace osm_bki {
         for (int c = 0; c < 9; ++c)
             if (osm_vec[c] > max_geom) max_geom = osm_vec[c];
         osm_vec[9] = 1.0f - max_geom;
-    }
-
-    void SemanticBKIOctoMap::apply_osm_prior_to_ybars(std::vector<float> &ybars,
-                                                      float x, float y, float z, float scale) const {
-        if (!osm_cm_loaded_ || osm_prior_strength_ <= 0.0f || scale <= 0.0f) return;
-
-        float osm_vec[N_OSM_PRIOR_COLS];
-        compute_osm_prior_vec(x, y, osm_vec);
-
-        // Variant A: project OSM -> common first, then apply per-class height filter.
-        // p_super[row] = sum_j(M[row][j] * osm_vec[j])
-        std::vector<float> p_super(osm_cm_rows_, 0.f);
-        for (int r = 0; r < osm_cm_rows_; ++r)
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                p_super[r] += osm_cm_[r][c] * osm_vec[c];
-
-        // Height filter applied to common-class rows (not raw OSM cols).
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
-            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
-            for (int r = 0; r < ncols; ++r)
-                p_super[r] *= hrow[r];
-        }
-
-        // Add OSM contribution directly to ybars so it accumulates with every
-        // observation, maintaining a constant proportion of the total evidence.
-        float effective = osm_prior_strength_ * scale;
-        int num_class = static_cast<int>(ybars.size());
-        for (int r = 0; r < osm_cm_rows_; ++r) {
-            const auto &labels = osm_cm_row_to_labels_[r];
-            if (labels.empty() || p_super[r] == 0.f) continue;
-            float share = effective * p_super[r] / static_cast<float>(labels.size());
-            for (int lbl : labels) {
-                if (lbl >= 0 && lbl < num_class)
-                    ybars[lbl] += share;
-            }
-        }
     }
 
     void SemanticBKIOctoMap::compute_osm_semantic_kernel(

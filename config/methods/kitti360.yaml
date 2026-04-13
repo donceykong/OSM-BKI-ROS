@@ -19,6 +19,9 @@
     max_range: 200.0  # Sensor max range (m)
     keyframe_dist: 25.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
+    # Inference mode: "bki" (sparse kernel, default) or "csm" (counting sensor model baseline for CRF-style comparisons)
+    map_mode: "bki"
+
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: kitti360
     sequence_name: 2013_05_28_drive_0000_sync

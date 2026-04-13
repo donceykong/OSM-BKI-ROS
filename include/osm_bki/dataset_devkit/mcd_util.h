@@ -522,6 +522,17 @@ class MCDData {
       if (m_pub_) m_pub_->set_color_mode(mode);
     }
 
+    /// Select inference mode: "bki" (default, sparse kernel) or "csm" (counting sensor model baseline).
+    void set_map_mode(const std::string &mode) {
+      if (mode == "csm" || mode == "bki") {
+        map_mode_ = mode;
+        RCLCPP_INFO_STREAM(node_->get_logger(), "MCDData map_mode set to: " << map_mode_);
+      } else {
+        RCLCPP_WARN_STREAM(node_->get_logger(),
+            "Unknown map_mode '" << mode << "', keeping '" << map_mode_ << "'. Valid: bki, csm");
+      }
+    }
+
     /// Enable variance visualization on a separate topic. Jet colormap: blue=low variance, red=high.
     void set_publish_variance(bool enabled, const std::string& topic) {
       publish_variance_ = enabled;
@@ -1056,13 +1067,24 @@ class MCDData {
         origin.z() = lidar_to_map(2, 3);
         
         try {
+          const bool use_csm = (map_mode_ == "csm");
           if (!scan_common_probs_.empty() && scan_common_probs_.size() == cloud->points.size()) {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
-                                    scan_point_weights_, &scan_common_probs_);
+            if (use_csm)
+              map_->insert_pointcloud_csm(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                          scan_point_weights_, &scan_common_probs_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_,
+                                      scan_point_weights_, &scan_common_probs_);
           } else if (!scan_point_weights_.empty() && scan_point_weights_.size() == cloud->points.size()) {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
+            if (use_csm)
+              map_->insert_pointcloud_csm(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_, scan_point_weights_);
           } else {
-            map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
+            if (use_csm)
+              map_->insert_pointcloud_csm(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
+            else
+              map_->insert_pointcloud(*cloud, origin, ds_resolution_, free_resolution_, max_range_);
           }
         } catch (const std::exception& e) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Exception during insert_pointcloud: " << e.what());
@@ -1481,6 +1503,7 @@ class MCDData {
     double ds_resolution_;
     double free_resolution_;
     double max_range_;
+    std::string map_mode_{"bki"};  // "bki" or "csm" — selects inference path in insert_pointcloud
     osm_bki::SemanticBKIOctoMap* map_;
     osm_bki::MarkerArrayPub* m_pub_;
     osm_bki::MarkerArrayPub* variance_pub_{nullptr};

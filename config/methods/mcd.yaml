@@ -19,9 +19,12 @@
     max_range: 200.0  # Sensor max range (m)
     keyframe_dist: 5.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
+    # Inference mode: "bki" (sparse kernel, default) or "csm" (counting sensor model baseline for CRF-style comparisons)
+    map_mode: "bki"
+
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
-    sequence_name: kth_night_05
+    sequence_name: kth_day_09
 
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
@@ -29,7 +32,7 @@
     input_label_suffix: inferred_labels/cenet_kitti360_softmax
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/osm_bki  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/osm_bki_priorhf  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
     visualize: true
 
