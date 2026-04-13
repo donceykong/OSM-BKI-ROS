@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_02/datasets/"
+    data_root: "/media/donceykong/doncey_ssd_011/datasets/"
 
     # Map information
     resolution: 0.5
@@ -17,22 +17,22 @@
     # Information about range-finder data
     scan_num: 1000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    keyframe_dist: 25.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
+    keyframe_dist: 10.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
     # Inference mode: "bki" (sparse kernel, default) or "csm" (counting sensor model baseline for CRF-style comparisons)
     map_mode: "bki"
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: kitti360
-    sequence_name: 2013_05_28_drive_0000_sync
+    sequence_name: 2013_05_28_drive_0009_sync
 
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: velodyne_points/data
     lidar_pose_suffix: velodyne_poses.txt
-    input_label_suffix: inferred_labels/cenet_mcd_softmax
+    input_label_suffix: inferred_labels/cenet_mcd_terrain_softmax
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/NEW_KEYFRAME/kernel_kitti_keyframe_2_5
+    evaluation_result_prefix: evaluations/osm_bki
     query: true
     visualize: false
 
@@ -76,10 +76,8 @@
     # --------------------------------
     # OSM prior configuration 
     # --------------------------------
-    # OSM prior decay: distance (m) over which prior drops from 1 to 0 away from OSM geometry
-    osm_decay_meters: 3.0
     # OSM file for voxel priors (path relative to data dir, or absolute). Must match osm_visualizer if using both.
-    osm_file: map_0000.osm
+    osm_file: map_0009.osm
     osm_origin_lat: 48.9843445
     osm_origin_lon: 8.4295857
 
@@ -90,9 +88,9 @@
     #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
-    osm_confusion_matrix_file: osm_confusion_matrix_optimized_kitti360.yaml
-    osm_prior_strength: 0.0  # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.0  # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized_KITTI360_NEW.yaml
+    osm_prior_strength: 1.0  # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.5  # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5  # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 

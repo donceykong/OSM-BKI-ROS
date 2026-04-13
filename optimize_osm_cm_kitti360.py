@@ -1338,20 +1338,19 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
 def main():
     parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data (KITTI-360).")
     parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/kitti360.yaml"))
-    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_kitti360.yaml"))
-    parser.add_argument("--data-dir", type=str, default=None,
-                        help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
+    parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_KITTI360_NEW.yaml"))
+    parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--keyframe-dist", type=float, default=1.0,
-                        help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
+    parser.add_argument("--keyframe-dist", type=float, default=10.0)
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--road-width", type=float, default=4.0)
-    parser.add_argument("--sidewalk-width", type=float, default=2.0)
-    parser.add_argument("--cycleway-width", type=float, default=2.0)
-    parser.add_argument("--fence-width", type=float, default=0.6)
-    parser.add_argument("--grid-res", type=float, default=2.0,
-                        help="Grid resolution (m) for OSM prior caching (default: 2.0)")
+    parser.add_argument("--road-width", type=float, default=3.0)
+    parser.add_argument("--sidewalk-width", type=float, default=1.0)
+    parser.add_argument("--cycleway-width", type=float, default=3.0)
+    parser.add_argument("--fence-width", type=float, default=0.5)
+    parser.add_argument("--grid-res", type=float, default=1.0)
+    
+
     parser.add_argument("--visualize", action="store_true",
                         help="Plot the optimized matrix as a heatmap and optionally save to PNG")
     parser.add_argument("--visualize-points", action="store_true",
@@ -1362,12 +1361,15 @@ def main():
                         help="With --visualize: path for matrix PNG (default: <output>.png)")
     parser.add_argument("--vis-points-output", type=str, default=None,
                         help="With --visualize-points: path for points+OSM PNG (default: <output>_points_osm.png)")
+    
+
     parser.add_argument("--use-inferred-row", action="store_true",
                         help="Use inferred (model) labels as matrix rows. Optimizes OSM to correct inferred toward GT.")
     parser.add_argument("--inferred-prefix", type=str, default=None,
                         help="Override input_label_prefix (e.g. kth_day_09/inferred_labels/cenet_mcd_EDL/multiclass_confidence_scores)")
     parser.add_argument("--inferred-key", type=str, default=None,
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
+    
     parser.add_argument("--pose-format", type=str, default=None,
                         help="Pose file format: 'mcd' (CSV with quaternion) or 'kitti360' (frame + 3x4/4x4). "
                              "Auto-detected from config pose_format if not set.")
@@ -1377,7 +1379,8 @@ def main():
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    parser.add_argument("--height-bins", type=int, default=100,
+    
+    parser.add_argument("--height-bins", type=int, default=64,
                         help="Number of per-scan height bins for osm_height_confusion_matrix (default: 20)")
     parser.add_argument("--height-z-low-percentile", type=float, default=2.0,
                         help="Per-scan Z low percentile for height bin extent; disregard points below (default: 2)")
@@ -1387,6 +1390,7 @@ def main():
                         help="Skip computing and writing osm_height_confusion_matrix")
     parser.add_argument("--flip-height-axis", action="store_true",
                         help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
+    
     args = parser.parse_args()
 
     print(f"Loading config from {args.config}")
