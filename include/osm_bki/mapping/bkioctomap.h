@@ -541,13 +541,15 @@ namespace osm_bki {
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
 
-        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][OSM_col]
+        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][common_class_row]
+        // Variant A: height multipliers are applied AFTER the OSM->common projection, indexed by
+        // common-class row (same index space as osm_cm_ rows), so columns == osm_cm_rows_.
         bool use_osm_height_filter_{false};
         bool osm_height_cm_loaded_{false};
         float osm_height_min_z_{0.f};
         float osm_height_max_z_{0.f};
         int osm_height_num_bins_{0};
-        std::vector<std::array<float, N_OSM_PRIOR_COLS>> osm_height_cm_{};
+        std::vector<std::vector<float>> osm_height_cm_{};
     };
 
 }

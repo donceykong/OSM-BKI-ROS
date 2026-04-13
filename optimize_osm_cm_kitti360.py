@@ -23,8 +23,6 @@ Usage:
     --no-show             Save PNG only, do not block to show figure.
     --height-bins N       Number of per-scan height bins for osm_height_confusion_matrix (default: 20).
     --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
-    --max-iters N         Alternate prior/height optimization until convergence (default: 10).
-    --tol T               Convergence tolerance: stop when max abs change < T (default: 1e-4).
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
@@ -1044,101 +1042,62 @@ def _z_range_per_scan(z, z_low_percentile=0.0, z_high_percentile=100.0):
     return min_z, max_z
 
 
-def apply_height_filter(scan_data_list, height_matrix, num_bins, include_inferred=False,
-                         z_low_percentile=0.0, z_high_percentile=100.0):
-    """Apply height matrix to osm_vecs and concatenate. Returns (all_gt, effective_osm) or
-    (all_gt, effective_osm, all_inferred) if include_inferred and scan_data has 4-tuples.
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those percentiles
-    so outliers in Z do not stretch the bin extent."""
-    gt_list, osm_list = [], []
-    inf_list = [] if include_inferred else None
-    for item in scan_data_list:
-        if include_inferred and len(item) == 4:
-            map_pts, gt, osm, inf = item
-        else:
-            map_pts, gt, osm = item[:3]
-            inf = None
-        z = map_pts[:, 2]
-        min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
-        z_range = max_z - min_z + 1e-6
-        bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
-        effective = osm.copy()
-        for i in range(len(gt)):
-            b = int(bins[i])
-            effective[i] = osm[i] * height_matrix[b]
-        gt_list.append(gt)
-        osm_list.append(effective)
-        if include_inferred and inf is not None:
-            inf_list.append(inf)
-    all_gt = np.concatenate(gt_list)
-    effective_osm = np.concatenate(osm_list)
-    if include_inferred and inf_list:
-        return all_gt, effective_osm, np.concatenate(inf_list)
-    return all_gt, effective_osm
+def build_cooccurrence_height_class(scan_data_list, num_bins=20,
+                                    z_low_percentile=0.0, z_high_percentile=100.0):
+    """Per-scan height bins: counts_h[bin][class_idx] accumulates weighted counts of GT
+    points in each bin, indexed by common class (1..N_CLASSES-1 mapped to 0..N_CLASSES-2).
 
-
-def build_cooccurrence_height(scan_data_list, num_bins=20, prior_matrix=None,
-                              z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan height bins: for each (bin, OSM_col), accumulate weighted counts.
-    scan_data_list: list of (map_pts, gt_common, osm_vecs) or 4-tuples with inferred.
-    counts_h[bin][col] = sum of osm_vec[col] weighted by compatibility (prior or binary).
-    totals_h[bin][col] = sum of osm_vec[col] over all points in bin (with prior > threshold).
-
-    When prior_matrix is given: weight by max(0, prior_matrix[gt_row][col]) - height step
-    depends on prior, favoring (bin,col) where prior strongly boosts the correct class.
-    When prior_matrix is None: use binary OSM_GT_COMPATIBLE (original behavior).
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those percentiles
-    so outliers in Z do not stretch the bin extent."""
-    counts_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
-    totals_h = np.zeros((num_bins, N_OSM), dtype=np.float64)
-    osm_thresh = 0.01
-    use_prior = prior_matrix is not None and prior_matrix.shape >= (N_CLASSES - 1, N_OSM)
+    Each GT point contributes a weight equal to its OSM prior sum (points where OSM is
+    silent contribute less, so bins dominated by uninformative points don't skew the
+    per-class height histogram). Points with OSM sum == 0 contribute a fallback weight of 1.
+    When z_low_percentile / z_high_percentile are set, Z range per scan uses those
+    percentiles so outliers in Z do not stretch the bin extent."""
+    n_rows = N_CLASSES - 1
+    counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
     for item in scan_data_list:
         map_pts, gt, osm = item[:3]
         z = map_pts[:, 2]
         min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
         z_range = max_z - min_z + 1e-6
         bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
+        osm_sums = osm.sum(axis=1)
         for i in range(len(gt)):
-            b = int(bins[i])
             c = int(gt[i])
-            for j in range(N_OSM):
-                if osm[i, j] < osm_thresh:
-                    continue
-                totals_h[b, j] += osm[i, j]
-                if use_prior:
-                    if 1 <= c < N_CLASSES:
-                        w = max(0.0, prior_matrix[c - 1, j])
-                        counts_h[b, j] += osm[i, j] * w
-                else:
-                    if c in OSM_GT_COMPATIBLE.get(j, set()):
-                        counts_h[b, j] += osm[i, j]
-    return counts_h, totals_h
+            if not (1 <= c < N_CLASSES):
+                continue
+            b = int(bins[i])
+            w = float(osm_sums[i])
+            if w <= 0.0:
+                w = 1.0
+            counts_h[b, c - 1] += w
+    return counts_h
 
 
-def derive_height_matrix(counts_h, totals_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
-    """Derive height confusion matrix: matrix[bin][col] = trust multiplier in [0, 1].
-    When totals_h[bin][col] is negligible, use 1.0 (neutral).
-    Outliers are removed by clipping each column to [low_percentile, high_percentile] of that column."""
-    matrix = np.zeros((num_bins, N_OSM))
-    for b in range(num_bins):
-        for j in range(N_OSM):
-            if totals_h[b, j] < 1e-6:
-                matrix[b, j] = 1.0
-            else:
-                matrix[b, j] = np.clip(counts_h[b, j] / totals_h[b, j], 0.0, 1.0)
-    # Remove outliers: per-column clip to percentile range
-    for j in range(N_OSM):
-        col = matrix[:, j]
+def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
+    """Derive class-indexed height trust matrix: H[bin][class_idx] in [0, 1].
+
+    For each common class c (column), H[:, c-1] is the bin-histogram of class c points
+    normalized so that the peak bin equals 1.0. A high value means "class c is typical
+    at this height"; a low value means "unusual for class c at this height". Classes
+    with no observations are set to neutral (1.0).
+
+    Outliers are smoothed by clipping each column to [low_percentile, high_percentile]
+    of that column's values before the final per-column max-normalization."""
+    n_rows = counts_h.shape[1]
+    matrix = np.zeros((num_bins, n_rows))
+    for c in range(n_rows):
+        col = counts_h[:, c].astype(np.float64)
+        if col.sum() <= 1e-10:
+            matrix[:, c] = 1.0
+            continue
         lo = np.percentile(col, low_percentile)
         hi = np.percentile(col, high_percentile)
-        matrix[:, j] = np.clip(col, lo, hi)
-    # Ensure each column has maximum exactly 1.0 (scale so max = 1.0) and no value exceeds 1.0
-    for j in range(N_OSM):
-        col = matrix[:, j]
-        max_val = float(np.max(col))
-        if max_val > 1e-10:
-            matrix[:, j] = col / max_val
+        col = np.clip(col, lo, hi)
+        peak = float(col.max())
+        if peak > 1e-10:
+            matrix[:, c] = col / peak
+        else:
+            matrix[:, c] = 1.0
     matrix = np.clip(matrix, 0.0, 1.0)
     return matrix
 
@@ -1334,14 +1293,18 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
         lines.append(f"  {i+1}:  [{vals}]   # {CLASS_NAMES[i+1]}")
     if height_matrix is not None:
         n_bins = height_matrix.shape[0]
+        n_class_cols = height_matrix.shape[1]
+        class_cols_str = ", ".join(CLASS_NAMES[i + 1] for i in range(n_class_cols))
         lines += [
             "",
-            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins (1=lowest, "
-            f"{n_bins}=highest). Cols = OSM categories. Multipliers in [0, 1].",
+            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins "
+            f"(1=lowest, {n_bins}=highest). Cols = common-taxonomy classes 1..{n_class_cols}: "
+            f"[{class_cols_str}]. Multipliers in [0, 1] applied to p_super[class] after the "
+            "OSM→common projection.",
             "osm_height_confusion_matrix:",
         ]
         for b in range(n_bins):
-            vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(N_OSM))
+            vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(n_class_cols))
             lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} Height")
     lines += [
         "", "osm_class_map:",
@@ -1422,10 +1385,6 @@ def main():
                         help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
-    parser.add_argument("--max-iters", type=int, default=10,
-                        help="Max iterations for alternating prior/height optimization (default: 10)")
-    parser.add_argument("--tol", type=float, default=1e-4,
-                        help="Convergence tolerance: stop when max abs change < tol (default: 1e-4)")
     parser.add_argument("--flip-height-axis", action="store_true",
                         help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
     args = parser.parse_args()
@@ -1695,88 +1654,32 @@ def main():
         all_inferred = np.concatenate(all_inferred)
     print(f"\nTotal points: {len(all_gt)}")
 
-    use_iteration = (
+    # Single-pass optimization: in the class-indexed height-filter scheme, the OSM→common
+    # confusion matrix M and the class-indexed height matrix H decouple (H is a post-hoc
+    # per-class scalar applied after M·osm_vec), so there is no benefit to alternating.
+    if args.use_inferred_row and all_inferred is not None:
+        counts, class_totals = build_cooccurrence_inferred(all_inferred, all_gt, all_osm)
+        print("Co-occurrence: inferred-row with GT compatibility")
+    else:
+        counts, class_totals = build_cooccurrence(all_gt, all_osm)
+    matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
+
+    height_matrix = None
+    if (
         scan_data_list is not None
         and len(scan_data_list) > 0
         and not args.no_height_matrix
-        and args.max_iters >= 1
-    )
-
-    if use_iteration:
-        # Iterative alternating optimization: prior <-> height until steady state
-        num_bins = args.height_bins
-        height_matrix = np.ones((num_bins, N_OSM), dtype=np.float64)
-        matrix = None
-        use_inferred = args.use_inferred_row and all_inferred is not None
-
-        for it in range(args.max_iters):
-            prev_matrix = matrix.copy() if matrix is not None else None
-            prev_height = height_matrix.copy()
-
-            # Step 1: Optimize prior matrix given current height
-            if use_inferred:
-                all_gt_eff, effective_osm, all_inf_eff = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=True,
-                    z_low_percentile=args.height_z_low_percentile,
-                    z_high_percentile=args.height_z_high_percentile,
-                )
-                counts, class_totals = build_cooccurrence_inferred(
-                    all_inf_eff, all_gt_eff, effective_osm
-                )
-            else:
-                all_gt_eff, effective_osm = apply_height_filter(
-                    scan_data_list, height_matrix, num_bins, include_inferred=False,
-                    z_low_percentile=args.height_z_low_percentile,
-                    z_high_percentile=args.height_z_high_percentile,
-                )
-                counts, class_totals = build_cooccurrence(all_gt_eff, effective_osm)
-            matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
-
-            # Step 2: Optimize height matrix given current prior
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=num_bins, prior_matrix=matrix,
-                z_low_percentile=args.height_z_low_percentile,
-                z_high_percentile=args.height_z_high_percentile,
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=num_bins
-            )
-
-            # Convergence check
-            if prev_matrix is not None:
-                delta_prior = np.abs(matrix - prev_matrix).max()
-                delta_height = np.abs(height_matrix - prev_height).max()
-                delta = max(delta_prior, delta_height)
-                print(f"  Iter {it + 1}: max change prior={delta_prior:.2e} height={delta_height:.2e}")
-                if delta < args.tol:
-                    print(f"  Converged at iteration {it + 1} (tol={args.tol})")
-                    break
-        print(f"\nOSM height confusion matrix: {num_bins} bins x {N_OSM} cols")
+    ):
+        counts_h = build_cooccurrence_height_class(
+            scan_data_list, num_bins=args.height_bins,
+            z_low_percentile=args.height_z_low_percentile,
+            z_high_percentile=args.height_z_high_percentile,
+        )
+        height_matrix = derive_height_matrix(counts_h, num_bins=args.height_bins)
+        print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_CLASSES - 1} class cols")
+        print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
         if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
             print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
-    else:
-        # Single-pass (no iteration)
-        if args.use_inferred_row and all_inferred is not None:
-            counts, class_totals = build_cooccurrence_inferred(all_inferred, all_gt, all_osm)
-            print("Co-occurrence: inferred-row with GT compatibility")
-        else:
-            counts, class_totals = build_cooccurrence(all_gt, all_osm)
-        matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
-
-        height_matrix = None
-        if scan_data_list is not None and len(scan_data_list) > 0:
-            counts_h, totals_h = build_cooccurrence_height(
-                scan_data_list, num_bins=args.height_bins,
-                z_low_percentile=args.height_z_low_percentile,
-                z_high_percentile=args.height_z_high_percentile,
-            )
-            height_matrix = derive_height_matrix(
-                counts_h, totals_h, num_bins=args.height_bins
-            )
-            print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_OSM} cols")
-            print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
-            if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
-                print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
 
     # Optionally flip height axis so that bin 1 corresponds to highest Z instead of lowest
     if height_matrix is not None and args.flip_height_axis:

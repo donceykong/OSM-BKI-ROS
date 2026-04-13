@@ -716,7 +716,9 @@ class MCDData {
       }
     }
 
-    /// Load OSM height confusion matrix (rows=height bins, cols=OSM categories). Optional; used when osm_height_filtering enabled.
+    /// Load OSM height confusion matrix (rows=height bins, cols=common-class rows, Variant A).
+    /// Optional; used when osm_height_filtering enabled. Column count is taken from the YAML
+    /// row length (dynamic, matching number of common-class rows in the OSM confusion matrix).
     bool load_osm_height_confusion_matrix(const std::string &yaml_path) {
       if (!map_) return false;
       try {
@@ -725,20 +727,24 @@ class MCDData {
 
         auto cm_node = root["osm_height_confusion_matrix"];
         int max_bin = 0;
-        for (auto it = cm_node.begin(); it != cm_node.end(); ++it)
+        int n_cols = 0;
+        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
           max_bin = std::max(max_bin, it->first.as<int>());
-        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS, 0.f));
+          n_cols = std::max(n_cols, static_cast<int>(it->second.size()));
+        }
+        if (max_bin == 0 || n_cols == 0) return false;
+        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(n_cols, 0.f));
         for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
           int bin_idx = it->first.as<int>();
           if (bin_idx < 1 || bin_idx > max_bin) continue;
           auto vals = it->second;
-          for (int c = 0; c < std::min(static_cast<int>(vals.size()), osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS); ++c)
+          for (int c = 0; c < std::min(static_cast<int>(vals.size()), n_cols); ++c)
             matrix[bin_idx - 1][c] = vals[c].as<float>();
         }
         if (matrix.empty()) return false;
         map_->set_osm_height_confusion_matrix(matrix);
         RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << osm_bki::SemanticBKIOctoMap::N_OSM_PRIOR_COLS << " cols");
+            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << n_cols << " class cols");
         return true;
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),

@@ -369,15 +369,12 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
+        // Variant A: rows = height bins, cols = common-class rows (same index space as osm_cm_ rows).
         osm_height_num_bins_ = static_cast<int>(matrix.size());
         osm_height_cm_.clear();
         osm_height_cm_.resize(static_cast<size_t>(osm_height_num_bins_));
-        for (auto &row : osm_height_cm_) row.fill(0.f);
-
         for (int r = 0; r < osm_height_num_bins_; ++r) {
-            int ncols = std::min(static_cast<int>(matrix[r].size()), N_OSM_PRIOR_COLS);
-            for (int c = 0; c < ncols; ++c)
-                osm_height_cm_[static_cast<size_t>(r)][static_cast<size_t>(c)] = matrix[r][c];
+            osm_height_cm_[static_cast<size_t>(r)] = matrix[r];
         }
         osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
     }
@@ -433,21 +430,23 @@ namespace osm_bki {
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // OSM height filter: multiply osm_vec by height confusion matrix row (per-scan relative bins)
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                osm_vec[c] *= osm_height_cm_[bin][c];
-        }
-
+        // Variant A: project OSM -> common first, then apply per-class height filter.
         // p_super[row] = sum_j(M[row][j] * osm_vec[j])
-        // M values in [-1, 1]; negative decreases likelihood, positive increases.
         std::vector<float> p_super(osm_cm_rows_, 0.f);
         for (int r = 0; r < osm_cm_rows_; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 p_super[r] += osm_cm_[r][c] * osm_vec[c];
+
+        // Height filter applied to common-class rows (not raw OSM cols).
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+            for (int r = 0; r < ncols; ++r)
+                p_super[r] *= hrow[r];
+        }
 
         // Add OSM contribution directly to ybars so it accumulates with every
         // observation, maintaining a constant proportion of the total evidence.
@@ -476,30 +475,32 @@ namespace osm_bki {
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // 2. Apply height filter: modulate OSM prior by height confusion matrix
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
-            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
-            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
-                osm_vec[c] *= osm_height_cm_[bin][c];
-        }
-
-        // 3. OSM confidence c(x) = max of OSM prior (excluding "none" column)
+        // 2. OSM confidence c(x) = max of OSM prior (excluding "none" column)
         float c_x = 0.f;
         for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
             if (osm_vec[c] > c_x) c_x = osm_vec[c];
         }
         if (c_x <= 0.f) return;  // No OSM coverage: all weights stay 1.0
 
-        // 4. Compute Mm[r] = sum_j M[r][j] * osm_vec[j] — per-superclass OSM support
+        // 3. Variant A: project OSM -> common, then apply per-class height filter.
         std::vector<float> Mm(osm_cm_rows_, 0.f);
-        float max_Mm = 0.f;
-        for (int r = 0; r < osm_cm_rows_; ++r) {
+        for (int r = 0; r < osm_cm_rows_; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 Mm[r] += osm_cm_[r][c] * osm_vec[c];
-            if (Mm[r] > max_Mm) max_Mm = Mm[r];
+
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
+            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
+            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+            for (int r = 0; r < ncols; ++r)
+                Mm[r] *= hrow[r];
         }
+
+        float max_Mm = 0.f;
+        for (int r = 0; r < osm_cm_rows_; ++r)
+            if (Mm[r] > max_Mm) max_Mm = Mm[r];
         if (max_Mm <= 0.f) return;
 
         // 5. Per-class boost: classes supported by OSM get weight > 1.0
