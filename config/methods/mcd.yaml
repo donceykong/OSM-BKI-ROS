@@ -32,7 +32,7 @@
     input_label_suffix: inferred_labels/cenet_mcd_softmax
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/indomain_vanilla  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/indomain_osm_bki  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
     visualize: false
 
@@ -89,10 +89,10 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
-    osm_prior_strength: 0.0  # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.0   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_prior_strength: 0.5  # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.25   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
-    osm_height_filtering: false           # use height-based filtering for OSM priors
+    osm_height_filtering: true           # use height-based filtering for OSM priors
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
