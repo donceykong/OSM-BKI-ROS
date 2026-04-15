@@ -29,6 +29,7 @@
 #include <pcl/common/transforms.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/point_types.h>
+#include <pcl/filters/voxel_grid.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "bkioctomap.h"
@@ -612,6 +613,36 @@ class MCDData {
       if (map_) map_->set_osm_height_filter_enabled(enabled);
     }
 
+    /// Enable per-scan and/or accumulated-map OSM height-bin visualization as colored
+    /// PointCloud2. Scan and map can be toggled independently. The map cloud is voxel-
+    /// downsampled with `map_leaf_size` after each scan is appended.
+    void set_publish_height_bins(bool scan_enabled, bool map_enabled,
+                                 float bin_step_meters, float map_leaf_size,
+                                 const std::string& scan_topic, const std::string& map_topic) {
+      publish_height_bins_scan_ = scan_enabled;
+      publish_height_bins_map_ = map_enabled;
+      height_bins_step_meters_ = std::max(0.01f, bin_step_meters);
+      height_bins_map_leaf_size_ = std::max(0.01f, map_leaf_size);
+      if (scan_enabled && !height_bins_scan_pub_) {
+        height_bins_scan_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(scan_topic, 10);
+      }
+      if (map_enabled) {
+        if (!height_bins_map_pub_) {
+          height_bins_map_pub_ = node_->create_publisher<sensor_msgs::msg::PointCloud2>(map_topic, 10);
+        }
+        if (!height_bins_map_cloud_) {
+          height_bins_map_cloud_.reset(new pcl::PointCloud<pcl::PointXYZRGB>());
+        }
+      }
+      if (scan_enabled || map_enabled) {
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "OSM height-bin visualization: scan=" << scan_enabled << " (" << scan_topic << ")"
+            << ", map=" << map_enabled << " (" << map_topic << ")"
+            << ", bin_step=" << height_bins_step_meters_ << " m (num_bins auto per scan)"
+            << ", map_leaf_size=" << height_bins_map_leaf_size_);
+      }
+    }
+
     /// Enable OSM prior map on a separate topic. Priors computed on-the-fly (not stored in octree).
     void set_publish_osm_prior_map(bool enabled, const std::string& topic, osm_bki::MapColorMode osm_color_mode) {
       publish_osm_prior_map_ = enabled;
@@ -1026,6 +1057,107 @@ class MCDData {
           cloud_msg.header.frame_id = "map";
           cloud_msg.header.stamp = node_->now();
           pointcloud_pub_->publish(cloud_msg);
+        }
+
+        // OSM height-bin visualization: color each point by a fixed-step metric bin
+        // along the lidar's local z axis, centered on the sensor origin. The cloud is
+        // already in map frame, so we project (p - origin) onto the 3rd column of the
+        // lidar->map rotation (= lidar +z expressed in map frame). num_bins is derived
+        // per scan from the point extent so bins exactly cover the data range (symmetric
+        // about sensor origin).
+        if ((publish_height_bins_scan_ || publish_height_bins_map_) && !cloud->points.empty()) {
+          const Eigen::Vector3f lidar_up(
+              static_cast<float>(lidar_to_map(0, 2)),
+              static_cast<float>(lidar_to_map(1, 2)),
+              static_cast<float>(lidar_to_map(2, 2)));
+          const Eigen::Vector3f origin_map(
+              static_cast<float>(lidar_to_map(0, 3)),
+              static_cast<float>(lidar_to_map(1, 3)),
+              static_cast<float>(lidar_to_map(2, 3)));
+          const float step = height_bins_step_meters_;
+
+          // First pass: compute z_local for each point and find the symmetric extent.
+          std::vector<float> z_locals(cloud->points.size());
+          float max_abs = 0.f;
+          for (size_t i = 0; i < cloud->points.size(); ++i) {
+            const auto& sp = cloud->points[i];
+            Eigen::Vector3f delta(sp.x - origin_map.x(), sp.y - origin_map.y(), sp.z - origin_map.z());
+            float z_local = lidar_up.dot(delta);
+            z_locals[i] = z_local;
+            float a = std::fabs(z_local);
+            if (a > max_abs) max_abs = a;
+          }
+          const int half = std::max(1, static_cast<int>(std::ceil(max_abs / step)));
+          const int nbins = 2 * half;
+
+          auto bin_to_rgb = [nbins](int bin, uint8_t& r, uint8_t& g, uint8_t& b) {
+            // Odd bins are painted black to create clear stripes between segments.
+            if (bin & 1) { r = 0; g = 0; b = 0; return; }
+            // 7-stop multi-color gradient along the lidar z axis. Linear interpolation
+            // between fixed RGB control points gives a smooth low→high ramp that passes
+            // through many visibly distinct colors (magenta → blue → cyan → green →
+            // yellow → orange → red).
+            static constexpr int kStops = 7;
+            static constexpr float kColors[kStops][3] = {
+              {0.50f, 0.00f, 1.00f},  // magenta/purple
+              {0.00f, 0.00f, 1.00f},  // blue
+              {0.00f, 1.00f, 1.00f},  // cyan
+              {0.00f, 1.00f, 0.00f},  // green
+              {1.00f, 1.00f, 0.00f},  // yellow
+              {1.00f, 0.50f, 0.00f},  // orange
+              {1.00f, 0.00f, 0.00f},  // red
+            };
+            float t = (nbins > 1) ? (static_cast<float>(bin) / static_cast<float>(nbins - 1)) : 0.f;
+            float s = t * static_cast<float>(kStops - 1);
+            int i0 = std::min(static_cast<int>(std::floor(s)), kStops - 2);
+            float f = s - static_cast<float>(i0);
+            float rr = kColors[i0][0] * (1.f - f) + kColors[i0 + 1][0] * f;
+            float gg = kColors[i0][1] * (1.f - f) + kColors[i0 + 1][1] * f;
+            float bb = kColors[i0][2] * (1.f - f) + kColors[i0 + 1][2] * f;
+            r = static_cast<uint8_t>(std::min(255, static_cast<int>(rr * 255.0f + 0.5f)));
+            g = static_cast<uint8_t>(std::min(255, static_cast<int>(gg * 255.0f + 0.5f)));
+            b = static_cast<uint8_t>(std::min(255, static_cast<int>(bb * 255.0f + 0.5f)));
+          };
+
+          pcl::PointCloud<pcl::PointXYZRGB>::Ptr bin_cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+          bin_cloud->points.resize(cloud->points.size());
+          bin_cloud->width = static_cast<uint32_t>(cloud->points.size());
+          bin_cloud->height = 1;
+          bin_cloud->is_dense = false;
+          for (size_t i = 0; i < cloud->points.size(); ++i) {
+            const auto& sp = cloud->points[i];
+            auto& dp = bin_cloud->points[i];
+            dp.x = sp.x; dp.y = sp.y; dp.z = sp.z;
+            int bin = static_cast<int>(std::floor(z_locals[i] / step)) + half;
+            if (bin < 0) bin = 0;
+            if (bin >= nbins) bin = nbins - 1;
+            bin_to_rgb(bin, dp.r, dp.g, dp.b);
+          }
+
+          if (publish_height_bins_scan_ && height_bins_scan_pub_) {
+            sensor_msgs::msg::PointCloud2 msg;
+            pcl::toROSMsg(*bin_cloud, msg);
+            msg.header.frame_id = "map";
+            msg.header.stamp = node_->now();
+            height_bins_scan_pub_->publish(msg);
+          }
+
+          // Accumulate into map cloud then voxel-downsample.
+          if (publish_height_bins_map_ && height_bins_map_pub_ && height_bins_map_cloud_) {
+            *height_bins_map_cloud_ += *bin_cloud;
+            pcl::VoxelGrid<pcl::PointXYZRGB> vg;
+            vg.setInputCloud(height_bins_map_cloud_);
+            vg.setLeafSize(height_bins_map_leaf_size_, height_bins_map_leaf_size_, height_bins_map_leaf_size_);
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZRGB>());
+            vg.filter(*filtered);
+            height_bins_map_cloud_ = filtered;
+
+            sensor_msgs::msg::PointCloud2 map_msg;
+            pcl::toROSMsg(*height_bins_map_cloud_, map_msg);
+            map_msg.header.frame_id = "map";
+            map_msg.header.stamp = node_->now();
+            height_bins_map_pub_->publish(map_msg);
+          }
         }
 
         // Accumulate semantic uncertainty per voxel (for map visualization)
@@ -1494,6 +1626,13 @@ class MCDData {
     std::string semantic_uncertainty_topic_;
     std::map<VoxelKey, std::pair<float, int>> semantic_uncertainty_acc_;  // per-voxel: (sum_uncertainty, count)
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_pub_;  // Publisher for individual scan point clouds
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr height_bins_scan_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr height_bins_map_pub_;
+    bool publish_height_bins_scan_{false};
+    bool publish_height_bins_map_{false};
+    float height_bins_step_meters_{5.0f};
+    float height_bins_map_leaf_size_{0.5f};
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr height_bins_map_cloud_{nullptr};
     tf2_ros::TransformBroadcaster tf_broadcaster_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     tf2_ros::TransformListener tf_listener_;

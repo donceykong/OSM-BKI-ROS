@@ -104,6 +104,12 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("osm_dirichlet_prior_strength", 0.0);
     node->declare_parameter<double>("osm_scan_radius_extension", 1.2);
     node->declare_parameter<bool>("osm_height_filtering", false);
+    node->declare_parameter<bool>("publish_osm_height_bins_scan", false);
+    node->declare_parameter<bool>("publish_osm_height_bins_map", false);
+    node->declare_parameter<double>("osm_height_bins_step_meters", 5.0);
+    node->declare_parameter<double>("osm_height_bins_map_leaf_size", 0.5);
+    node->declare_parameter<std::string>("osm_height_bins_scan_topic", "/osm_height_bins_scan");
+    node->declare_parameter<std::string>("osm_height_bins_map_topic", "/osm_height_bins_map");
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
@@ -425,6 +431,23 @@ int main(int argc, char **argv) {
       node->get_parameter<double>("osm_scan_radius_extension", osm_scan_ext);
       mcd_data.set_osm_scan_radius_extension(static_cast<float>(osm_scan_ext));
       mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
+
+      bool publish_osm_height_bins_scan = false;
+      bool publish_osm_height_bins_map = false;
+      double osm_height_bins_step_meters = 5.0;
+      double osm_height_bins_map_leaf_size = 0.5;
+      std::string osm_height_bins_scan_topic = "/osm_height_bins_scan";
+      std::string osm_height_bins_map_topic = "/osm_height_bins_map";
+      node->get_parameter<bool>("publish_osm_height_bins_scan", publish_osm_height_bins_scan);
+      node->get_parameter<bool>("publish_osm_height_bins_map", publish_osm_height_bins_map);
+      node->get_parameter<double>("osm_height_bins_step_meters", osm_height_bins_step_meters);
+      node->get_parameter<double>("osm_height_bins_map_leaf_size", osm_height_bins_map_leaf_size);
+      node->get_parameter<std::string>("osm_height_bins_scan_topic", osm_height_bins_scan_topic);
+      node->get_parameter<std::string>("osm_height_bins_map_topic", osm_height_bins_map_topic);
+      mcd_data.set_publish_height_bins(publish_osm_height_bins_scan, publish_osm_height_bins_map,
+                                       static_cast<float>(osm_height_bins_step_meters),
+                                       static_cast<float>(osm_height_bins_map_leaf_size),
+                                       osm_height_bins_scan_topic, osm_height_bins_map_topic);
 
       bool publish_osm_prior_map = false;
       std::string osm_prior_map_color_mode_str = "osm_blend";
