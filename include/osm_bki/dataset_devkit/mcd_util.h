@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -774,8 +775,22 @@ class MCDData {
         }
         if (matrix.empty()) return false;
         map_->set_osm_height_confusion_matrix(matrix);
+
+        // Read fixed-metric bin parameters. Required by the new scheme: rows of the
+        // matrix are fixed-step bins measured upward from the per-scan bottom along
+        // a fixed reference up axis. step_meters must match what the optimizer used.
+        float step_meters = 1.0f;
+        if (root["osm_height_bin_step_meters"]) {
+          step_meters = root["osm_height_bin_step_meters"].as<float>();
+        } else {
+          RCLCPP_WARN_STREAM(node_->get_logger(),
+              "OSM height CM yaml is missing 'osm_height_bin_step_meters'; defaulting to "
+              << step_meters << " m. Regenerate with the updated optimizer for correct binning.");
+        }
+        map_->set_osm_height_bin_step(step_meters);
         RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << n_cols << " class cols");
+            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << n_cols
+            << " class cols (step=" << step_meters << " m)");
         return true;
       } catch (const std::exception &e) {
         RCLCPP_WARN_STREAM(node_->get_logger(),
@@ -848,9 +863,22 @@ class MCDData {
         have_keyframe = true;
       }
       
+      // Fix the OSM height filter reference up axis to the +z of the first scan's
+      // lidar, expressed in the (first-pose-relative) map frame. After pose
+      // normalization lidar_poses_[0] ≈ I, so this reduces to column 2 of
+      // lidar_to_body, but computing it explicitly is robust.
+      if (!lidar_poses_.empty() && !body_to_lidar_tf_.isZero(1e-10)) {
+        Eigen::Matrix4d lidar_to_body_0 = body_to_lidar_tf_.inverse();
+        Eigen::Matrix4d first_lidar_to_map = lidar_poses_[0] * lidar_to_body_0;
+        map_->set_osm_height_up_ref(
+            static_cast<float>(first_lidar_to_map(0, 2)),
+            static_cast<float>(first_lidar_to_map(1, 2)),
+            static_cast<float>(first_lidar_to_map(2, 2)));
+      }
+
       osm_bki::point3f origin;
       int insertion_count = 0;
-      
+
       for (size_t list_idx = 0; list_idx < indices_to_process.size(); ++list_idx) {
         int pose_idx = indices_to_process[list_idx];
         int scan_file_num = scan_indices_[pose_idx];
@@ -1060,35 +1088,48 @@ class MCDData {
         }
 
         // OSM height-bin visualization: color each point by a fixed-step metric bin
-        // along the lidar's local z axis, centered on the sensor origin. The cloud is
-        // already in map frame, so we project (p - origin) onto the 3rd column of the
-        // lidar->map rotation (= lidar +z expressed in map frame). num_bins is derived
-        // per scan from the point extent so bins exactly cover the data range (symmetric
-        // about sensor origin).
+        // measured upward from the bottom-most lidar point of the scan. Height is
+        // along a fixed "up" axis — the +z of the first scan's lidar, expressed in
+        // the map frame. That reference axis is cached on the first scan and reused
+        // for every subsequent scan so the binning direction is stable over the
+        // trajectory (doesn't rotate with the sensor). num_bins is derived per scan
+        // from (max_h - min_h) / step so bins exactly cover the data range.
         if ((publish_height_bins_scan_ || publish_height_bins_map_) && !cloud->points.empty()) {
-          const Eigen::Vector3f lidar_up(
-              static_cast<float>(lidar_to_map(0, 2)),
-              static_cast<float>(lidar_to_map(1, 2)),
-              static_cast<float>(lidar_to_map(2, 2)));
+          if (!height_bins_up_ref_set_ && !lidar_poses_.empty()) {
+            // Reference "up" is the +z axis of the first scan's lidar, expressed in
+            // the (first-pose-relative) map frame. After the first-pose normalization
+            // at load time lidar_poses_[0] ≈ I, so this reduces to column 2 of
+            // lidar_to_body, but computing it explicitly is robust to future changes.
+            Eigen::Matrix4d first_lidar_to_map = lidar_poses_[0] * lidar_to_body;
+            height_bins_up_ref_ = Eigen::Vector3f(
+                static_cast<float>(first_lidar_to_map(0, 2)),
+                static_cast<float>(first_lidar_to_map(1, 2)),
+                static_cast<float>(first_lidar_to_map(2, 2)));
+            float n = height_bins_up_ref_.norm();
+            if (n > 1e-6f) height_bins_up_ref_ /= n;
+            height_bins_up_ref_set_ = true;
+          }
+          const Eigen::Vector3f lidar_up = height_bins_up_ref_;
           const Eigen::Vector3f origin_map(
               static_cast<float>(lidar_to_map(0, 3)),
               static_cast<float>(lidar_to_map(1, 3)),
               static_cast<float>(lidar_to_map(2, 3)));
           const float step = height_bins_step_meters_;
 
-          // First pass: compute z_local for each point and find the symmetric extent.
+          // First pass: compute z_local for each point and find the min (bottom).
           std::vector<float> z_locals(cloud->points.size());
-          float max_abs = 0.f;
+          float z_min = std::numeric_limits<float>::infinity();
+          float z_max = -std::numeric_limits<float>::infinity();
           for (size_t i = 0; i < cloud->points.size(); ++i) {
             const auto& sp = cloud->points[i];
             Eigen::Vector3f delta(sp.x - origin_map.x(), sp.y - origin_map.y(), sp.z - origin_map.z());
             float z_local = lidar_up.dot(delta);
             z_locals[i] = z_local;
-            float a = std::fabs(z_local);
-            if (a > max_abs) max_abs = a;
+            if (z_local < z_min) z_min = z_local;
+            if (z_local > z_max) z_max = z_local;
           }
-          const int half = std::max(1, static_cast<int>(std::ceil(max_abs / step)));
-          const int nbins = 2 * half;
+          const float range = std::max(0.f, z_max - z_min);
+          const int nbins = std::max(1, static_cast<int>(std::ceil(range / step)));
 
           auto bin_to_rgb = [nbins](int bin, uint8_t& r, uint8_t& g, uint8_t& b) {
             // Odd bins are painted black to create clear stripes between segments.
@@ -1128,7 +1169,7 @@ class MCDData {
             const auto& sp = cloud->points[i];
             auto& dp = bin_cloud->points[i];
             dp.x = sp.x; dp.y = sp.y; dp.z = sp.z;
-            int bin = static_cast<int>(std::floor(z_locals[i] / step)) + half;
+            int bin = static_cast<int>(std::floor((z_locals[i] - z_min) / step));
             if (bin < 0) bin = 0;
             if (bin >= nbins) bin = nbins - 1;
             bin_to_rgb(bin, dp.r, dp.g, dp.b);
@@ -1633,6 +1674,8 @@ class MCDData {
     float height_bins_step_meters_{5.0f};
     float height_bins_map_leaf_size_{0.5f};
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr height_bins_map_cloud_{nullptr};
+    Eigen::Vector3f height_bins_up_ref_{Eigen::Vector3f::Zero()};  // +z of first frame's lidar, in map frame
+    bool height_bins_up_ref_set_{false};
     tf2_ros::TransformBroadcaster tf_broadcaster_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     tf2_ros::TransformListener tf_listener_;

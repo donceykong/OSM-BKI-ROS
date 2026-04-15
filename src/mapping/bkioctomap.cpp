@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <numeric>
 #include <pcl/filters/voxel_grid.h>
 
@@ -112,8 +113,20 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
+        // Fixed-metric height filter: compute this scan's z_base (bottom-most
+        // projection onto the reference up axis) over training points. All per-voxel
+        // bin indices are then (up_ref · p − z_base) / step.
+        if (use_osm_height_filter_ && osm_height_up_ref_set_ && !xy.empty()) {
+            float ux = osm_height_up_ref_x_;
+            float uy = osm_height_up_ref_y_;
+            float uz = osm_height_up_ref_z_;
+            float z_min = std::numeric_limits<float>::infinity();
+            for (auto it = xy.cbegin(); it != xy.cend(); ++it) {
+                float h = ux * it->first.x() + uy * it->first.y() + uz * it->first.z();
+                if (h < z_min) z_min = h;
+            }
+            if (std::isfinite(z_min)) osm_height_z_base_ = z_min;
+        }
 
         // Pre-filter OSM geometry to scan vicinity
         float cx = (lim_min.x() + lim_max.x()) * 0.5f;
@@ -337,14 +350,28 @@ namespace osm_bki {
             }
             if (c_x <= 0.f) continue;  // no OSM coverage, keep uniform prior
 
-            // Compute Mm[r] = M * osm_vec and max(Mm)
+            // Compute Mm[r] = M * osm_vec
             std::vector<float> Mm(osm_cm_rows_, 0.f);
-            float max_Mm = 0.f;
-            for (int r = 0; r < osm_cm_rows_; ++r) {
+            for (int r = 0; r < osm_cm_rows_; ++r)
                 for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                     Mm[r] += osm_cm_[r][c] * osm_vec[c];
-                if (Mm[r] > max_Mm) max_Mm = Mm[r];
+
+            // Apply fixed-metric height filter (same scheme as compute_osm_semantic_kernel)
+            if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+                && osm_height_up_ref_set_) {
+                float h = osm_height_up_ref_x_ * loc.x() + osm_height_up_ref_y_ * loc.y()
+                          + osm_height_up_ref_z_ * loc.z() - osm_height_z_base_;
+                int bin = static_cast<int>(std::floor(h / osm_height_step_meters_));
+                bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+                const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+                int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+                for (int r = 0; r < ncols; ++r)
+                    Mm[r] *= hrow[r];
             }
+
+            float max_Mm = 0.f;
+            for (int r = 0; r < osm_cm_rows_; ++r)
+                if (Mm[r] > max_Mm) max_Mm = Mm[r];
             if (max_Mm <= 0.f) continue;
 
             // Build spatially varying prior: base_prior + boost for OSM-supported classes
@@ -369,7 +396,8 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix) {
-        // Variant A: rows = height bins, cols = common-class rows (same index space as osm_cm_ rows).
+        // Variant A: rows = height bins (fixed-metric, upward from per-scan bottom),
+        // cols = common-class rows (same index space as osm_cm_ rows).
         osm_height_num_bins_ = static_cast<int>(matrix.size());
         osm_height_cm_.clear();
         osm_height_cm_.resize(static_cast<size_t>(osm_height_num_bins_));
@@ -377,6 +405,24 @@ namespace osm_bki {
             osm_height_cm_[static_cast<size_t>(r)] = matrix[r];
         }
         osm_height_cm_loaded_ = (osm_height_num_bins_ > 0);
+    }
+
+    void SemanticBKIOctoMap::set_osm_height_bin_step(float step_meters) {
+        osm_height_step_meters_ = (step_meters > 1e-6f) ? step_meters : 1.0f;
+    }
+
+    void SemanticBKIOctoMap::set_osm_height_up_ref(float ux, float uy, float uz) {
+        float n = std::sqrt(ux * ux + uy * uy + uz * uz);
+        if (n > 1e-6f) {
+            osm_height_up_ref_x_ = ux / n;
+            osm_height_up_ref_y_ = uy / n;
+            osm_height_up_ref_z_ = uz / n;
+        } else {
+            osm_height_up_ref_x_ = 0.f;
+            osm_height_up_ref_y_ = 0.f;
+            osm_height_up_ref_z_ = 1.f;
+        }
+        osm_height_up_ref_set_ = true;
     }
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
@@ -438,9 +484,12 @@ namespace osm_bki {
                 p_super[r] += osm_cm_[r][c] * osm_vec[c];
 
         // Height filter applied to common-class rows (not raw OSM cols).
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+        // Fixed-metric bin upward from per-scan bottom along the reference up axis.
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+            && osm_height_up_ref_set_) {
+            float h = osm_height_up_ref_x_ * x + osm_height_up_ref_y_ * y + osm_height_up_ref_z_ * z
+                      - osm_height_z_base_;
+            int bin = static_cast<int>(std::floor(h / osm_height_step_meters_));
             bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
             const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
             int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
@@ -488,9 +537,11 @@ namespace osm_bki {
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 Mm[r] += osm_cm_[r][c] * osm_vec[c];
 
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0) {
-            float z_range = osm_height_max_z_ - osm_height_min_z_ + 1e-6f;
-            int bin = static_cast<int>((z - osm_height_min_z_) / z_range * static_cast<float>(osm_height_num_bins_));
+        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+            && osm_height_up_ref_set_) {
+            float h = osm_height_up_ref_x_ * x + osm_height_up_ref_y_ * y + osm_height_up_ref_z_ * z
+                      - osm_height_z_base_;
+            int bin = static_cast<int>(std::floor(h / osm_height_step_meters_));
             bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
             const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
             int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
@@ -720,8 +771,20 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
+        // Fixed-metric height filter: compute this scan's z_base (bottom-most
+        // projection onto the reference up axis) over training points. All per-voxel
+        // bin indices are then (up_ref · p − z_base) / step.
+        if (use_osm_height_filter_ && osm_height_up_ref_set_ && !xy.empty()) {
+            float ux = osm_height_up_ref_x_;
+            float uy = osm_height_up_ref_y_;
+            float uz = osm_height_up_ref_z_;
+            float z_min = std::numeric_limits<float>::infinity();
+            for (auto it = xy.cbegin(); it != xy.cend(); ++it) {
+                float h = ux * it->first.x() + uy * it->first.y() + uz * it->first.z();
+                if (h < z_min) z_min = h;
+            }
+            if (std::isfinite(z_min)) osm_height_z_base_ = z_min;
+        }
 
         // Pre-filter OSM geometry to scan vicinity
         float cx = (lim_min.x() + lim_max.x()) * 0.5f;
@@ -1131,8 +1194,20 @@ namespace osm_bki {
 
         point3f lim_min, lim_max;
         bbox(xy, lim_min, lim_max);
-        osm_height_min_z_ = lim_min.z();
-        osm_height_max_z_ = lim_max.z();
+        // Fixed-metric height filter: compute this scan's z_base (bottom-most
+        // projection onto the reference up axis) over training points. All per-voxel
+        // bin indices are then (up_ref · p − z_base) / step.
+        if (use_osm_height_filter_ && osm_height_up_ref_set_ && !xy.empty()) {
+            float ux = osm_height_up_ref_x_;
+            float uy = osm_height_up_ref_y_;
+            float uz = osm_height_up_ref_z_;
+            float z_min = std::numeric_limits<float>::infinity();
+            for (auto it = xy.cbegin(); it != xy.cend(); ++it) {
+                float h = ux * it->first.x() + uy * it->first.y() + uz * it->first.z();
+                if (h < z_min) z_min = h;
+            }
+            if (std::isfinite(z_min)) osm_height_z_base_ = z_min;
+        }
 
         // Pre-filter OSM geometry to scan vicinity
         float cx = (lim_min.x() + lim_max.x()) * 0.5f;
