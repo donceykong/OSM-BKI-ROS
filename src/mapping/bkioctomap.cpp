@@ -212,7 +212,7 @@ namespace osm_bki {
                 float ybar_sum = 0.f;
                 for (auto v : ybars[j]) ybar_sum += std::abs(v);
                 apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-                apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
+                apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
 
                 node.update(ybars[j]);
             }
@@ -349,13 +349,14 @@ namespace osm_bki {
         dsm_query_ = std::move(dsm);
     }
 
-    void SemanticBKIOctoMap::set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone, bool redistribute, float gate) {
+    void SemanticBKIOctoMap::set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone, bool redistribute, float gate, float sensor_mounting_height) {
         height_kernel_lambda_ = lambda;
         height_kernel_mu_ = mu;
         height_kernel_tau_ = tau;
         height_kernel_dead_zone_ = dead_zone;
         height_kernel_redistribute_ = redistribute;
         height_kernel_gate_ = gate;
+        sensor_mounting_height_ = sensor_mounting_height;
     }
 
     void SemanticBKIOctoMap::set_dem_occupancy_prior(float strength, float margin) {
@@ -364,11 +365,12 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::apply_height_kernel_to_ybars(std::vector<float> &ybars,
-                                                           float x, float y, float z) const {
-        if (!dem_query_ || !dem_query_->is_loaded() || height_kernel_lambda_ <= 0.f) return;
+                                                           float x, float y, float z, float origin_z) const {
+        if (height_kernel_lambda_ <= 0.f) return;
 
-        float h = dem_query_->height_above_ground(x, y, z);
-        if (std::isnan(h)) return;  // no DEM coverage → no effect
+        // Scan-relative height estimation: ground_z = origin_z - sensor_mounting_height
+        float estimated_ground_z = origin_z - sensor_mounting_height_;
+        float h = z - estimated_ground_z;
 
         int nc = static_cast<int>(ybars.size());
         float lam = height_kernel_lambda_;
@@ -822,7 +824,7 @@ namespace osm_bki {
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
+                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
 
                     node.update(ybars[j]);
                 }
@@ -1220,7 +1222,7 @@ namespace osm_bki {
                     float ybar_sum = 0.f;
                     for (auto v : ybars[j]) ybar_sum += std::abs(v);
                     apply_osm_prior_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), std::min(ybar_sum, 1.0f));
-                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z());
+                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
 
                     node.update(ybars[j]);
                 }

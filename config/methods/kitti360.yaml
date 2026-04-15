@@ -98,10 +98,11 @@
     # Grid files live in the sequence directory alongside the pose/lidar data.
     height_kernel_enabled: true
     height_kernel_lambda: 0.5       # 0 = disabled, 1 = full gating
+    sensor_mounting_height: 1.73    # KITTI-360 Velodyne height above ground (m)
     height_kernel_dem_grid_suffix: dem_local_grid.bin
     height_kernel_dsm_grid_suffix: dsm_local_grid.bin
     # DEM occupancy prior: add free-space evidence for voxels above DSM or below DEM
-    dem_occupancy_strength: 0.5     # 0 = disabled
+    dem_occupancy_strength: 0.0     # disabled for static-Gaussian mode
     dem_occupancy_margin: 1.0       # meters of tolerance
     # Per-class height priors: μ_k (expected height above ground) and τ_k (tolerance)
     # Order matches common taxonomy: unlabeled, road, sidewalk, parking, other-ground,

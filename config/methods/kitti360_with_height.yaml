@@ -57,9 +57,10 @@
     # Height kernel ENABLED
     height_kernel_enabled: true
     height_kernel_lambda: 0.9
+    sensor_mounting_height: 1.73
     height_kernel_dem_grid_suffix: dem_local_grid.bin
     height_kernel_dsm_grid_suffix: dsm_local_grid.bin
-    dem_occupancy_strength: 0.5
+    dem_occupancy_strength: 0.0
     dem_occupancy_margin: 1.5
     # Per-class height priors (aggressive tuning):
     #   unlabeled: mu=0, tau=100 (no constraint)

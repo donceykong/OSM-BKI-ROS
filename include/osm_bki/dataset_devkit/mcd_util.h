@@ -781,7 +781,8 @@ class MCDData {
                                 float occ_margin,
                                 float dead_zone = 0.f,
                                 bool redistribute = false,
-                                float gate = 0.f) {
+                                float gate = 0.f,
+                                float sensor_mounting_height = 0.f) {
       if (!map_) return false;
 
       auto dem = std::make_unique<osm_bki::DEMHeightQuery>();
@@ -796,7 +797,7 @@ class MCDData {
             << " cells (" << dem->cell_size() << "m)");
       } else {
         RCLCPP_WARN_STREAM(node_->get_logger(),
-            "Failed to load DEM grid: " << dem_grid_path);
+            "DEM grid not found (OK for static-Gaussian mode): " << dem_grid_path);
       }
       if (dsm_ok) {
         RCLCPP_INFO_STREAM(node_->get_logger(),
@@ -804,18 +805,20 @@ class MCDData {
             << " cells (" << dsm->cell_size() << "m)");
       } else {
         RCLCPP_WARN_STREAM(node_->get_logger(),
-            "Failed to load DSM grid: " << dsm_grid_path);
+            "DSM grid not found (OK for static-Gaussian mode): " << dsm_grid_path);
       }
 
       map_->set_dem_grids(std::move(dem), std::move(dsm));
-      map_->set_height_kernel_params(lambda, mu, tau, dead_zone, redistribute, gate);
+      map_->set_height_kernel_params(lambda, mu, tau, dead_zone, redistribute, gate, sensor_mounting_height);
       map_->set_dem_occupancy_prior(occ_strength, occ_margin);
 
       RCLCPP_INFO_STREAM(node_->get_logger(),
           "Height kernel: lambda=" << lambda
           << ", dead_zone=" << dead_zone
+          << ", sensor_mounting_height=" << sensor_mounting_height
           << ", " << mu.size() << " class priors, occ_strength=" << occ_strength);
-      return dem_ok;
+      // No longer requires DEM to be loaded — scan-relative height is always available
+      return true;
     }
 
     /// Return true if both the lidar bin and label/multiclass file exist for the given scan file number.

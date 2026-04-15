@@ -56,6 +56,7 @@
     # Height kernel ENABLED — ground-class suppression at height + DEM occupancy
     height_kernel_enabled: true
     height_kernel_lambda: 0.9
+    sensor_mounting_height: 1.73
     height_kernel_dem_grid_suffix: dem_local_grid.bin
     height_kernel_dsm_grid_suffix: dsm_local_grid.bin
     dem_occupancy_strength: 0.0

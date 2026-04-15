@@ -56,6 +56,7 @@
     # Height kernel ENABLED — bilateral suppress, ONLY sidewalk(2) active, gentle τ=4.0
     height_kernel_enabled: true
     height_kernel_lambda: 0.25
+    sensor_mounting_height: 0.5
     height_kernel_dead_zone: 4.0
     height_kernel_redistribute: false
     height_kernel_gate: 0.0

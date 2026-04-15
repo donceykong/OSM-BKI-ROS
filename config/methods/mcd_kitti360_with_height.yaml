@@ -56,6 +56,7 @@
     # Height kernel ENABLED — one-sided: only suppress ground classes at height
     height_kernel_enabled: true
     height_kernel_lambda: 0.25
+    sensor_mounting_height: 0.5
     height_kernel_dead_zone: 3.0
     # Exp3: dead_zone=3.0 works well for cross-domain (more height-related errors to fix)
     height_kernel_dem_grid_suffix: dem_local_grid.bin

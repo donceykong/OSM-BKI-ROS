@@ -396,7 +396,7 @@ namespace osm_bki {
         /// DEM-based height kernel: per-class Gaussian support modulating ybars.
         /// dem/dsm are binary grids in KITTI-360 local frame (from precompute_dem_grid.py).
         void set_dem_grids(std::unique_ptr<DEMHeightQuery> dem, std::unique_ptr<DEMHeightQuery> dsm);
-        void set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone = 0.f, bool redistribute = false, float gate = 0.f);
+        void set_height_kernel_params(float lambda, const std::vector<float> &mu, const std::vector<float> &tau, float dead_zone = 0.f, bool redistribute = false, float gate = 0.f, float sensor_mounting_height = 0.f);
         void set_dem_occupancy_prior(float strength, float margin);
 
     private:
@@ -405,7 +405,7 @@ namespace osm_bki {
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 
         void apply_osm_prior_to_ybars(std::vector<float> &ybars, float x, float y, float z, float scale) const;
-        void apply_height_kernel_to_ybars(std::vector<float> &ybars, float x, float y, float z) const;
+        void apply_height_kernel_to_ybars(std::vector<float> &ybars, float x, float y, float z, float origin_z) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -538,6 +538,7 @@ namespace osm_bki {
         float height_kernel_dead_zone_{0.f};   // meters: no suppression within ±dead_zone of mu
         bool height_kernel_redistribute_{false}; // redistribute mode: preserve total evidence
         float height_kernel_gate_{0.f};          // if >0, only apply when argmax phi < gate
+        float sensor_mounting_height_{0.f};      // meters: sensor height above ground (for scan-relative height estimation)
         float dem_occupancy_strength_{0.f};     // free-space evidence strength for above-DSM / below-DEM
         float dem_occupancy_margin_{1.0f};      // meters of tolerance before applying occupancy prior
     };

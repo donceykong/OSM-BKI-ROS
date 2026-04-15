@@ -115,6 +115,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("height_kernel_dead_zone", 0.0);
     node->declare_parameter<bool>("height_kernel_redistribute", false);
     node->declare_parameter<double>("height_kernel_gate", 0.0);
+    node->declare_parameter<double>("sensor_mounting_height", 0.0);
 
     node->get_parameter<std::string>("map_topic", map_topic);
     node->get_parameter<int>("block_depth", block_depth);
@@ -365,6 +366,8 @@ int main(int argc, char **argv) {
             double hk_gate = 0.0;
             node->get_parameter<bool>("height_kernel_redistribute", hk_redistribute);
             node->get_parameter<double>("height_kernel_gate", hk_gate);
+            double hk_sensor_height = 0.0;
+            node->get_parameter<double>("sensor_mounting_height", hk_sensor_height);
 
             std::string dem_path = dir + "/" + sequence_name + "/" + dem_suffix;
             std::string dsm_path = dir + "/" + sequence_name + "/" + dsm_suffix;
@@ -379,10 +382,11 @@ int main(int argc, char **argv) {
                     static_cast<float>(hk_lambda), mu_f, tau_f,
                     static_cast<float>(occ_strength), static_cast<float>(occ_margin),
                     static_cast<float>(hk_dead_zone), hk_redistribute,
-                    static_cast<float>(hk_gate))) {
-                RCLCPP_INFO_STREAM(node->get_logger(), "Height kernel enabled (lambda=" << hk_lambda << ", dead_zone=" << hk_dead_zone << ", gate=" << hk_gate << ")");
+                    static_cast<float>(hk_gate),
+                    static_cast<float>(hk_sensor_height))) {
+                RCLCPP_INFO_STREAM(node->get_logger(), "Height kernel enabled (lambda=" << hk_lambda << ", dead_zone=" << hk_dead_zone << ", gate=" << hk_gate << ", sensor_height=" << hk_sensor_height << ")");
             } else {
-                RCLCPP_WARN_STREAM(node->get_logger(), "Height kernel: DEM grid not found, kernel disabled");
+                RCLCPP_WARN_STREAM(node->get_logger(), "Height kernel: failed to initialize");
             }
         }
     }
