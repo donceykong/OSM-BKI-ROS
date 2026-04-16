@@ -1,0 +1,77 @@
+
+================================================================================
+  Baseline
+  Scans: 4433, Points: 516,744,189
+================================================================================
+  Class                IoU
+  -----------------------
+  road              45.11%
+  sidewalk          33.22%
+  parking            0.63%
+  other-ground       0.74%
+  building          45.86%
+  fence              2.73%
+  pole               3.95%
+  traffic-sign       0.68%
+  terrain           15.99%
+  two-wheeler        0.00%
+  vehicle            0.63%
+  other-object       0.15%
+  vegetation        14.49%
+  -----------------------
+  mIoU            12.63%
+  Overall Acc     50.61%
+  Saved confusion matrix to /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/osm_prior_no_height/confusion_matrix.csv
+  Saved results CSV to /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/osm_prior_no_height/results.csv
+
+================================================================================
+  Static Gaussian
+  Scans: 4433, Points: 516,744,189
+================================================================================
+  Class                IoU
+  -----------------------
+  road              44.84%
+  sidewalk          31.51%
+  parking            1.02%
+  other-ground       1.11%
+  building          56.44%
+  fence              6.29%
+  pole               5.07%
+  traffic-sign       1.30%
+  terrain           16.07%
+  two-wheeler        0.30%
+  vehicle            2.87%
+  other-object       1.00%
+  vegetation        22.76%
+  -----------------------
+  mIoU            14.66%
+  Overall Acc     53.55%
+  Saved confusion matrix to /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/static_gaussian_crossdomain/confusion_matrix.csv
+  Saved results CSV to /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/static_gaussian_crossdomain/results.csv
+
+==========================================================================================
+  COMPARISON: Baseline vs Static Gaussian
+==========================================================================================
+  Class               Baseline Static Gaussian      Delta
+  -------------------------------------------------
+  road                  45.11%       44.84%     -0.27%
+  sidewalk              33.22%       31.51%     -1.71%
+  parking                0.63%        1.02%     +0.39%
+  other-ground           0.74%        1.11%     +0.37%
+  building              45.86%       56.44%    +10.58%
+  fence                  2.73%        6.29%     +3.56%
+  pole                   3.95%        5.07%     +1.12%
+  traffic-sign           0.68%        1.30%     +0.62%
+  terrain               15.99%       16.07%     +0.08%
+  two-wheeler            0.00%        0.30%     +0.29%
+  vehicle                0.63%        2.87%     +2.24%
+  other-object           0.15%        1.00%     +0.85%
+  vegetation            14.49%       22.76%     +8.27%
+  -------------------------------------------------
+  mIoU                  12.63%       14.66% +     2.03%
+  Overall Acc           50.61%       53.55% +     2.94%
+
+  Scans:  4433 vs 4433
+  Points: 516,744,189 vs 516,744,189
+
+  Saved comparison to /media/sgarimella34/hercules-collect1/datasets/kitti360/2013_05_28_drive_0000_sync/evaluations/ablation_comparison.csv
