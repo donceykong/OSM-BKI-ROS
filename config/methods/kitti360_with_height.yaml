@@ -22,7 +22,7 @@
     input_label_suffix: inferred_labels/cenet_mcd_softmax
     gt_label_suffix: gt_labels
 
-    evaluation_result_prefix: evaluations/osm_prior_with_height/
+    evaluation_result_prefix: evaluations/static_gaussian_crossdomain/
     query: true
     visualize: false
 
