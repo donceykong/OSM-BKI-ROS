@@ -24,7 +24,7 @@
     osm_geometry_parameters:
       osm_decay_meters: 0.000
       road_width_meters: 3.0   # fallback for unmapped highway types (OSM2World "else" default)
-      sidewalk_width_meters: 230
+      sidewalk_width_meters: 3.0
       cycleway_width_meters: 3.0
       fence_width_meters: 0.6
       tree_point_radius_meters: 5.0

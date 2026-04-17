@@ -421,14 +421,25 @@ def _net_cut_connector(raw_lines, width_fn, conn1, conn2, cuts):
 
     c1 = coords1[0] if is_start1 else coords1[-1]
     c2 = coords2[0] if is_start2 else coords2[-1]
-    cuts[(si1, 'start' if is_start1 else 'end')] = (
-        (c1[0] - cvx*hw1, c1[1] - cvy*hw1),
-        (c1[0] + cvx*hw1, c1[1] + cvy*hw1),
-    )
-    cuts[(si2, 'start' if is_start2 else 'end')] = (
-        (c2[0] - cvx*hw2, c2[1] - cvy*hw2),
-        (c2[0] + cvx*hw2, c2[1] + cvy*hw2),
-    )
+
+    # Store as (LEFT-of-forward, RIGHT-of-forward) using the segment's forward tangent
+    # AT THE JUNCTION END so multi-node (curved) polylines get the correct local frame.
+    def _store_cut_2seg(si, is_start, p, hw, coords):
+        if is_start:
+            fx, fy = coords[1][0]-coords[0][0], coords[1][1]-coords[0][1]
+        else:
+            fx, fy = coords[-1][0]-coords[-2][0], coords[-1][1]-coords[-2][1]
+        L = math.sqrt(fx*fx + fy*fy)
+        if L > 1e-9:
+            fx, fy = fx/L, fy/L
+        rn = (fy, -fx)                        # right-of-forward
+        dot = cvx*rn[0] + cvy*rn[1]
+        a = (p[0] - cvx*hw, p[1] - cvy*hw)
+        b = (p[0] + cvx*hw, p[1] + cvy*hw)
+        cuts[(si, 'start' if is_start else 'end')] = (a, b) if dot >= 0 else (b, a)
+
+    _store_cut_2seg(si1, is_start1, c1, hw1, coords1)
+    _store_cut_2seg(si2, is_start2, c2, hw2, coords2)
 
 
 def _net_cut_junction(raw_lines, width_fn, valid, junction_pos, cuts):
@@ -517,15 +528,18 @@ def _net_cut_junction(raw_lines, width_fn, valid, junction_pos, cuts):
         si, is_start = valid_sorted[idx]
         coords = raw_lines[si][0]
         hw = width_fn(raw_lines[si][1]) * 0.5
+        # Outward-from-junction tangent at the polyline end that meets the junction.
         d = away_dir(coords, is_start)
-        rn = (d[1], -d[0])
+        rn = (d[1], -d[0])                    # right-of-outward
+        scv = (rn[0]*hw, rn[1]*hw)
         cp = cut_points[idx]
-        # scaledCutVector: +rn*hw for outbound (is_start), -rn*hw for inbound
-        scv = (rn[0]*hw, rn[1]*hw) if is_start else (-rn[0]*hw, -rn[1]*hw)
-        lc = (cp[0]-scv[0], cp[1]-scv[1])
-        rc = (cp[0]+scv[0], cp[1]+scv[1])
+        lc = (cp[0]-scv[0], cp[1]-scv[1])     # LEFT-of-outward
+        rc = (cp[0]+scv[0], cp[1]+scv[1])     # RIGHT-of-outward
         seg_interfaces.append((lc, rc))
-        cuts[(si, 'start' if is_start else 'end')] = (lc, rc)
+        # seg_interfaces holds {LEFT-of-outward, RIGHT-of-outward} for the junction polygon.
+        # cuts must hold {LEFT-of-forward, RIGHT-of-forward} for the band builder; for end
+        # cuts (is_start=False) forward is opposite outward, so swap the pair.
+        cuts[(si, 'start' if is_start else 'end')] = (lc, rc) if is_start else (rc, lc)
 
     vectors = []
     for idx in range(n):
@@ -664,25 +678,32 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         if amenity in ("parking", "parking_space") and len(coords) >= 3:
             parking.append((coords, []))
             continue
+        # Resolve width: OSM width=* tag (if present & parseable) overrides the default.
+        def _resolve_width(fallback):
+            wt = tags.get("width")
+            if wt:
+                try:
+                    return float(wt)
+                except (ValueError, TypeError):
+                    pass
+            return fallback
+
         if tags.get("barrier") == "fence":
-            raw_fences.append((coords, "fence", start_nid, end_nid))
+            raw_fences.append((coords, _resolve_width(GEOM_PARAMS["fence_width_meters"]),
+                               start_nid, end_nid))
             continue
         hw = tags.get("highway", "")
         if hw in SIDEWALK_HIGHWAY_TYPES:
-            raw_sidewalks.append((coords, "sidewalk", start_nid, end_nid))
+            raw_sidewalks.append((coords, _resolve_width(GEOM_PARAMS["sidewalk_width_meters"]),
+                                  start_nid, end_nid))
             continue
         if hw in CYCLEWAY_HIGHWAY:
-            raw_cycleways.append((coords, "cycleway", start_nid, end_nid))
+            raw_cycleways.append((coords, _resolve_width(GEOM_PARAMS["cycleway_width_meters"]),
+                                  start_nid, end_nid))
             continue
         if hw in ROAD_HIGHWAY_TYPES:
-            width = _road_width_for_highway(hw)
-            width_tag = tags.get("width")
-            if width_tag:
-                try:
-                    width = float(width_tag)
-                except (ValueError, TypeError):
-                    pass
-            raw_roads.append((coords, width, start_nid, end_nid))
+            raw_roads.append((coords, _resolve_width(_road_width_for_highway(hw)),
+                              start_nid, end_nid))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -732,20 +753,19 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         elif tags.get("landcover") == "trees":
             trees_poly.extend(polys)
 
-    # Build explicit network polygons with OSM2World-style junction logic
+    # Build explicit network polygons with OSM2World-style junction logic.
+    # Each raw_* tuple now stores an already-resolved per-way width (OSM width=* tag
+    # when present, otherwise category default), so width_fn is the identity.
     road_seg, road_junc = _build_network_polygons(raw_roads, node_xy, lambda w: w)
     roads = road_seg + road_junc
 
-    sw_seg, sw_junc = _build_network_polygons(
-        raw_sidewalks, node_xy, lambda _: GEOM_PARAMS["sidewalk_width_meters"])
+    sw_seg, sw_junc = _build_network_polygons(raw_sidewalks, node_xy, lambda w: w)
     sidewalks = sw_seg + sw_junc
 
-    cy_seg, cy_junc = _build_network_polygons(
-        raw_cycleways, node_xy, lambda _: GEOM_PARAMS["cycleway_width_meters"])
+    cy_seg, cy_junc = _build_network_polygons(raw_cycleways, node_xy, lambda w: w)
     cycleways = cy_seg + cy_junc
 
-    fn_seg, fn_junc = _build_network_polygons(
-        raw_fences, node_xy, lambda _: GEOM_PARAMS["fence_width_meters"])
+    fn_seg, fn_junc = _build_network_polygons(raw_fences, node_xy, lambda w: w)
     fences = fn_seg + fn_junc
 
     return dict(buildings=buildings, roads=roads, grasslands=grasslands,
@@ -1703,7 +1723,7 @@ def main():
     parser.add_argument("--grid-res", type=float, default=1.0)
 
     # Height matrix options (fixed-metric bins along lidar z, symmetric about sensor origin)
-    parser.add_argument("--height-step-meters", type=float, default=0.2,
+    parser.add_argument("--height-step-meters", type=float, default=0.5,
                         help="Per-bin height step in meters (default: 1.0)")
     parser.add_argument("--height-max-meters", type=float, default=50.0,
                         help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 30.0)")
@@ -1731,7 +1751,7 @@ def main():
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
     
     # Options for height-based analysis and matrix
-    parser.add_argument("--scale-by-class-points", action="store_true", default=False,
+    parser.add_argument("--scale-by-class-points", action="store_true", default=True,
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")

@@ -59,7 +59,7 @@
     # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
     publish_osm_height_bins_scan: false
     publish_osm_height_bins_map: false
-    osm_height_bins_step_meters: 1.0     # meters per bin; num_bins derived per scan, symmetric about sensor origin
+    osm_height_bins_step_meters: 0.5     # meters per bin; num_bins derived per scan, symmetric about sensor origin
     osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
     osm_height_bins_scan_topic: /osm_height_bins_scan
     osm_height_bins_map_topic: /osm_height_bins_map

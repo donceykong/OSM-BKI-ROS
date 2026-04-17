@@ -174,10 +174,17 @@ namespace {
                 }
             }
 
+            // Helper: override with OSM width=* tag when present and parseable.
+            auto tag_width_or = [&](float fallback) -> float {
+                const char* wt = way.tags()["width"];
+                if (wt) { try { return std::stof(std::string(wt)); } catch (...) {} }
+                return fallback;
+            };
+
             const char* barrier_tag = way.tags()["barrier"];
             if (barrier_tag && std::string(barrier_tag) == "fence") {
                 osm_bki::RawNetLine r;
-                r.coords = coords; r.width = fence_width_;
+                r.coords = coords; r.width = tag_width_or(fence_width_);
                 r.start_nid = start_nid; r.end_nid = end_nid;
                 raw_fences_.push_back(r);
                 return;
@@ -189,7 +196,7 @@ namespace {
 
                 if (hw == "cycleway") {
                     osm_bki::RawNetLine r;
-                    r.coords = coords; r.width = cycleway_width_;
+                    r.coords = coords; r.width = tag_width_or(cycleway_width_);
                     r.start_nid = start_nid; r.end_nid = end_nid;
                     raw_cycleways_.push_back(r);
                     return;
@@ -197,7 +204,7 @@ namespace {
                 const char* bicycle_tag = way.tags()["bicycle"];
                 if (hw == "path" && bicycle_tag && std::string(bicycle_tag) == "yes") {
                     osm_bki::RawNetLine r;
-                    r.coords = coords; r.width = cycleway_width_;
+                    r.coords = coords; r.width = tag_width_or(cycleway_width_);
                     r.start_nid = start_nid; r.end_nid = end_nid;
                     raw_cycleways_.push_back(r);
                     return;
@@ -205,7 +212,7 @@ namespace {
 
                 if (hw == "footway" || hw == "path" || hw == "pedestrian" || hw == "foot") {
                     osm_bki::RawNetLine r;
-                    r.coords = coords; r.width = sidewalk_width_;
+                    r.coords = coords; r.width = tag_width_or(sidewalk_width_);
                     r.start_nid = start_nid; r.end_nid = end_nid;
                     raw_sidewalks_.push_back(r);
                     return;
@@ -216,14 +223,13 @@ namespace {
                     hw == "residential" || hw == "motorway_link" || hw == "trunk_link" ||
                     hw == "primary_link" || hw == "secondary_link" || hw == "tertiary_link" ||
                     hw == "living_street" || hw == "service" || hw == "road") {
-                    float width = osm_bki::highway_default_width(hw, road_width_fallback_);
-                    const char* wt = way.tags()["width"];
-                    if (wt) { try { width = std::stof(std::string(wt)); } catch (...) {} }
+                    float width = tag_width_or(osm_bki::highway_default_width(hw, road_width_fallback_));
                     osm_bki::RawNetLine r;
                     r.coords = coords; r.width = width;
                     r.start_nid = start_nid; r.end_nid = end_nid;
                     raw_roads_.push_back(r);
-                    // Implied sidewalk from road tag
+                    // Implied sidewalk from road tag (uses config default; OSM width=* is the
+                    // road's width, not the sidewalk's, so don't apply it here).
                     const char* sw_tag = way.tags()["sidewalk"];
                     if (sw_tag) {
                         std::string sw(sw_tag);
