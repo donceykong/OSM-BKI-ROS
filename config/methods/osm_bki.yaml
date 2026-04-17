@@ -23,7 +23,7 @@
     # Dataset-specific confusion matrix yamls or CLI args can override these.
     osm_geometry_parameters:
       osm_decay_meters: 0.000
-      road_width_meters: 20.0   # fallback for unmapped highway types (OSM2World "else" default)
+      road_width_meters: 100.0   # fallback for unmapped highway types (OSM2World "else" default)
       sidewalk_width_meters: 2.0
       cycleway_width_meters: 2.0
       fence_width_meters: 0.6

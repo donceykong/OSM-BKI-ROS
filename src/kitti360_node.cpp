@@ -262,6 +262,27 @@ int main(int argc, char **argv) {
                 full_osm_path = dir + "/" + osm_file;
         }
         osm_bki::OSMVisualizer osm_vis(node, "");
+        // Apply OSM geometry widths from ROS params (from osm_bki.yaml via launch, flattened as
+        // "osm_geometry_parameters.<name>") BEFORE loadFromOSM so RawNetLines pick up the
+        // configured widths rather than the hardcoded OSMVisualizer defaults.
+        {
+            auto apply_width = [&](const std::string& name, auto setter) {
+                if (!node->has_parameter(name)) {
+                    node->declare_parameter<double>(name, 0.0);
+                }
+                double v = 0.0;
+                node->get_parameter(name, v);
+                if (v > 0.0) setter(static_cast<float>(v));
+            };
+            apply_width("osm_geometry_parameters.road_width_meters",     [&](float w){ osm_vis.setRoadWidth(w); });
+            apply_width("osm_geometry_parameters.sidewalk_width_meters", [&](float w){ osm_vis.setSidewalkWidth(w); });
+            apply_width("osm_geometry_parameters.cycleway_width_meters", [&](float w){ osm_vis.setCyclewayWidth(w); });
+            apply_width("osm_geometry_parameters.fence_width_meters",    [&](float w){ osm_vis.setFenceWidth(w); });
+            RCLCPP_INFO_STREAM(node->get_logger(), "OSM widths (m): road=" << osm_vis.getRoadWidth()
+                << " sidewalk=" << osm_vis.getSidewalkWidth()
+                << " cycleway=" << osm_vis.getCyclewayWidth()
+                << " fence=" << osm_vis.getFenceWidth());
+        }
         if (osm_vis.loadFromOSM(full_osm_path, osm_origin_lat, osm_origin_lon)) {
             osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
             mcd_data.set_osm_buildings(osm_vis.getBuildings());
@@ -340,10 +361,8 @@ int main(int argc, char **argv) {
                                          static_cast<float>(osm_height_bins_step_meters),
                                          static_cast<float>(osm_height_bins_map_leaf_size),
                                          osm_height_bins_scan_topic, osm_height_bins_map_topic);
-        if (!osm_cm_file.empty()) {
-            std::string cm_path = pkg_config_datasets + osm_cm_file;
-            mcd_data.load_osm_geometry_parameters(cm_path);
-        }
+        // Widths and decay come from ROS params (osm_geometry_parameters.*) applied before
+        // loadFromOSM; do not re-load from the confusion-matrix yaml here.
         if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
             std::string cm_path = pkg_config_datasets + osm_cm_file;
             if (mcd_data.load_osm_confusion_matrix(cm_path)) {

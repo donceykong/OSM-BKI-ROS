@@ -57,8 +57,8 @@
     # OSM height-bin visualization: color each point by its per-scan relative z-bin
     # (same binning as osm_height_filtering). Scan and map can be toggled independently.
     # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
-    publish_osm_height_bins_scan: true
-    publish_osm_height_bins_map: true
+    publish_osm_height_bins_scan: false
+    publish_osm_height_bins_map: false
     osm_height_bins_step_meters: 1.0     # meters per bin; num_bins derived per scan, symmetric about sensor origin
     osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
     osm_height_bins_scan_topic: /osm_height_bins_scan
@@ -95,7 +95,7 @@
     #   python3 optimize_osm_cm.py [--max-scans 200] [--output config/datasets/osm_confusion_matrix_optimized.yaml]
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
-    osm_confusion_matrix_file: osm_confusion_matrix_optimized_mcd.yaml
+    osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
     osm_prior_strength: 1.0  # per-class kernel boost strength (0.0 = disabled)
     osm_dirichlet_prior_strength: 0.5   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
