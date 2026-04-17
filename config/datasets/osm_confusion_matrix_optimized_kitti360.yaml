@@ -1210,13 +1210,7 @@ osm_class_map:
   buildings: 7
   fences: 8
   none: 9
-osm_geometry_parameters:
-  osm_decay_meters: 1.0
-  road_width_meters: 3.0
-  sidewalk_width_meters: 1.0
-  cycleway_width_meters: 3.0
-  fence_width_meters: 0.6
-  tree_point_radius_meters: 5.0
+
 label_to_matrix_idx:
   1: 0
   2: 1

@@ -113,6 +113,7 @@ def launch_setup(context):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
+    osm_bki_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'osm_bki.yaml')
     methods_datasets = ('mcd', 'cu_north_campus')
     data_config_path = (
         os.path.join(pkg_src_dir, 'config', 'methods', f'{dataset}.yaml')
@@ -124,6 +125,17 @@ def launch_setup(context):
     # cu_north_campus (and kitti360) use identity calibration; no base-frame TF
     calib_file_path = '' if dataset == 'cu_north_campus' else os.path.join(data_dir_path, 'hhs_calib.yaml')
     rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'mcd_node.rviz')
+
+    # Load geometry parameters from osm_bki.yaml
+    geom_params = {}
+    if os.path.isfile(osm_bki_config_path):
+        try:
+            with open(osm_bki_config_path) as f:
+                raw = yaml.safe_load(f)
+            params = raw.get('/**', {}).get('ros__parameters', raw.get('ros__parameters', {}))
+            geom_params = params.get('osm_geometry_parameters', {})
+        except Exception as e:
+            print(f'[WARN] Failed to load osm_bki.yaml geometry parameters: {e}')
     
     # RViz node
     rviz_node = Node(
@@ -143,6 +155,10 @@ def launch_setup(context):
         method_config_path,
         data_config_path
     ]
+    # Add osm_bki.yaml geometry parameters (overrides any in dataset config)
+    if geom_params:
+        mcd_params.append({'osm_geometry_parameters': geom_params})
+
     # Allow launch args to override OSM settings when explicitly provided (e.g. osm_file:=other.osm)
     if osm_file or osm_origin_lat != '0.0' or osm_origin_lon != '0.0':
         mcd_params.append({
@@ -150,7 +166,7 @@ def launch_setup(context):
             'osm_origin_lat': float(osm_origin_lat),
             'osm_origin_lon': float(osm_origin_lon),
         })
-    
+
     mcd_node = Node(
         package='osm_bki',
         executable='mcd_node',
@@ -158,14 +174,18 @@ def launch_setup(context):
         output='screen',
         parameters=mcd_params
     )
-    
-    # OSM visualizer uses same config (mcd.yaml) and data_dir from launch; config from src
+
+    # OSM visualizer uses same config (mcd.yaml) and data_dir from launch; use osm_bki.yaml geometry
+    osm_params = [data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
+    if geom_params:
+        osm_params.append({'osm_geometry_parameters': geom_params})
+
     osm_node = Node(
         package='osm_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',
-        parameters=[data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
+        parameters=osm_params
     )
     
     return [rviz_node, mcd_node, osm_node]

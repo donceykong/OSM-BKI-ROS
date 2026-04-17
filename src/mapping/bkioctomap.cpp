@@ -623,7 +623,7 @@ namespace osm_bki {
         if (roads.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &road : roads) {
-            float signed_d = distance_to_polyline_band_signed(x, y, road, osm_road_width_);
+            float signed_d = distance_to_polygon_boundary(x, y, road);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
@@ -718,7 +718,7 @@ namespace osm_bki {
         if (fences.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &fence : fences) {
-            float signed_d = distance_to_polyline_band_signed(x, y, fence, osm_fence_width_);
+            float signed_d = distance_to_polygon_boundary(x, y, fence);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
@@ -730,7 +730,7 @@ namespace osm_bki {
         if (sidewalks.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &sw : sidewalks) {
-            float signed_d = distance_to_polyline_band_signed(x, y, sw, osm_sidewalk_width_);
+            float signed_d = distance_to_polygon_boundary(x, y, sw);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
         }
@@ -742,7 +742,7 @@ namespace osm_bki {
         if (cycleways.empty()) return 0.f;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &cw : cycleways) {
-            float signed_d = distance_to_polyline_band_signed(x, y, cw, osm_cycleway_width_);
+            float signed_d = distance_to_polygon_boundary(x, y, cw);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
         }

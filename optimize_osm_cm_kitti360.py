@@ -205,6 +205,27 @@ ROAD_HIGHWAY_TYPES = {
     "primary_link", "secondary_link", "tertiary_link", "living_street",
     "service", "road",
 }
+# Per-highway-type default widths (OSM2World RoadModule defaults, metres).
+# road_width_meters in GEOM_PARAMS is used as the "else" fallback.
+_HIGHWAY_WIDTH_M = {
+    "motorway":       8.75,
+    "motorway_link":  8.75,
+    "trunk":          7.0,
+    "trunk_link":     7.0,
+    "primary":        7.0,
+    "primary_link":   7.0,
+    "secondary":      7.0,
+    "secondary_link": 7.0,
+    "service":        3.5,
+    "track":          2.5,
+}
+
+
+def _road_width_for_highway(hw_type):
+    """Return width (m) for a given OSM highway tag value."""
+    return _HIGHWAY_WIDTH_M.get(hw_type, GEOM_PARAMS.get("road_width_meters", 4.0))
+
+
 SIDEWALK_HIGHWAY_TYPES = {"footway", "path", "pedestrian", "foot"}
 CYCLEWAY_HIGHWAY = {"cycleway"}
 GRASSLAND_LANDUSE = {"grass", "meadow", "greenfield", "recreation_ground"}
@@ -333,7 +354,7 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             cycleways.append(coords)
             continue
         if hw in ROAD_HIGHWAY_TYPES:
-            roads.append(coords)
+            roads.append((coords, hw))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -413,7 +434,12 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     geometry that can influence points near the trajectory.
     """
     out = {}
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+    # Roads are (coords, hw) tuples — filter by coords only.
+    out["roads"] = [
+        (coords, hw) for coords, hw in geom.get("roads", [])
+        if _bbox_intersects_expanded(coords, xmin, xmax, ymin, ymax, margin)
+    ]
+    for cat in ("buildings", "grasslands", "trees", "forests",
                 "parking", "fences", "sidewalks", "cycleways"):
         out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
     for pt_key in ("tree_points",):
@@ -437,14 +463,31 @@ OSM_COLUMNS = [
 ]
 N_OSM = len(OSM_COLUMNS)
 
-DEFAULT_OSM_GEOMETRY_PARAMS = {
-    "road_width_meters": 10.0,
-    "sidewalk_width_meters": 10.0,
+_GEOM_FALLBACK = {
+    "road_width_meters": 4.0,
+    "sidewalk_width_meters": 2.0,
     "cycleway_width_meters": 2.0,
     "fence_width_meters": 0.6,
     "tree_point_radius_meters": 5.0,
 }
-GEOM_PARAMS = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+GEOM_PARAMS = dict(_GEOM_FALLBACK)
+
+
+def _load_geom_defaults(osm_bki_path):
+    """Load default geometry parameters from osm_bki.yaml, falling back to built-in values."""
+    if not os.path.isfile(osm_bki_path):
+        print(f"[WARN] osm_bki.yaml not found at {osm_bki_path}, using built-in defaults")
+        return dict(_GEOM_FALLBACK)
+    with open(osm_bki_path) as f:
+        raw = yaml.safe_load(f)
+    if "/**" in raw:
+        raw = raw["/**"].get("ros__parameters", raw)
+    elif "ros__parameters" in raw:
+        raw = raw["ros__parameters"]
+    params = raw.get("osm_geometry_parameters", {})
+    result = dict(_GEOM_FALLBACK)
+    result.update({k: v for k, v in params.items() if v is not None})
+    return result
 
 # Search radius for STRtree: geometry beyond this does not affect prior (decay_m typically 3m)
 _QUERY_BUFFER = 50.0  # meters
@@ -455,7 +498,15 @@ def _build_shapely_index(geom):
     if not SHAPELY_AVAILABLE:
         return None
     idx = {"geom": geom, "tree_points": geom.get("tree_points", [])}
-    for cat in ("roads", "sidewalks", "cycleways", "fences"):
+    # Roads: store (STRtree, geoms, widths) so per-road widths are accessible.
+    road_geoms, road_widths = [], []
+    for entry in geom.get("roads", []):
+        coords, hw = entry
+        if len(coords) >= 2:
+            road_geoms.append(LineString(coords))
+            road_widths.append(_road_width_for_highway(hw))
+    idx["roads"] = (STRtree(road_geoms), road_geoms, road_widths) if road_geoms else (None, [], [])
+    for cat in ("sidewalks", "cycleways", "fences"):
         geoms = []
         for coords in geom.get(cat, []):
             if len(coords) >= 2:
@@ -535,15 +586,23 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
         return osm_prior_from_signed_distance(sd, decay_m)
 
     if cat == "roads":
-        half_w = 0.5 * GEOM_PARAMS["road_width_meters"]
-        candidates = _query_candidates(idx, "roads", x, y)
+        road_tree, road_geoms, road_widths = idx.get("roads", (None, [], []))
+        if not road_tree:
+            return 0.0
+        q = box(x - _QUERY_BUFFER, y - _QUERY_BUFFER, x + _QUERY_BUFFER, y + _QUERY_BUFFER)
+        inds = road_tree.query(q)
+        try:
+            inds = np.atleast_1d(inds).tolist()
+        except Exception:
+            inds = [inds] if isinstance(inds, int) else []
         min_sd = float("inf")
-        for g in candidates:
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
+        for i in inds:
+            if 0 <= i < len(road_geoms):
+                sd = road_geoms[i].distance(pt) - 0.5 * road_widths[i]
+                if sd <= 0:
+                    return 1.0
+                if sd < min_sd:
+                    min_sd = sd
         return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
 
     elif cat == "sidewalks":
@@ -668,7 +727,16 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
                 min_sd = sd
         return osm_prior_from_signed_distance(min_sd, decay_m)
     if cat == "roads":
-        return _line_prior("roads", GEOM_PARAMS["road_width_meters"])
+        min_sd = float("inf")
+        for entry in geom.get("roads", []):
+            coords, hw = entry
+            w = _road_width_for_highway(hw)
+            sd = distance_to_polyline(x, y, coords) - 0.5 * max(0.1, w)
+            if sd <= 0:
+                return 1.0
+            if sd < min_sd:
+                min_sd = sd
+        return osm_prior_from_signed_distance(min_sd, decay_m)
     elif cat == "sidewalks":
         return _line_prior("sidewalks", GEOM_PARAMS["sidewalk_width_meters"])
     elif cat == "cycleways":
@@ -1158,9 +1226,10 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         if len(ring) >= 3:
             p = Polygon(ring, fill=False, edgecolor="brown", linewidth=0.5, alpha=0.7)
             ax1.add_patch(p)
-    for road in geom["roads"][:100]:
-        if len(road) >= 2:
-            ax1.plot([r[0] for r in road], [r[1] for r in road], "k-", linewidth=0.8, alpha=0.5)
+    for entry in geom["roads"][:100]:
+        coords, hw = entry
+        if len(coords) >= 2:
+            ax1.plot([r[0] for r in coords], [r[1] for r in coords], "k-", linewidth=0.8, alpha=0.5)
     for poly in geom["grasslands"][:50]:
         ring = _poly_outer(poly)
         if len(ring) >= 3:
@@ -1352,10 +1421,10 @@ def main():
                         help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--road-width", type=float, default=4.0)
-    parser.add_argument("--sidewalk-width", type=float, default=2.0)
-    parser.add_argument("--cycleway-width", type=float, default=2.0)
-    parser.add_argument("--fence-width", type=float, default=0.6)
+    parser.add_argument("--road-width", type=float, default=None, help="Override road width (m); default from osm_bki.yaml")
+    parser.add_argument("--sidewalk-width", type=float, default=None, help="Override sidewalk width (m); default from osm_bki.yaml")
+    parser.add_argument("--cycleway-width", type=float, default=None, help="Override cycleway width (m); default from osm_bki.yaml")
+    parser.add_argument("--fence-width", type=float, default=None, help="Override fence width (m); default from osm_bki.yaml")
     parser.add_argument("--grid-res", type=float, default=2.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
@@ -1453,7 +1522,25 @@ def main():
     origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
 
-    geom_params_cfg = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+    # 1. Load defaults from osm_bki.yaml
+    osm_bki_path = os.path.join(SCRIPT_DIR, "config/methods/osm_bki.yaml")
+    geom_params_cfg = _load_geom_defaults(osm_bki_path)
+    print(f"Loaded geometry defaults from {osm_bki_path}")
+
+    # 2. Resize road/sidewalk/cycleway from the referenced confusion matrix yaml (if it exists)
+    osm_cm_file = cfg.get("osm_confusion_matrix_file")
+    if osm_cm_file:
+        osm_cm_path = os.path.join(SCRIPT_DIR, "config/datasets", osm_cm_file)
+        if os.path.isfile(osm_cm_path):
+            with open(osm_cm_path) as _f:
+                osm_cm_cfg = yaml.safe_load(_f)
+            cm_geom = osm_cm_cfg.get("osm_geometry_parameters", {})
+            for _key in ("road_width_meters", "sidewalk_width_meters", "cycleway_width_meters"):
+                if _key in cm_geom:
+                    geom_params_cfg[_key] = cm_geom[_key]
+            print(f"Resized road/sidewalk/cycleway widths from {osm_cm_path}")
+
+    # 3. Dataset config overrides
     geom_params_cfg["tree_point_radius_meters"] = cfg.get(
         "osm_tree_point_radius_meters", geom_params_cfg["tree_point_radius_meters"]
     )
@@ -1462,6 +1549,7 @@ def main():
     geom_params_cfg["cycleway_width_meters"] = cfg.get("cycleway_width_meters", geom_params_cfg["cycleway_width_meters"])
     geom_params_cfg["fence_width_meters"] = cfg.get("fence_width_meters", geom_params_cfg["fence_width_meters"])
 
+    # 4. CLI overrides (only when explicitly provided)
     if args.road_width is not None:
         geom_params_cfg["road_width_meters"] = args.road_width
     if args.sidewalk_width is not None:
@@ -1528,7 +1616,10 @@ def main():
             x, y = ring[k]
             p = first_inv @ np.array([x, y, 0, 1])
             ring[k] = (float(p[0]), float(p[1]))
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+    # Roads are (coords, hw) tuples — transform coords list in-place.
+    for coords, hw in geom.get("roads", []):
+        _transform_ring(coords)
+    for cat in ("buildings", "grasslands", "trees", "forests",
                 "parking", "fences", "sidewalks", "cycleways"):
         if cat not in geom:
             continue
