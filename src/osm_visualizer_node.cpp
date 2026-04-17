@@ -109,30 +109,24 @@ int main(int argc, char** argv) {
     visualizer.setCyclewayWidth(static_cast<float>(cycleway_width_meters));
     visualizer.setFenceWidth(static_cast<float>(fence_width_meters));
 
-    if (!osm_confusion_matrix_file.empty()) {
-        try {
-            std::string cm_path = osm_confusion_matrix_file;
-            if (osm_confusion_matrix_file[0] != '/') {
-                if (!config_datasets_dir.empty()) {
-                    cm_path = config_datasets_dir + (config_datasets_dir.back() == '/' ? "" : "/") + osm_confusion_matrix_file;
-                } else {
-                    std::string pkg_share = ament_index_cpp::get_package_share_directory("osm_bki");
-                    cm_path = pkg_share + "/config/datasets/" + osm_confusion_matrix_file;
-                }
-            }
-            YAML::Node root = YAML::LoadFile(cm_path);
-            if (root["osm_geometry_parameters"]) {
-                auto p = root["osm_geometry_parameters"];
-                if (p["tree_point_radius_meters"]) visualizer.setTreePointRadius(p["tree_point_radius_meters"].as<float>());
-                if (p["road_width_meters"]) visualizer.setRoadWidth(p["road_width_meters"].as<float>());
-                if (p["sidewalk_width_meters"]) visualizer.setSidewalkWidth(p["sidewalk_width_meters"].as<float>());
-                if (p["cycleway_width_meters"]) visualizer.setCyclewayWidth(p["cycleway_width_meters"].as<float>());
-                if (p["fence_width_meters"]) visualizer.setFenceWidth(p["fence_width_meters"].as<float>());
-                RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM geometry parameters from " << cm_path);
-            }
-        } catch (const std::exception& e) {
-            RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM geometry parameters: " << e.what());
-        }
+    // Override with nested ROS params from osm_bki.yaml (osm_geometry_parameters.*) if present.
+    // This is the authoritative source; the confusion-matrix yaml is NOT consulted for widths.
+    {
+        auto apply_float = [&](const std::string& name, auto setter) {
+            if (!node->has_parameter(name)) node->declare_parameter<double>(name, 0.0);
+            double v = 0.0;
+            node->get_parameter(name, v);
+            if (v > 0.0) setter(static_cast<float>(v));
+        };
+        apply_float("osm_geometry_parameters.tree_point_radius_meters", [&](float v){ visualizer.setTreePointRadius(v); });
+        apply_float("osm_geometry_parameters.road_width_meters",        [&](float v){ visualizer.setRoadWidth(v); });
+        apply_float("osm_geometry_parameters.sidewalk_width_meters",    [&](float v){ visualizer.setSidewalkWidth(v); });
+        apply_float("osm_geometry_parameters.cycleway_width_meters",    [&](float v){ visualizer.setCyclewayWidth(v); });
+        apply_float("osm_geometry_parameters.fence_width_meters",       [&](float v){ visualizer.setFenceWidth(v); });
+        RCLCPP_INFO_STREAM(node->get_logger(), "OSM widths (m): road=" << visualizer.getRoadWidth()
+            << " sidewalk=" << visualizer.getSidewalkWidth()
+            << " cycleway=" << visualizer.getCyclewayWidth()
+            << " fence=" << visualizer.getFenceWidth());
     }
     if (!visualizer.loadFromOSM(full_path, osm_origin_lat, osm_origin_lon)) {
         RCLCPP_ERROR(node->get_logger(), "Failed to load OSM file.");

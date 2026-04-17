@@ -97,6 +97,12 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("osm_dirichlet_prior_strength", 0.0);
     node->declare_parameter<double>("osm_scan_radius_extension", 1.2);
     node->declare_parameter<bool>("osm_height_filtering", false);
+    node->declare_parameter<bool>("publish_osm_height_bins_scan", false);
+    node->declare_parameter<bool>("publish_osm_height_bins_map", false);
+    node->declare_parameter<double>("osm_height_bins_step_meters", 5.0);
+    node->declare_parameter<double>("osm_height_bins_map_leaf_size", 0.5);
+    node->declare_parameter<std::string>("osm_height_bins_scan_topic", "/osm_height_bins_scan");
+    node->declare_parameter<std::string>("osm_height_bins_map_topic", "/osm_height_bins_map");
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
@@ -256,6 +262,27 @@ int main(int argc, char **argv) {
                 full_osm_path = dir + "/" + osm_file;
         }
         osm_bki::OSMVisualizer osm_vis(node, "");
+        // Apply OSM geometry widths from ROS params (from osm_bki.yaml via launch, flattened as
+        // "osm_geometry_parameters.<name>") BEFORE loadFromOSM so RawNetLines pick up the
+        // configured widths rather than the hardcoded OSMVisualizer defaults.
+        {
+            auto apply_width = [&](const std::string& name, auto setter) {
+                if (!node->has_parameter(name)) {
+                    node->declare_parameter<double>(name, 0.0);
+                }
+                double v = 0.0;
+                node->get_parameter(name, v);
+                if (v > 0.0) setter(static_cast<float>(v));
+            };
+            apply_width("osm_geometry_parameters.road_width_meters",     [&](float w){ osm_vis.setRoadWidth(w); });
+            apply_width("osm_geometry_parameters.sidewalk_width_meters", [&](float w){ osm_vis.setSidewalkWidth(w); });
+            apply_width("osm_geometry_parameters.cycleway_width_meters", [&](float w){ osm_vis.setCyclewayWidth(w); });
+            apply_width("osm_geometry_parameters.fence_width_meters",    [&](float w){ osm_vis.setFenceWidth(w); });
+            RCLCPP_INFO_STREAM(node->get_logger(), "OSM widths (m): road=" << osm_vis.getRoadWidth()
+                << " sidewalk=" << osm_vis.getSidewalkWidth()
+                << " cycleway=" << osm_vis.getCyclewayWidth()
+                << " fence=" << osm_vis.getFenceWidth());
+        }
         if (osm_vis.loadFromOSM(full_osm_path, osm_origin_lat, osm_origin_lon)) {
             osm_vis.transformToFirstPoseOrigin(mcd_data.getOriginalFirstPose());
             mcd_data.set_osm_buildings(osm_vis.getBuildings());
@@ -316,10 +343,26 @@ int main(int argc, char **argv) {
         else if (osm_prior_map_color_mode_str == "osm_parking") osm_color_mode = osm_bki::MapColorMode::OSMParking;
         else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = osm_bki::MapColorMode::OSMFence;
         mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
-        if (!osm_cm_file.empty()) {
-            std::string cm_path = pkg_config_datasets + osm_cm_file;
-            mcd_data.load_osm_geometry_parameters(cm_path);
-        }
+
+        bool publish_osm_height_bins_scan = false;
+        bool publish_osm_height_bins_map = false;
+        double osm_height_bins_step_meters = 5.0;
+        double osm_height_bins_map_leaf_size = 0.5;
+        std::string osm_height_bins_scan_topic = "/osm_height_bins_scan";
+        std::string osm_height_bins_map_topic = "/osm_height_bins_map";
+        node->get_parameter<bool>("publish_osm_height_bins_scan", publish_osm_height_bins_scan);
+        node->get_parameter<bool>("publish_osm_height_bins_map", publish_osm_height_bins_map);
+        node->get_parameter<double>("osm_height_bins_step_meters", osm_height_bins_step_meters);
+        node->get_parameter<double>("osm_height_bins_map_leaf_size", osm_height_bins_map_leaf_size);
+        node->get_parameter<std::string>("osm_height_bins_scan_topic", osm_height_bins_scan_topic);
+        node->get_parameter<std::string>("osm_height_bins_map_topic", osm_height_bins_map_topic);
+        mcd_data.set_osm_height_filter_enabled(osm_height_filtering);
+        mcd_data.set_publish_height_bins(publish_osm_height_bins_scan, publish_osm_height_bins_map,
+                                         static_cast<float>(osm_height_bins_step_meters),
+                                         static_cast<float>(osm_height_bins_map_leaf_size),
+                                         osm_height_bins_scan_topic, osm_height_bins_map_topic);
+        // Widths and decay come from ROS params (osm_geometry_parameters.*) applied before
+        // loadFromOSM; do not re-load from the confusion-matrix yaml here.
         if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
             std::string cm_path = pkg_config_datasets + osm_cm_file;
             if (mcd_data.load_osm_confusion_matrix(cm_path)) {

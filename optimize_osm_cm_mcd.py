@@ -13,12 +13,13 @@ Usage:
                                [--data-dir DATA_DIR] [--max-scans N] [--keyframe-dist D]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
-                               [--height-bins N] [--no-height-matrix]
+                               [--height-step-meters S] [--height-max-meters M] [--no-height-matrix]
 
     --visualize           Plot the optimized matrix as a heatmap (blue=suppress, red=boost).
     --visualize-points    Plot GT points + OSM geometry + OSM prior heatmap (spatial view).
     --no-show             Save PNG only, do not block to show figure.
-    --height-bins N       Number of per-scan height bins for osm_height_confusion_matrix (default: 20).
+    --height-step-meters  Per-bin height step (m) for osm_height_confusion_matrix (default: 1.0).
+    --height-max-meters   Max |z_local| extent (m); num_bins = 2*ceil(max/step) (default: 30.0).
     --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
@@ -200,6 +201,27 @@ ROAD_HIGHWAY_TYPES = {
     "primary_link", "secondary_link", "tertiary_link", "living_street",
     "service", "road",
 }
+# Per-highway-type default widths (OSM2World RoadModule defaults, metres).
+# road_width_meters in GEOM_PARAMS is used as the "else" fallback.
+_HIGHWAY_WIDTH_M = {
+    "motorway":       8.75,
+    "motorway_link":  8.75,
+    "trunk":          7.0,
+    "trunk_link":     7.0,
+    "primary":        7.0,
+    "primary_link":   7.0,
+    "secondary":      7.0,
+    "secondary_link": 7.0,
+    "service":        3.5,
+    "track":          2.5,
+}
+
+
+def _road_width_for_highway(hw_type):
+    """Return half-width lookup width (m) for a given OSM highway tag value."""
+    return _HIGHWAY_WIDTH_M.get(hw_type, GEOM_PARAMS.get("road_width_meters", 4.0))
+
+
 SIDEWALK_HIGHWAY_TYPES = {"footway", "path", "pedestrian", "foot"}
 CYCLEWAY_HIGHWAY = {"cycleway"}
 GRASSLAND_LANDUSE = {"grass", "meadow", "greenfield", "recreation_ground"}
@@ -213,6 +235,328 @@ def _latlon_to_xy(lat, lon, origin_lat, origin_lon):
     x = (lon - origin_lon) * 111319.0 * scale
     y = (lat - origin_lat) * 111319.0
     return (x, y)
+
+
+def _right_normal_2d(p0, p1):
+    """Unit right normal of segment p0→p1 (rightward when walking p0→p1)."""
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    L = math.sqrt(dx * dx + dy * dy)
+    if L < 1e-9:
+        return (1.0, 0.0)
+    return (dy / L, -dx / L)
+
+
+def _line_intersection_2d(px, py, dx, dy, qx, qy, ex, ey):
+    """Intersection of lines (p+t*d) and (q+s*e). Returns (x,y) or None if parallel."""
+    cross = dx * ey - dy * ex
+    if abs(cross) < 1e-9:
+        return None
+    t = ((qx - px) * ey - (qy - py) * ex) / cross
+    return (px + t * dx, py + t * dy)
+
+
+def _polyline_to_polygon_coords(coords, half_w, start_left=None, start_right=None,
+                                end_left=None, end_right=None):
+    """Build explicit band polygon for a polyline.
+
+    Interior vertices use miter (angle-bisector) joins clamped at 5× half_w.
+    Endpoints use provided cuts, or fall back to orthogonal.
+    Returns a closed list of (x,y) or None if degenerate.
+    """
+    if len(coords) < 2:
+        return None
+    left_out, right_out = [], []
+
+    if start_left is not None:
+        left_out.append(start_left)
+        right_out.append(start_right)
+    else:
+        n = _right_normal_2d(coords[0], coords[1])
+        c = coords[0]
+        left_out.append((c[0] - n[0]*half_w, c[1] - n[1]*half_w))
+        right_out.append((c[0] + n[0]*half_w, c[1] + n[1]*half_w))
+
+    for i in range(1, len(coords) - 1):
+        n0 = _right_normal_2d(coords[i-1], coords[i])
+        n1 = _right_normal_2d(coords[i], coords[i+1])
+        mx, my = n0[0]+n1[0], n0[1]+n1[1]
+        mlen = math.sqrt(mx*mx + my*my)
+        if mlen < 1e-9:
+            mx, my = n0
+        else:
+            mx, my = mx/mlen, my/mlen
+        dot = n0[0]*mx + n0[1]*my
+        scale = min(5.0, 1.0/dot) if dot > 1e-6 else 5.0
+        c = coords[i]
+        left_out.append((c[0] - mx*half_w*scale, c[1] - my*half_w*scale))
+        right_out.append((c[0] + mx*half_w*scale, c[1] + my*half_w*scale))
+
+    if end_left is not None:
+        left_out.append(end_left)
+        right_out.append(end_right)
+    else:
+        n = _right_normal_2d(coords[-2], coords[-1])
+        c = coords[-1]
+        left_out.append((c[0] - n[0]*half_w, c[1] - n[1]*half_w))
+        right_out.append((c[0] + n[0]*half_w, c[1] + n[1]*half_w))
+
+    poly = right_out + list(reversed(left_out))
+    poly.append(poly[0])
+    return poly
+
+
+def _circle_polygon_coords(cx, cy, radius, n_seg=24):
+    """Approximate a circle as a closed n-gon polygon."""
+    pts = [(cx + radius * math.cos(2*math.pi*i/n_seg),
+            cy + radius * math.sin(2*math.pi*i/n_seg))
+           for i in range(n_seg)]
+    pts.append(pts[0])
+    return pts
+
+
+_PARALLEL_THRESHOLD_RAD = math.pi / 18  # ~10°, same as OSM2World
+
+
+def _build_network_polygons(raw_lines, node_xy, width_fn):
+    """Convert raw polylines to explicit band polygons with OSM2World-style junction cuts.
+
+    Args:
+        raw_lines:  list of (coords, key, start_nid, end_nid)
+        node_xy:    dict of node_id -> (x, y)
+        width_fn:   callable(key) -> float  (full road width in metres)
+
+    Returns:
+        (segment_polys, junction_polys), each a list of (outer_coords, []) tuples.
+    """
+    node_segs = defaultdict(list)
+    for i, (coords, key, snid, enid) in enumerate(raw_lines):
+        if len(coords) >= 2:
+            node_segs[snid].append((i, True))
+            node_segs[enid].append((i, False))
+
+    cuts = {}           # (seg_idx, 'start'|'end') -> (left_pt, right_pt)
+    junction_polys = []
+
+    for node_id, conns in node_segs.items():
+        valid = [(si, istart) for si, istart in conns if len(raw_lines[si][0]) >= 2]
+        n = len(valid)
+        if n == 0:
+            continue
+        elif n == 1:
+            _net_cut_orthogonal(raw_lines, width_fn, valid[0][0], valid[0][1], cuts)
+        elif n == 2:
+            _net_cut_connector(raw_lines, width_fn, valid[0], valid[1], cuts)
+        else:
+            jp = _net_cut_junction(raw_lines, width_fn, valid,
+                                   node_xy.get(node_id), cuts)
+            if jp is not None:
+                junction_polys.append((jp, []))
+
+    seg_polys = []
+    for i, (coords, key, snid, enid) in enumerate(raw_lines):
+        half_w = width_fn(key) * 0.5
+        sl, sr = cuts.get((i, 'start'), (None, None))
+        el, er = cuts.get((i, 'end'), (None, None))
+        pts = _polyline_to_polygon_coords(coords, half_w,
+                                          start_left=sl, start_right=sr,
+                                          end_left=el, end_right=er)
+        if pts and len(pts) >= 4:
+            seg_polys.append((pts, []))
+
+    return seg_polys, junction_polys
+
+
+def _net_cut_orthogonal(raw_lines, width_fn, si, is_start, cuts):
+    coords, key = raw_lines[si][0], raw_lines[si][1]
+    half_w = width_fn(key) * 0.5
+    n = _right_normal_2d(coords[0], coords[1]) if is_start \
+        else _right_normal_2d(coords[-2], coords[-1])
+    c = coords[0] if is_start else coords[-1]
+    cuts[(si, 'start' if is_start else 'end')] = (
+        (c[0] - n[0]*half_w, c[1] - n[1]*half_w),
+        (c[0] + n[0]*half_w, c[1] + n[1]*half_w),
+    )
+
+
+def _net_cut_connector(raw_lines, width_fn, conn1, conn2, cuts):
+    """Angle-bisector cut for two connecting segments (OSM2World connector logic)."""
+    si1, is_start1 = conn1
+    si2, is_start2 = conn2
+    coords1, key1 = raw_lines[si1][0], raw_lines[si1][1]
+    coords2, key2 = raw_lines[si2][0], raw_lines[si2][1]
+    hw1 = width_fn(key1) * 0.5
+    hw2 = width_fn(key2) * 0.5
+
+    def toward_junction(coords, is_start):
+        """Direction vector pointing TOWARD the junction from the segment."""
+        if not is_start:
+            dx, dy = coords[-1][0]-coords[-2][0], coords[-1][1]-coords[-2][1]
+        else:
+            dx, dy = -(coords[1][0]-coords[0][0]), -(coords[1][1]-coords[0][1])
+        L = math.sqrt(dx*dx + dy*dy)
+        return (dx/L, dy/L) if L > 1e-9 else (1.0, 0.0)
+
+    def away_from_junction(coords, is_start):
+        """Direction vector pointing AWAY from the junction."""
+        if is_start:
+            dx, dy = coords[1][0]-coords[0][0], coords[1][1]-coords[0][1]
+        else:
+            dx, dy = coords[-2][0]-coords[-1][0], coords[-2][1]-coords[-1][1]
+        L = math.sqrt(dx*dx + dy*dy)
+        return (dx/L, dy/L) if L > 1e-9 else (1.0, 0.0)
+
+    in_vec = toward_junction(coords1, is_start1)
+    out_vec = away_from_junction(coords2, is_start2)
+
+    cvx, cvy = out_vec[0]-in_vec[0], out_vec[1]-in_vec[1]
+    clen = math.sqrt(cvx*cvx + cvy*cvy)
+    if clen < 1e-6:
+        cvx, cvy = -in_vec[1], in_vec[0]
+    else:
+        cvx, cvy = cvx/clen, cvy/clen
+
+    # Ensure cut vector points to the right (2D cross product check)
+    if in_vec[0]*cvy - in_vec[1]*cvx <= 0:
+        cvx, cvy = -cvx, -cvy
+
+    c1 = coords1[0] if is_start1 else coords1[-1]
+    c2 = coords2[0] if is_start2 else coords2[-1]
+
+    # Store as (LEFT-of-forward, RIGHT-of-forward) using the segment's forward tangent
+    # AT THE JUNCTION END so multi-node (curved) polylines get the correct local frame.
+    def _store_cut_2seg(si, is_start, p, hw, coords):
+        if is_start:
+            fx, fy = coords[1][0]-coords[0][0], coords[1][1]-coords[0][1]
+        else:
+            fx, fy = coords[-1][0]-coords[-2][0], coords[-1][1]-coords[-2][1]
+        L = math.sqrt(fx*fx + fy*fy)
+        if L > 1e-9:
+            fx, fy = fx/L, fy/L
+        rn = (fy, -fx)                        # right-of-forward
+        dot = cvx*rn[0] + cvy*rn[1]
+        a = (p[0] - cvx*hw, p[1] - cvy*hw)
+        b = (p[0] + cvx*hw, p[1] + cvy*hw)
+        cuts[(si, 'start' if is_start else 'end')] = (a, b) if dot >= 0 else (b, a)
+
+    _store_cut_2seg(si1, is_start1, c1, hw1, coords1)
+    _store_cut_2seg(si2, is_start2, c2, hw2, coords2)
+
+
+def _net_cut_junction(raw_lines, width_fn, valid, junction_pos, cuts):
+    """≥3-segment junction cut (OSM2World NetworkCalculator edge-intersection approach).
+
+    Returns junction polygon coords list, or None if degenerate.
+    """
+    n = len(valid)
+    if junction_pos is None:
+        si, is_start = valid[0]
+        junction_pos = raw_lines[si][0][0] if is_start else raw_lines[si][0][-1]
+
+    def away_dir(coords, is_start):
+        if is_start:
+            dx, dy = coords[1][0]-coords[0][0], coords[1][1]-coords[0][1]
+        else:
+            dx, dy = coords[-2][0]-coords[-1][0], coords[-2][1]-coords[-1][1]
+        L = math.sqrt(dx*dx+dy*dy)
+        return (dx/L, dy/L) if L > 1e-9 else (1.0, 0.0)
+
+    # Sort segments by angle of their away-direction around the junction
+    valid_sorted = sorted(valid,
+                          key=lambda c: math.atan2(*away_dir(raw_lines[c[0]][0], c[1])[::-1]))
+
+    # Step 1: intersection of left edge of segment[i] with right edge of segment[i+1]
+    intersections = []
+    for idx in range(n):
+        si, is_start = valid_sorted[idx]
+        ti, tstart  = valid_sorted[(idx+1) % n]
+        sc = raw_lines[si][0][0] if is_start  else raw_lines[si][0][-1]
+        tc = raw_lines[ti][0][0] if tstart    else raw_lines[ti][0][-1]
+        s_hw = width_fn(raw_lines[si][1]) * 0.5
+        t_hw = width_fn(raw_lines[ti][1]) * 0.5
+        s_dir = away_dir(raw_lines[si][0], is_start)
+        t_dir = away_dir(raw_lines[ti][0], tstart)
+        s_rn = (s_dir[1], -s_dir[0])   # right normal of away direction
+        t_rn = (t_dir[1], -t_dir[0])
+        # Left edge of s (toward junction direction): sc - s_rn * s_hw
+        s_ep = (sc[0] - s_rn[0]*s_hw, sc[1] - s_rn[1]*s_hw)
+        # Right edge of t: tc + t_rn * t_hw
+        t_ep = (tc[0] + t_rn[0]*t_hw, tc[1] + t_rn[1]*t_hw)
+        # Edge directions pointing toward junction
+        sed = (-s_dir[0], -s_dir[1])
+        ted = (-t_dir[0], -t_dir[1])
+        dot = sed[0]*(-ted[0]) + sed[1]*(-ted[1])
+        if math.acos(max(-1.0, min(1.0, dot))) < _PARALLEL_THRESHOLD_RAD:
+            intersections.append(None)
+        else:
+            intersections.append(_line_intersection_2d(
+                s_ep[0], s_ep[1], sed[0], sed[1],
+                t_ep[0], t_ep[1], ted[0], ted[1]))
+
+    # Step 2: project candidates onto each segment line; pick farthest-back as cut point
+    cut_points = []
+    for idx in range(n):
+        si, is_start = valid_sorted[idx]
+        coords = raw_lines[si][0]
+        cands = [junction_pos]
+        if intersections[idx] is not None:
+            cands.append(intersections[idx])
+        if intersections[(idx-1+n) % n] is not None:
+            cands.append(intersections[(idx-1+n) % n])
+
+        p1 = coords[0] if is_start else coords[-1]
+        p2 = coords[1] if is_start else coords[-2]
+        sdx, sdy = p2[0]-p1[0], p2[1]-p1[1]
+        sL = math.sqrt(sdx*sdx+sdy*sdy)
+        if sL < 1e-9:
+            cut_points.append(p1); continue
+        sdn = (sdx/sL, sdy/sL)
+        projected = [(p1[0]+(c[0]-p1[0])*sdn[0]+(c[1]-p1[1])*sdn[1]*0,
+                      p1[1]+(c[0]-p1[0])*sdn[1]) for c in cands]
+        # Correct projection: p1 + dot(cand-p1, sdn) * sdn
+        projected = []
+        for cand in cands:
+            t = (cand[0]-p1[0])*sdn[0] + (cand[1]-p1[1])*sdn[1]
+            projected.append((p1[0]+t*sdn[0], p1[1]+t*sdn[1]))
+        ref = (junction_pos[0] - sdn[0]*201, junction_pos[1] - sdn[1]*201)
+        cut_points.append(max(projected,
+                              key=lambda p: (p[0]-ref[0])**2 + (p[1]-ref[1])**2))
+
+    # Step 3: build cut vectors and junction polygon
+    _SNAP = 0.01
+    seg_interfaces = []
+    for idx in range(n):
+        si, is_start = valid_sorted[idx]
+        coords = raw_lines[si][0]
+        hw = width_fn(raw_lines[si][1]) * 0.5
+        # Outward-from-junction tangent at the polyline end that meets the junction.
+        d = away_dir(coords, is_start)
+        rn = (d[1], -d[0])                    # right-of-outward
+        scv = (rn[0]*hw, rn[1]*hw)
+        cp = cut_points[idx]
+        lc = (cp[0]-scv[0], cp[1]-scv[1])     # LEFT-of-outward
+        rc = (cp[0]+scv[0], cp[1]+scv[1])     # RIGHT-of-outward
+        seg_interfaces.append((lc, rc))
+        # seg_interfaces holds {LEFT-of-outward, RIGHT-of-outward} for the junction polygon.
+        # cuts must hold {LEFT-of-forward, RIGHT-of-forward} for the band builder; for end
+        # cuts (is_start=False) forward is opposite outward, so swap the pair.
+        cuts[(si, 'start' if is_start else 'end')] = (lc, rc) if is_start else (rc, lc)
+
+    vectors = []
+    for idx in range(n):
+        lc, rc = seg_interfaces[idx]
+        if not vectors or math.hypot(lc[0]-vectors[-1][0], lc[1]-vectors[-1][1]) > _SNAP:
+            vectors.append(lc)
+        vectors.append(rc)
+        pb = intersections[idx]
+        if pb is not None and not any(
+                math.hypot(pb[0]-v[0], pb[1]-v[1]) < _SNAP for v in vectors):
+            vectors.append(pb)
+
+    if len(vectors) < 3:
+        return None
+    if math.hypot(vectors[-1][0]-vectors[0][0], vectors[-1][1]-vectors[0][1]) > _SNAP:
+        vectors.append(vectors[0])
+    return vectors
 
 
 def _way_to_coords(way_el, nodes, origin_lat, origin_lon):
@@ -288,16 +632,28 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
     for nd in root.iter("node"):
         nodes[nd.attrib["id"]] = (float(nd.attrib["lat"]), float(nd.attrib["lon"]))
 
-    # Build way_id -> coords for relation resolution
-    ways_coords = {}
-    for way in root.iter("way"):
-        coords = _way_to_coords(way, nodes, origin_lat, origin_lon)
-        if coords:
-            ways_coords[way.attrib["id"]] = coords
+    # Projected (x,y) for each node — needed by network polygon builder
+    node_xy = {nid: _latlon_to_xy(lat, lon, origin_lat, origin_lon)
+               for nid, (lat, lon) in nodes.items()}
 
-    buildings, roads, grasslands, trees_poly, forests = [], [], [], [], []
-    parking, fences, tree_points = [], [], []
-    sidewalks, cycleways = [], []
+    # Build way_id -> coords and way_id -> node_refs for relation resolution + network building
+    ways_coords = {}
+    ways_node_refs = {}
+    for way in root.iter("way"):
+        nd_refs = [nd.attrib["ref"] for nd in way.iter("nd")]
+        valid_refs = [r for r in nd_refs if r in nodes]
+        coords = [_latlon_to_xy(*nodes[r], origin_lat, origin_lon) for r in valid_refs]
+        if len(coords) >= 2:
+            ways_coords[way.attrib["id"]] = coords
+            ways_node_refs[way.attrib["id"]] = valid_refs
+
+    buildings, grasslands, trees_poly, forests = [], [], [], []
+    parking, tree_points = [], []
+    # Network line collections: (coords, width_or_key, start_nid, end_nid)
+    raw_roads = []
+    raw_sidewalks = []
+    raw_cycleways = []
+    raw_fences = []
 
     for nd in root.iter("node"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in nd.iter("tag")}
@@ -306,29 +662,48 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
 
     for way in root.iter("way"):
         tags = {t.attrib["k"]: t.attrib["v"] for t in way.iter("tag")}
-        coords = ways_coords.get(way.attrib["id"])
+        way_id = way.attrib["id"]
+        coords = ways_coords.get(way_id)
         if coords is None:
             continue
+        nd_refs = ways_node_refs.get(way_id, [])
+        start_nid = nd_refs[0] if nd_refs else None
+        end_nid = nd_refs[-1] if nd_refs else None
+
         if "building" in tags:
             if len(coords) >= 3:
-                buildings.append((coords, []))  # simple polygon, no holes
+                buildings.append((coords, []))
             continue
         amenity = tags.get("amenity", "")
         if amenity in ("parking", "parking_space") and len(coords) >= 3:
             parking.append((coords, []))
             continue
+        # Resolve width: OSM width=* tag (if present & parseable) overrides the default.
+        def _resolve_width(fallback):
+            wt = tags.get("width")
+            if wt:
+                try:
+                    return float(wt)
+                except (ValueError, TypeError):
+                    pass
+            return fallback
+
         if tags.get("barrier") == "fence":
-            fences.append(coords)
+            raw_fences.append((coords, _resolve_width(GEOM_PARAMS["fence_width_meters"]),
+                               start_nid, end_nid))
             continue
         hw = tags.get("highway", "")
         if hw in SIDEWALK_HIGHWAY_TYPES:
-            sidewalks.append(coords)
+            raw_sidewalks.append((coords, _resolve_width(GEOM_PARAMS["sidewalk_width_meters"]),
+                                  start_nid, end_nid))
             continue
         if hw in CYCLEWAY_HIGHWAY:
-            cycleways.append(coords)
+            raw_cycleways.append((coords, _resolve_width(GEOM_PARAMS["cycleway_width_meters"]),
+                                  start_nid, end_nid))
             continue
         if hw in ROAD_HIGHWAY_TYPES:
-            roads.append(coords)
+            raw_roads.append((coords, _resolve_width(_road_width_for_highway(hw)),
+                              start_nid, end_nid))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -378,6 +753,21 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
         elif tags.get("landcover") == "trees":
             trees_poly.extend(polys)
 
+    # Build explicit network polygons with OSM2World-style junction logic.
+    # Each raw_* tuple now stores an already-resolved per-way width (OSM width=* tag
+    # when present, otherwise category default), so width_fn is the identity.
+    road_seg, road_junc = _build_network_polygons(raw_roads, node_xy, lambda w: w)
+    roads = road_seg + road_junc
+
+    sw_seg, sw_junc = _build_network_polygons(raw_sidewalks, node_xy, lambda w: w)
+    sidewalks = sw_seg + sw_junc
+
+    cy_seg, cy_junc = _build_network_polygons(raw_cycleways, node_xy, lambda w: w)
+    cycleways = cy_seg + cy_junc
+
+    fn_seg, fn_junc = _build_network_polygons(raw_fences, node_xy, lambda w: w)
+    fences = fn_seg + fn_junc
+
     return dict(buildings=buildings, roads=roads, grasslands=grasslands,
                 trees=trees_poly, forests=forests, parking=parking,
                 fences=fences, tree_points=tree_points,
@@ -408,7 +798,9 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     geometry that can influence points near the trajectory.
     """
     out = {}
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+    out["roads"] = [g for g in geom.get("roads", [])
+                    if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
+    for cat in ("buildings", "grasslands", "trees", "forests",
                 "parking", "fences", "sidewalks", "cycleways"):
         out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
     for pt_key in ("tree_points",):
@@ -432,14 +824,31 @@ OSM_COLUMNS = [
 ]
 N_OSM = len(OSM_COLUMNS)
 
-DEFAULT_OSM_GEOMETRY_PARAMS = {
-    "road_width_meters": 10.0,
-    "sidewalk_width_meters": 10.0,
+_GEOM_FALLBACK = {
+    "road_width_meters": 4.0,
+    "sidewalk_width_meters": 2.0,
     "cycleway_width_meters": 2.0,
     "fence_width_meters": 0.6,
     "tree_point_radius_meters": 5.0,
 }
-GEOM_PARAMS = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+GEOM_PARAMS = dict(_GEOM_FALLBACK)
+
+
+def _load_geom_defaults(osm_bki_path):
+    """Load default geometry parameters from osm_bki.yaml, falling back to built-in values."""
+    if not os.path.isfile(osm_bki_path):
+        print(f"[WARN] osm_bki.yaml not found at {osm_bki_path}, using built-in defaults")
+        return dict(_GEOM_FALLBACK)
+    with open(osm_bki_path) as f:
+        raw = yaml.safe_load(f)
+    if "/**" in raw:
+        raw = raw["/**"].get("ros__parameters", raw)
+    elif "ros__parameters" in raw:
+        raw = raw["ros__parameters"]
+    params = raw.get("osm_geometry_parameters", {})
+    result = dict(_GEOM_FALLBACK)
+    result.update({k: v for k, v in params.items() if v is not None})
+    return result
 
 # Search radius for STRtree: geometry beyond this does not affect prior (decay_m typically 3m)
 _QUERY_BUFFER = 50.0  # meters
@@ -450,13 +859,30 @@ def _build_shapely_index(geom):
     if not SHAPELY_AVAILABLE:
         return None
     idx = {"geom": geom, "tree_points": geom.get("tree_points", [])}
-    for cat in ("roads", "sidewalks", "cycleways", "fences"):
-        geoms = []
-        for coords in geom.get(cat, []):
-            if len(coords) >= 2:
-                geoms.append(LineString(coords))
-        idx[cat] = (STRtree(geoms), geoms) if geoms else (None, [])
-    for cat in ("buildings", "grasslands", "trees", "forests", "parking"):
+    # Roads: now stored as polygons (already expanded), treat as regular polygons
+    road_geoms = []
+    for poly in geom.get("roads", []):
+        outer = _poly_outer(poly)
+        if len(outer) >= 3:
+            try:
+                shell = list(outer) + [outer[0]] if outer[0] != outer[-1] else list(outer)
+                g = Polygon(shell)
+                if not g.is_empty:
+                    if not g.is_valid and make_valid is not None:
+                        g = make_valid(g)
+                        if g is not None and not g.is_empty:
+                            if hasattr(g, "geoms"):
+                                for part in g.geoms:
+                                    if part.geom_type == "Polygon" and not part.is_empty:
+                                        road_geoms.append(part)
+                            elif g.geom_type == "Polygon":
+                                road_geoms.append(g)
+                    else:
+                        road_geoms.append(g)
+            except (GEOSException, ValueError, TypeError):
+                pass
+    idx["roads"] = (STRtree(road_geoms), road_geoms) if road_geoms else (None, [])
+    for cat in ("sidewalks", "cycleways", "fences", "buildings", "grasslands", "trees", "forests", "parking"):
         geoms = []
         for poly in geom.get(cat, []):
             outer = _poly_outer(poly)
@@ -530,40 +956,34 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
         return osm_prior_from_signed_distance(sd, decay_m)
 
     if cat == "roads":
-        half_w = 0.5 * GEOM_PARAMS["road_width_meters"]
-        candidates = _query_candidates(idx, "roads", x, y)
-        min_sd = float("inf")
-        for g in candidates:
-            sd = g.distance(pt) - half_w
+        min_d = float("inf")
+        for g in _query_candidates(idx, "roads", x, y):
+            sd, ok = _shapely_signed_distance(g, pt)
+            if not ok:
+                continue
             if sd <= 0:
                 return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
+            if sd < min_d:
+                min_d = sd
+        return _prior_signed(min_d) if min_d != float("inf") else 0.0
 
     elif cat == "sidewalks":
-        half_w = 0.5 * GEOM_PARAMS["sidewalk_width_meters"]
-        candidates = _query_candidates(idx, "sidewalks", x, y)
-        min_sd = float("inf")
-        for g in candidates:
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
+        min_d = float("inf")
+        for g in _query_candidates(idx, "sidewalks", x, y):
+            sd, ok = _shapely_signed_distance(g, pt)
+            if not ok: continue
+            if sd <= 0: return 1.0
+            if sd < min_d: min_d = sd
+        return _prior_signed(min_d) if min_d != float("inf") else 0.0
 
     elif cat == "cycleways":
-        half_w = 0.5 * GEOM_PARAMS["cycleway_width_meters"]
-        candidates = _query_candidates(idx, "cycleways", x, y)
-        min_sd = float("inf")
-        for g in candidates:
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
+        min_d = float("inf")
+        for g in _query_candidates(idx, "cycleways", x, y):
+            sd, ok = _shapely_signed_distance(g, pt)
+            if not ok: continue
+            if sd <= 0: return 1.0
+            if sd < min_d: min_d = sd
+        return _prior_signed(min_d) if min_d != float("inf") else 0.0
 
     elif cat == "parking":
         max_p = 0.0
@@ -638,36 +1058,32 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
         return _prior_signed(min_d) if min_d != float("inf") else 0.0
 
     elif cat == "fences":
-        half_w = 0.5 * GEOM_PARAMS["fence_width_meters"]
-        min_sd = float("inf")
+        min_d = float("inf")
         for g in _query_candidates(idx, "fences", x, y):
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
+            sd, ok = _shapely_signed_distance(g, pt)
+            if not ok: continue
+            if sd <= 0: return 1.0
+            if sd < min_d: min_d = sd
+        return _prior_signed(min_d) if min_d != float("inf") else 0.0
 
     return 0.0
 
 
 def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
     """Compute OSM prior for one category at (x,y)."""
-    def _line_prior(lines_key, width_m):
-        min_sd = float("inf")
-        for line in geom.get(lines_key, []):
-            sd = distance_to_polyline(x, y, line) - 0.5 * max(0.1, width_m)
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
-        return osm_prior_from_signed_distance(min_sd, decay_m)
+    def _poly_prior(poly_key):
+        min_d = float("inf")
+        for poly in geom.get(poly_key, []):
+            sd = distance_to_polygon_boundary(x, y, poly)
+            if sd <= 0: return 1.0
+            if sd < min_d: min_d = sd
+        return osm_prior_from_signed_distance(min_d, decay_m)
     if cat == "roads":
-        return _line_prior("roads", GEOM_PARAMS["road_width_meters"])
+        return _poly_prior("roads")
     elif cat == "sidewalks":
-        return _line_prior("sidewalks", GEOM_PARAMS["sidewalk_width_meters"])
+        return _poly_prior("sidewalks")
     elif cat == "cycleways":
-        return _line_prior("cycleways", GEOM_PARAMS["cycleway_width_meters"])
+        return _poly_prior("cycleways")
     elif cat == "parking":
         max_p = 0.0
         for poly in geom["parking"]:
@@ -716,7 +1132,7 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
             if sd < min_d: min_d = sd
         return osm_prior_from_signed_distance(min_d, decay_m)
     elif cat == "fences":
-        return _line_prior("fences", GEOM_PARAMS["fence_width_meters"])
+        return _poly_prior("fences")
     return 0.0
 
 
@@ -975,52 +1391,45 @@ def derive_matrix(counts, class_totals, scale_by_class_points=True):
     return matrix
 
 
-def _z_range_per_scan(z, z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan Z range for height binning, optionally trimming outliers.
-    Returns (min_z, max_z) to use for bin extent. If percentiles are 0 and 100, use full range."""
-    if z.size == 0:
-        return 0.0, 1.0
-    if z_low_percentile <= 0.0 and z_high_percentile >= 100.0:
-        return float(z.min()), float(z.max())
-    min_z = float(np.percentile(z, z_low_percentile))
-    max_z = float(np.percentile(z, z_high_percentile))
-    if max_z <= min_z:
-        max_z = min_z + 1e-6
-    return min_z, max_z
+def compute_num_bins(step_meters, max_meters):
+    return int(np.ceil(float(max_meters) / float(step_meters)))
 
 
-def build_cooccurrence_height_class(scan_data_list, num_bins=20,
-                                    z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan height bins: counts_h[bin][class_idx] accumulates weighted counts of GT
-    points in each bin, indexed by common class (1..N_CLASSES-1 mapped to 0..N_CLASSES-2).
+def build_cooccurrence_height_class(scan_data_list, step_meters=1.0, max_meters=30.0):
+    """Fixed-metric height bins measured upward from the bottom-most lidar point of
+    each scan (z_local = projection onto lidar z). For each scan,
+    z_base = min(z_local) is the zero reference; bin = floor((z_local - z_base)/step),
+    clamped to [0, num_bins-1] where num_bins = ceil(max_meters / step_meters).
+    Making height relative to the scan's bottom removes dependence on the sensor's
+    absolute z.
 
-    Each GT point contributes a weight equal to its OSM prior sum (points where OSM is
-    silent contribute less, so bins dominated by uninformative points don't skew the
-    per-class height histogram). Points with OSM sum == 0 contribute a fallback weight of 1.
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those
-    percentiles so outliers in Z do not stretch the bin extent."""
+    counts_h[bin][class_idx] accumulates OSM-weighted GT counts (fallback weight 1.0
+    for points where OSM is silent). Matches the C++ viz and filter binning."""
+    num_bins = compute_num_bins(step_meters, max_meters)
     n_rows = N_CLASSES - 1
     counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
     for item in scan_data_list:
-        map_pts, gt, osm = item[:3]
-        z = map_pts[:, 2]
-        min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
-        z_range = max_z - min_z + 1e-6
-        bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
-        osm_sums = osm.sum(axis=1)
-        for i in range(len(gt)):
-            c = int(gt[i])
-            if not (1 <= c < N_CLASSES):
-                continue
-            b = int(bins[i])
-            w = float(osm_sums[i])
-            if w <= 0.0:
-                w = 1.0
-            counts_h[b, c - 1] += w
+        z_local, gt, osm = item[:3]
+        gt = np.asarray(gt, dtype=np.int32)
+        z_arr = np.asarray(z_local, dtype=np.float64)
+        if z_arr.size == 0:
+            continue
+        z_base = float(z_arr.min())
+        mask = (gt >= 1) & (gt < N_CLASSES)
+        if not mask.any():
+            continue
+        z_m = z_arr[mask] - z_base
+        gt_m = gt[mask]
+        osm_m = np.asarray(osm, dtype=np.float64)[mask]
+        bins = np.clip(np.floor(z_m / float(step_meters)).astype(np.int32), 0, num_bins - 1)
+        w = osm_m.sum(axis=1)
+        w[w <= 0.0] = 1.0
+        cols = gt_m - 1
+        np.add.at(counts_h, (bins, cols), w)
     return counts_h
 
 
-def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
+def derive_height_matrix(counts_h, low_percentile=10.0, high_percentile=90.0):
     """Derive class-indexed height trust matrix: H[bin][class_idx] in [0, 1].
 
     For each common class c (column), H[:, c-1] is the bin-histogram of class c points
@@ -1030,6 +1439,7 @@ def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percen
 
     Outliers are smoothed by clipping each column to [low_percentile, high_percentile]
     of that column's values before the final per-column max-normalization."""
+    num_bins = counts_h.shape[0]
     n_rows = counts_h.shape[1]
     matrix = np.zeros((num_bins, n_rows))
     for c in range(n_rows):
@@ -1110,9 +1520,10 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         if len(ring) >= 3:
             p = Polygon(ring, fill=False, edgecolor="brown", linewidth=0.5, alpha=0.7)
             ax1.add_patch(p)
-    for road in geom["roads"][:100]:
-        if len(road) >= 2:
-            ax1.plot([r[0] for r in road], [r[1] for r in road], "k-", linewidth=0.8, alpha=0.5)
+    for poly in geom["roads"][:100]:
+        ring = _poly_outer(poly)
+        if len(ring) >= 2:
+            ax1.plot([r[0] for r in ring], [r[1] for r in ring], "k-", linewidth=0.8, alpha=0.5)
     for poly in geom["grasslands"][:50]:
         ring = _poly_outer(poly)
         if len(ring) >= 3:
@@ -1147,8 +1558,9 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
     ax2.imshow(h.T, origin="lower", extent=extent, aspect="auto",
                cmap="viridis", vmin=0, vmax=max(vmax, 1))
     for poly in geom["roads"][:150]:
-        if len(poly) >= 2:
-            ax2.plot([r[0] for r in poly], [r[1] for r in poly], "gray", linewidth=0.6, alpha=0.8)
+        ring = _poly_outer(poly)
+        if len(ring) >= 2:
+            ax2.plot([r[0] for r in ring], [r[1] for r in ring], "gray", linewidth=0.6, alpha=0.8)
     for poly in geom["buildings"][:300]:
         ring = _poly_outer(poly)
         if len(ring) >= 3:
@@ -1217,7 +1629,8 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 # 7. YAML output
 # ═══════════════════════════════════════════════════════════════════
 
-def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None):
+def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None,
+                       height_step_meters=None, height_max_meters=None):
     val_comment = "# Values in [0.0, 1.0]: each column is a probability distribution that sums to 1."
     cols_str = ", ".join(OSM_COLUMNS)
     n_rows = N_CLASSES - 1
@@ -1242,17 +1655,27 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
         n_bins = height_matrix.shape[0]
         n_class_cols = height_matrix.shape[1]
         class_cols_str = ", ".join(CLASS_NAMES[i + 1] for i in range(n_class_cols))
+        step_str = f"{height_step_meters:.3f}" if height_step_meters is not None else "?"
+        max_str = f"{height_max_meters:.3f}" if height_max_meters is not None else "?"
+        step_v = float(height_step_meters) if height_step_meters is not None else 0.0
         lines += [
             "",
-            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins "
-            f"(1=lowest, {n_bins}=highest). Cols = common-taxonomy classes 1..{n_class_cols}: "
-            f"[{class_cols_str}]. Multipliers in [0, 1] applied to p_super[class] after the "
-            "OSM→common projection.",
+            f"# OSM height confusion matrix (fixed-metric bins measured upward from the "
+            f"bottom-most lidar point of each scan). Step = {step_str} m, max height = "
+            f"{max_str} m, num_bins = {n_bins}. Bin i (1-indexed) covers "
+            f"height_above_bottom in [(i-1)*step, i*step] m; bin 1 is the bottom-most, "
+            f"bin {n_bins} is the top-most. Cols = common-taxonomy classes "
+            f"1..{n_class_cols}: [{class_cols_str}]. Multipliers in [0, 1] applied to "
+            "p_super[class] after the OSM→common projection.",
+            f"osm_height_bin_step_meters: {step_str}",
+            f"osm_height_max_meters: {max_str}",
             "osm_height_confusion_matrix:",
         ]
         for b in range(n_bins):
+            z_lo = b * step_v
+            z_hi = z_lo + step_v
             vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(n_class_cols))
-            lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} Height")
+            lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} h_above_bottom in [{z_lo:.2f}, {z_hi:.2f}] m")
     lines += [
         "", "osm_class_map:",
         *[f"  {name}: {j}" for j, name in enumerate(OSM_COLUMNS)],
@@ -1290,21 +1713,20 @@ def main():
     parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_MCD_NEW.yaml"))
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--keyframe-dist", type=float, default=5.0)
+    parser.add_argument("--keyframe-dist", type=float, default=1.0)
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--road-width", type=float, default=3.0)
-    parser.add_argument("--sidewalk-width", type=float, default=3.0)
-    parser.add_argument("--cycleway-width", type=float, default=3.0)
-    parser.add_argument("--fence-width", type=float, default=0.5)
+    parser.add_argument("--road-width", type=float, default=None, help="Override road width (m); default from osm_bki.yaml")
+    parser.add_argument("--sidewalk-width", type=float, default=None, help="Override sidewalk width (m); default from osm_bki.yaml")
+    parser.add_argument("--cycleway-width", type=float, default=None, help="Override cycleway width (m); default from osm_bki.yaml")
+    parser.add_argument("--fence-width", type=float, default=None, help="Override fence width (m); default from osm_bki.yaml")
     parser.add_argument("--grid-res", type=float, default=1.0)
 
-    # Height matrix options
-    parser.add_argument("--height-bins", type=int, default=64)
-    parser.add_argument("--height-z-low-percentile", type=float, default=2.0,
-                        help="Per-scan Z low percentile for height bin extent; disregard points below (default: 2)")
-    parser.add_argument("--height-z-high-percentile", type=float, default=98.0,
-                        help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
+    # Height matrix options (fixed-metric bins along lidar z, symmetric about sensor origin)
+    parser.add_argument("--height-step-meters", type=float, default=0.5,
+                        help="Per-bin height step in meters (default: 1.0)")
+    parser.add_argument("--height-max-meters", type=float, default=50.0,
+                        help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 30.0)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
     
@@ -1329,14 +1751,10 @@ def main():
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
     
     # Options for height-based analysis and matrix
-    parser.add_argument("--scale-by-class-points", action="store_true", default=False,
+    parser.add_argument("--scale-by-class-points", action="store_true", default=True,
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    
-    # Other options
-    parser.add_argument("--flip-height-axis", action="store_true",
-                        help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
     
     args = parser.parse_args()
 
@@ -1387,7 +1805,25 @@ def main():
     origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
 
-    geom_params_cfg = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+    # 1. Load defaults from osm_bki.yaml
+    osm_bki_path = os.path.join(SCRIPT_DIR, "config/methods/osm_bki.yaml")
+    geom_params_cfg = _load_geom_defaults(osm_bki_path)
+    print(f"Loaded geometry defaults from {osm_bki_path}")
+
+    # 2. Resize road/sidewalk/cycleway from the referenced confusion matrix yaml (if it exists)
+    osm_cm_file = cfg.get("osm_confusion_matrix_file")
+    if osm_cm_file:
+        osm_cm_path = os.path.join(SCRIPT_DIR, "config/datasets", osm_cm_file)
+        if os.path.isfile(osm_cm_path):
+            with open(osm_cm_path) as _f:
+                osm_cm_cfg = yaml.safe_load(_f)
+            cm_geom = osm_cm_cfg.get("osm_geometry_parameters", {})
+            for _key in ("road_width_meters", "sidewalk_width_meters", "cycleway_width_meters"):
+                if _key in cm_geom:
+                    geom_params_cfg[_key] = cm_geom[_key]
+            print(f"Resized road/sidewalk/cycleway widths from {osm_cm_path}")
+
+    # 3. Dataset config overrides
     geom_params_cfg["tree_point_radius_meters"] = cfg.get(
         "osm_tree_point_radius_meters", geom_params_cfg["tree_point_radius_meters"]
     )
@@ -1396,6 +1832,7 @@ def main():
     geom_params_cfg["cycleway_width_meters"] = cfg.get("cycleway_width_meters", geom_params_cfg["cycleway_width_meters"])
     geom_params_cfg["fence_width_meters"] = cfg.get("fence_width_meters", geom_params_cfg["fence_width_meters"])
 
+    # 4. CLI overrides (only when explicitly provided)
     if args.road_width is not None:
         geom_params_cfg["road_width_meters"] = args.road_width
     if args.sidewalk_width is not None:
@@ -1527,6 +1964,14 @@ def main():
     all_inferred = [] if args.use_inferred_row else None
     all_map_pts = [] if args.visualize_points else None
     scan_data_list = [] if not args.no_height_matrix else None
+    # Height axis is fixed: +z of the first scan's lidar, expressed in the (first-pose-relative)
+    # map frame. poses[0] is identity after the first-pose normalization, so
+    # lidar_to_map = I @ lidar_to_body = lidar_to_body.
+    _first_lidar_to_map = poses[0][1] @ lidar_to_body
+    lidar_up_ref = _first_lidar_to_map[:3, 2].astype(np.float64)
+    _n = np.linalg.norm(lidar_up_ref)
+    if _n > 1e-6:
+        lidar_up_ref = lidar_up_ref / _n
 
     for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(tqdm(scan_list, desc="scans", unit="scan")):
         pts = read_scan_bin(scan_path)
@@ -1575,7 +2020,9 @@ def main():
         if all_map_pts is not None:
             all_map_pts.append(map_pts[:, :2])
         if scan_data_list is not None:
-            item = (map_pts.copy(), gt_common.copy(), osm_vecs.copy())
+            origin_map = lidar_to_map[:3, 3]
+            z_local = (map_pts - origin_map) @ lidar_up_ref
+            item = (z_local.astype(np.float64), gt_common.copy(), osm_vecs.copy())
             if all_inferred is not None and inferred_common is not None:
                 item = (*item, inferred_common.copy())
             scan_data_list.append(item)
@@ -1603,19 +2050,18 @@ def main():
         and not args.no_height_matrix
     ):
         counts_h = build_cooccurrence_height_class(
-            scan_data_list, num_bins=args.height_bins,
-            z_low_percentile=args.height_z_low_percentile,
-            z_high_percentile=args.height_z_high_percentile,
+            scan_data_list,
+            step_meters=args.height_step_meters,
+            max_meters=args.height_max_meters,
         )
-        height_matrix = derive_height_matrix(counts_h, num_bins=args.height_bins)
-        print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_CLASSES - 1} class cols")
-        print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
-        if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
-            print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
-
-    # Optionally flip height axis so that bin 1 corresponds to highest Z instead of lowest
-    if height_matrix is not None and args.flip_height_axis:
-        height_matrix = height_matrix[::-1, :].copy()
+        height_matrix = derive_height_matrix(counts_h)
+        num_bins_used = counts_h.shape[0]
+        print(f"\nOSM height confusion matrix: {num_bins_used} bins x {N_CLASSES - 1} class cols")
+        print(f"  (step={args.height_step_meters}m, max height={args.height_max_meters}m, "
+              f"bin 1 = h_above_bottom [0, {args.height_step_meters:.2f}] m, "
+              f"bin {num_bins_used} = h_above_bottom "
+              f"[{(num_bins_used-1)*args.height_step_meters:.2f}, "
+              f"{num_bins_used*args.height_step_meters:.2f}] m)")
 
     if args.scale_by_class_points:
         print("Matrix derived with scaling by class point counts (rows weighted by GT count per class).")
@@ -1641,6 +2087,8 @@ def main():
         args.output,
         height_matrix=height_matrix,
         geometry_params=geometry_params_out,
+        height_step_meters=args.height_step_meters,
+        height_max_meters=args.height_max_meters,
     )
     print(f"\nSaved optimized matrix to {args.output}")
 

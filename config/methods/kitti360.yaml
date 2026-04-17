@@ -54,6 +54,16 @@
     publish_semantic_uncertainty: false
     semantic_uncertainty_topic: /semantic_uncertainty_map
 
+    # OSM height-bin visualization: color each point by its per-scan relative z-bin
+    # (same binning as osm_height_filtering). Scan and map can be toggled independently.
+    # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
+    publish_osm_height_bins_scan: false
+    publish_osm_height_bins_map: false
+    osm_height_bins_step_meters: 5.0     # meters per bin; num_bins derived per scan, symmetric about sensor origin
+    osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
+    osm_height_bins_scan_topic: /osm_height_bins_scan
+    osm_height_bins_map_topic: /osm_height_bins_map
+
     # Color configuration (matters if color_mode is set to 'semantic').
     # Uses common taxonomy colors from labels_common.yaml.
     colors_file: labels_common.yaml

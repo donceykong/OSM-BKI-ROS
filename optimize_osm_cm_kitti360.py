@@ -16,12 +16,13 @@ Usage:
                                [--data-dir DATA_DIR] [--max-scans N] [--keyframe-dist D]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
-                               [--height-bins N] [--no-height-matrix]
+                               [--height-step-meters S] [--height-max-meters M] [--no-height-matrix]
 
     --visualize           Plot the optimized matrix as a heatmap (blue=suppress, red=boost).
     --visualize-points    Plot GT points + OSM geometry + OSM prior heatmap (spatial view).
     --no-show             Save PNG only, do not block to show figure.
-    --height-bins N       Number of per-scan height bins for osm_height_confusion_matrix (default: 20).
+    --height-step-meters  Per-bin height step (m) for osm_height_confusion_matrix (default: 5.0).
+    --height-max-meters   Max |z_local| extent (m); num_bins = 2*ceil(max/step) (default: 50.0).
     --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
@@ -204,6 +205,27 @@ ROAD_HIGHWAY_TYPES = {
     "primary_link", "secondary_link", "tertiary_link", "living_street",
     "service", "road",
 }
+# Per-highway-type default widths (OSM2World RoadModule defaults, metres).
+# road_width_meters in GEOM_PARAMS is used as the "else" fallback.
+_HIGHWAY_WIDTH_M = {
+    "motorway":       8.75,
+    "motorway_link":  8.75,
+    "trunk":          7.0,
+    "trunk_link":     7.0,
+    "primary":        7.0,
+    "primary_link":   7.0,
+    "secondary":      7.0,
+    "secondary_link": 7.0,
+    "service":        3.5,
+    "track":          2.5,
+}
+
+
+def _road_width_for_highway(hw_type):
+    """Return width (m) for a given OSM highway tag value."""
+    return _HIGHWAY_WIDTH_M.get(hw_type, GEOM_PARAMS.get("road_width_meters", 4.0))
+
+
 SIDEWALK_HIGHWAY_TYPES = {"footway", "path", "pedestrian", "foot"}
 CYCLEWAY_HIGHWAY = {"cycleway"}
 GRASSLAND_LANDUSE = {"grass", "meadow", "greenfield", "recreation_ground"}
@@ -332,7 +354,7 @@ def parse_osm_xml(osm_path, origin_lat, origin_lon):
             cycleways.append(coords)
             continue
         if hw in ROAD_HIGHWAY_TYPES:
-            roads.append(coords)
+            roads.append((coords, hw))
             continue
         lu = tags.get("landuse", "")
         if lu in GRASSLAND_LANDUSE and len(coords) >= 3:
@@ -412,7 +434,12 @@ def trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin):
     geometry that can influence points near the trajectory.
     """
     out = {}
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+    # Roads are (coords, hw) tuples — filter by coords only.
+    out["roads"] = [
+        (coords, hw) for coords, hw in geom.get("roads", [])
+        if _bbox_intersects_expanded(coords, xmin, xmax, ymin, ymax, margin)
+    ]
+    for cat in ("buildings", "grasslands", "trees", "forests",
                 "parking", "fences", "sidewalks", "cycleways"):
         out[cat] = [g for g in geom.get(cat, []) if _bbox_intersects_expanded(g, xmin, xmax, ymin, ymax, margin)]
     for pt_key in ("tree_points",):
@@ -436,14 +463,31 @@ OSM_COLUMNS = [
 ]
 N_OSM = len(OSM_COLUMNS)
 
-DEFAULT_OSM_GEOMETRY_PARAMS = {
-    "road_width_meters": 10.0,
-    "sidewalk_width_meters": 10.0,
+_GEOM_FALLBACK = {
+    "road_width_meters": 4.0,
+    "sidewalk_width_meters": 2.0,
     "cycleway_width_meters": 2.0,
     "fence_width_meters": 0.6,
     "tree_point_radius_meters": 5.0,
 }
-GEOM_PARAMS = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+GEOM_PARAMS = dict(_GEOM_FALLBACK)
+
+
+def _load_geom_defaults(osm_bki_path):
+    """Load default geometry parameters from osm_bki.yaml, falling back to built-in values."""
+    if not os.path.isfile(osm_bki_path):
+        print(f"[WARN] osm_bki.yaml not found at {osm_bki_path}, using built-in defaults")
+        return dict(_GEOM_FALLBACK)
+    with open(osm_bki_path) as f:
+        raw = yaml.safe_load(f)
+    if "/**" in raw:
+        raw = raw["/**"].get("ros__parameters", raw)
+    elif "ros__parameters" in raw:
+        raw = raw["ros__parameters"]
+    params = raw.get("osm_geometry_parameters", {})
+    result = dict(_GEOM_FALLBACK)
+    result.update({k: v for k, v in params.items() if v is not None})
+    return result
 
 # Search radius for STRtree: geometry beyond this does not affect prior (decay_m typically 3m)
 _QUERY_BUFFER = 50.0  # meters
@@ -454,7 +498,15 @@ def _build_shapely_index(geom):
     if not SHAPELY_AVAILABLE:
         return None
     idx = {"geom": geom, "tree_points": geom.get("tree_points", [])}
-    for cat in ("roads", "sidewalks", "cycleways", "fences"):
+    # Roads: store (STRtree, geoms, widths) so per-road widths are accessible.
+    road_geoms, road_widths = [], []
+    for entry in geom.get("roads", []):
+        coords, hw = entry
+        if len(coords) >= 2:
+            road_geoms.append(LineString(coords))
+            road_widths.append(_road_width_for_highway(hw))
+    idx["roads"] = (STRtree(road_geoms), road_geoms, road_widths) if road_geoms else (None, [], [])
+    for cat in ("sidewalks", "cycleways", "fences"):
         geoms = []
         for coords in geom.get(cat, []):
             if len(coords) >= 2:
@@ -534,15 +586,23 @@ def _compute_single_prior_shapely(x, y, idx, cat, decay_m, tree_radius):
         return osm_prior_from_signed_distance(sd, decay_m)
 
     if cat == "roads":
-        half_w = 0.5 * GEOM_PARAMS["road_width_meters"]
-        candidates = _query_candidates(idx, "roads", x, y)
+        road_tree, road_geoms, road_widths = idx.get("roads", (None, [], []))
+        if not road_tree:
+            return 0.0
+        q = box(x - _QUERY_BUFFER, y - _QUERY_BUFFER, x + _QUERY_BUFFER, y + _QUERY_BUFFER)
+        inds = road_tree.query(q)
+        try:
+            inds = np.atleast_1d(inds).tolist()
+        except Exception:
+            inds = [inds] if isinstance(inds, int) else []
         min_sd = float("inf")
-        for g in candidates:
-            sd = g.distance(pt) - half_w
-            if sd <= 0:
-                return 1.0
-            if sd < min_sd:
-                min_sd = sd
+        for i in inds:
+            if 0 <= i < len(road_geoms):
+                sd = road_geoms[i].distance(pt) - 0.5 * road_widths[i]
+                if sd <= 0:
+                    return 1.0
+                if sd < min_sd:
+                    min_sd = sd
         return _prior_signed(min_sd) if min_sd != float("inf") else 0.0
 
     elif cat == "sidewalks":
@@ -667,7 +727,16 @@ def _compute_single_prior(x, y, geom, cat, decay_m, tree_radius):
                 min_sd = sd
         return osm_prior_from_signed_distance(min_sd, decay_m)
     if cat == "roads":
-        return _line_prior("roads", GEOM_PARAMS["road_width_meters"])
+        min_sd = float("inf")
+        for entry in geom.get("roads", []):
+            coords, hw = entry
+            w = _road_width_for_highway(hw)
+            sd = distance_to_polyline(x, y, coords) - 0.5 * max(0.1, w)
+            if sd <= 0:
+                return 1.0
+            if sd < min_sd:
+                min_sd = sd
+        return osm_prior_from_signed_distance(min_sd, decay_m)
     elif cat == "sidewalks":
         return _line_prior("sidewalks", GEOM_PARAMS["sidewalk_width_meters"])
     elif cat == "cycleways":
@@ -1028,52 +1097,45 @@ def derive_matrix(counts, class_totals, scale_by_class_points=True):
     return matrix
 
 
-def _z_range_per_scan(z, z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan Z range for height binning, optionally trimming outliers.
-    Returns (min_z, max_z) to use for bin extent. If percentiles are 0 and 100, use full range."""
-    if z.size == 0:
-        return 0.0, 1.0
-    if z_low_percentile <= 0.0 and z_high_percentile >= 100.0:
-        return float(z.min()), float(z.max())
-    min_z = float(np.percentile(z, z_low_percentile))
-    max_z = float(np.percentile(z, z_high_percentile))
-    if max_z <= min_z:
-        max_z = min_z + 1e-6
-    return min_z, max_z
+def compute_num_bins(step_meters, max_meters):
+    return int(np.ceil(float(max_meters) / float(step_meters)))
 
 
-def build_cooccurrence_height_class(scan_data_list, num_bins=20,
-                                    z_low_percentile=0.0, z_high_percentile=100.0):
-    """Per-scan height bins: counts_h[bin][class_idx] accumulates weighted counts of GT
-    points in each bin, indexed by common class (1..N_CLASSES-1 mapped to 0..N_CLASSES-2).
+def build_cooccurrence_height_class(scan_data_list, step_meters=5.0, max_meters=50.0):
+    """Fixed-metric height bins measured upward from the bottom-most lidar point of
+    each scan (z_local = projection onto lidar z). For each scan,
+    z_base = min(z_local) is the zero reference; bin = floor((z_local - z_base)/step),
+    clamped to [0, num_bins-1] where num_bins = ceil(max_meters / step_meters).
+    Making height relative to the scan's bottom removes dependence on the sensor's
+    absolute z.
 
-    Each GT point contributes a weight equal to its OSM prior sum (points where OSM is
-    silent contribute less, so bins dominated by uninformative points don't skew the
-    per-class height histogram). Points with OSM sum == 0 contribute a fallback weight of 1.
-    When z_low_percentile / z_high_percentile are set, Z range per scan uses those
-    percentiles so outliers in Z do not stretch the bin extent."""
+    counts_h[bin][class_idx] accumulates OSM-weighted GT counts (fallback weight 1.0
+    for points where OSM is silent). Matches the C++ viz and filter binning."""
+    num_bins = compute_num_bins(step_meters, max_meters)
     n_rows = N_CLASSES - 1
     counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
     for item in scan_data_list:
-        map_pts, gt, osm = item[:3]
-        z = map_pts[:, 2]
-        min_z, max_z = _z_range_per_scan(z, z_low_percentile, z_high_percentile)
-        z_range = max_z - min_z + 1e-6
-        bins = np.clip(np.floor((z - min_z) / z_range * num_bins).astype(np.int32), 0, num_bins - 1)
-        osm_sums = osm.sum(axis=1)
-        for i in range(len(gt)):
-            c = int(gt[i])
-            if not (1 <= c < N_CLASSES):
-                continue
-            b = int(bins[i])
-            w = float(osm_sums[i])
-            if w <= 0.0:
-                w = 1.0
-            counts_h[b, c - 1] += w
+        z_local, gt, osm = item[:3]
+        gt = np.asarray(gt, dtype=np.int32)
+        z_arr = np.asarray(z_local, dtype=np.float64)
+        if z_arr.size == 0:
+            continue
+        z_base = float(z_arr.min())
+        mask = (gt >= 1) & (gt < N_CLASSES)
+        if not mask.any():
+            continue
+        z_m = z_arr[mask] - z_base
+        gt_m = gt[mask]
+        osm_m = np.asarray(osm, dtype=np.float64)[mask]
+        bins = np.clip(np.floor(z_m / float(step_meters)).astype(np.int32), 0, num_bins - 1)
+        w = osm_m.sum(axis=1)
+        w[w <= 0.0] = 1.0
+        cols = gt_m - 1
+        np.add.at(counts_h, (bins, cols), w)
     return counts_h
 
 
-def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percentile=90.0):
+def derive_height_matrix(counts_h, low_percentile=10.0, high_percentile=90.0):
     """Derive class-indexed height trust matrix: H[bin][class_idx] in [0, 1].
 
     For each common class c (column), H[:, c-1] is the bin-histogram of class c points
@@ -1083,6 +1145,7 @@ def derive_height_matrix(counts_h, num_bins=20, low_percentile=10.0, high_percen
 
     Outliers are smoothed by clipping each column to [low_percentile, high_percentile]
     of that column's values before the final per-column max-normalization."""
+    num_bins = counts_h.shape[0]
     n_rows = counts_h.shape[1]
     matrix = np.zeros((num_bins, n_rows))
     for c in range(n_rows):
@@ -1163,9 +1226,10 @@ def plot_points_and_osm_heatmap(map_pts_xy, gt_labels, geom, osm_vecs, save_path
         if len(ring) >= 3:
             p = Polygon(ring, fill=False, edgecolor="brown", linewidth=0.5, alpha=0.7)
             ax1.add_patch(p)
-    for road in geom["roads"][:100]:
-        if len(road) >= 2:
-            ax1.plot([r[0] for r in road], [r[1] for r in road], "k-", linewidth=0.8, alpha=0.5)
+    for entry in geom["roads"][:100]:
+        coords, hw = entry
+        if len(coords) >= 2:
+            ax1.plot([r[0] for r in coords], [r[1] for r in coords], "k-", linewidth=0.8, alpha=0.5)
     for poly in geom["grasslands"][:50]:
         ring = _poly_outer(poly)
         if len(ring) >= 3:
@@ -1270,7 +1334,8 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 # 7. YAML output
 # ═══════════════════════════════════════════════════════════════════
 
-def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None):
+def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None,
+                       height_step_meters=None, height_max_meters=None):
     val_comment = "# Values in [0.0, 1.0]: each column is a probability distribution that sums to 1."
     cols_str = ", ".join(OSM_COLUMNS)
     n_rows = N_CLASSES - 1
@@ -1295,17 +1360,27 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
         n_bins = height_matrix.shape[0]
         n_class_cols = height_matrix.shape[1]
         class_cols_str = ", ".join(CLASS_NAMES[i + 1] for i in range(n_class_cols))
+        step_str = f"{height_step_meters:.3f}" if height_step_meters is not None else "?"
+        max_str = f"{height_max_meters:.3f}" if height_max_meters is not None else "?"
+        step_v = float(height_step_meters) if height_step_meters is not None else 0.0
         lines += [
             "",
-            "# OSM height confusion matrix (per-scan relative bins). Rows = height bins "
-            f"(1=lowest, {n_bins}=highest). Cols = common-taxonomy classes 1..{n_class_cols}: "
-            f"[{class_cols_str}]. Multipliers in [0, 1] applied to p_super[class] after the "
-            "OSM→common projection.",
+            f"# OSM height confusion matrix (fixed-metric bins measured upward from the "
+            f"bottom-most lidar point of each scan). Step = {step_str} m, max height = "
+            f"{max_str} m, num_bins = {n_bins}. Bin i (1-indexed) covers "
+            f"height_above_bottom in [(i-1)*step, i*step] m; bin 1 is the bottom-most, "
+            f"bin {n_bins} is the top-most. Cols = common-taxonomy classes "
+            f"1..{n_class_cols}: [{class_cols_str}]. Multipliers in [0, 1] applied to "
+            "p_super[class] after the OSM→common projection.",
+            f"osm_height_bin_step_meters: {step_str}",
+            f"osm_height_max_meters: {max_str}",
             "osm_height_confusion_matrix:",
         ]
         for b in range(n_bins):
+            z_lo = b * step_v
+            z_hi = z_lo + step_v
             vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(n_class_cols))
-            lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} Height")
+            lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} h_above_bottom in [{z_lo:.2f}, {z_hi:.2f}] m")
     lines += [
         "", "osm_class_map:",
         *[f"  {name}: {j}" for j, name in enumerate(OSM_COLUMNS)],
@@ -1346,10 +1421,10 @@ def main():
                         help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
-    parser.add_argument("--road-width", type=float, default=4.0)
-    parser.add_argument("--sidewalk-width", type=float, default=2.0)
-    parser.add_argument("--cycleway-width", type=float, default=2.0)
-    parser.add_argument("--fence-width", type=float, default=0.6)
+    parser.add_argument("--road-width", type=float, default=None, help="Override road width (m); default from osm_bki.yaml")
+    parser.add_argument("--sidewalk-width", type=float, default=None, help="Override sidewalk width (m); default from osm_bki.yaml")
+    parser.add_argument("--cycleway-width", type=float, default=None, help="Override cycleway width (m); default from osm_bki.yaml")
+    parser.add_argument("--fence-width", type=float, default=None, help="Override fence width (m); default from osm_bki.yaml")
     parser.add_argument("--grid-res", type=float, default=2.0,
                         help="Grid resolution (m) for OSM prior caching (default: 2.0)")
     parser.add_argument("--visualize", action="store_true",
@@ -1377,16 +1452,12 @@ def main():
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    parser.add_argument("--height-bins", type=int, default=100,
-                        help="Number of per-scan height bins for osm_height_confusion_matrix (default: 20)")
-    parser.add_argument("--height-z-low-percentile", type=float, default=2.0,
-                        help="Per-scan Z low percentile for height bin extent; disregard points below (default: 2)")
-    parser.add_argument("--height-z-high-percentile", type=float, default=98.0,
-                        help="Per-scan Z high percentile for height bin extent; disregard points above (default: 98)")
+    parser.add_argument("--height-step-meters", type=float, default=5.0,
+                        help="Per-bin height step in meters (default: 5.0)")
+    parser.add_argument("--height-max-meters", type=float, default=50.0,
+                        help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 50.0)")
     parser.add_argument("--no-height-matrix", action="store_true",
                         help="Skip computing and writing osm_height_confusion_matrix")
-    parser.add_argument("--flip-height-axis", action="store_true",
-                        help="Flip height bins so that bin 1 corresponds to highest Z instead of lowest when writing osm_height_confusion_matrix")
     args = parser.parse_args()
 
     print(f"Loading config from {args.config}")
@@ -1451,7 +1522,25 @@ def main():
     origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
 
-    geom_params_cfg = dict(DEFAULT_OSM_GEOMETRY_PARAMS)
+    # 1. Load defaults from osm_bki.yaml
+    osm_bki_path = os.path.join(SCRIPT_DIR, "config/methods/osm_bki.yaml")
+    geom_params_cfg = _load_geom_defaults(osm_bki_path)
+    print(f"Loaded geometry defaults from {osm_bki_path}")
+
+    # 2. Resize road/sidewalk/cycleway from the referenced confusion matrix yaml (if it exists)
+    osm_cm_file = cfg.get("osm_confusion_matrix_file")
+    if osm_cm_file:
+        osm_cm_path = os.path.join(SCRIPT_DIR, "config/datasets", osm_cm_file)
+        if os.path.isfile(osm_cm_path):
+            with open(osm_cm_path) as _f:
+                osm_cm_cfg = yaml.safe_load(_f)
+            cm_geom = osm_cm_cfg.get("osm_geometry_parameters", {})
+            for _key in ("road_width_meters", "sidewalk_width_meters", "cycleway_width_meters"):
+                if _key in cm_geom:
+                    geom_params_cfg[_key] = cm_geom[_key]
+            print(f"Resized road/sidewalk/cycleway widths from {osm_cm_path}")
+
+    # 3. Dataset config overrides
     geom_params_cfg["tree_point_radius_meters"] = cfg.get(
         "osm_tree_point_radius_meters", geom_params_cfg["tree_point_radius_meters"]
     )
@@ -1460,6 +1549,7 @@ def main():
     geom_params_cfg["cycleway_width_meters"] = cfg.get("cycleway_width_meters", geom_params_cfg["cycleway_width_meters"])
     geom_params_cfg["fence_width_meters"] = cfg.get("fence_width_meters", geom_params_cfg["fence_width_meters"])
 
+    # 4. CLI overrides (only when explicitly provided)
     if args.road_width is not None:
         geom_params_cfg["road_width_meters"] = args.road_width
     if args.sidewalk_width is not None:
@@ -1526,7 +1616,10 @@ def main():
             x, y = ring[k]
             p = first_inv @ np.array([x, y, 0, 1])
             ring[k] = (float(p[0]), float(p[1]))
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+    # Roads are (coords, hw) tuples — transform coords list in-place.
+    for coords, hw in geom.get("roads", []):
+        _transform_ring(coords)
+    for cat in ("buildings", "grasslands", "trees", "forests",
                 "parking", "fences", "sidewalks", "cycleways"):
         if cat not in geom:
             continue
@@ -1595,6 +1688,14 @@ def main():
     all_inferred = [] if args.use_inferred_row else None
     all_map_pts = [] if args.visualize_points else None
     scan_data_list = [] if not args.no_height_matrix else None
+    # Height axis is fixed: +z of the first scan's lidar, expressed in the (first-pose-relative)
+    # map frame. poses[0] is identity after the first-pose normalization, so
+    # lidar_to_map = I @ lidar_to_body = lidar_to_body.
+    _first_lidar_to_map = poses[0][1] @ lidar_to_body
+    lidar_up_ref = _first_lidar_to_map[:3, 2].astype(np.float64)
+    _n = np.linalg.norm(lidar_up_ref)
+    if _n > 1e-6:
+        lidar_up_ref = lidar_up_ref / _n
 
     for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(tqdm(scan_list, desc="scans", unit="scan")):
         pts = read_scan_bin(scan_path)
@@ -1643,7 +1744,9 @@ def main():
         if all_map_pts is not None:
             all_map_pts.append(map_pts[:, :2])
         if scan_data_list is not None:
-            item = (map_pts.copy(), gt_common.copy(), osm_vecs.copy())
+            origin_map = lidar_to_map[:3, 3]
+            z_local = (map_pts - origin_map) @ lidar_up_ref
+            item = (z_local.astype(np.float64), gt_common.copy(), osm_vecs.copy())
             if all_inferred is not None and inferred_common is not None:
                 item = (*item, inferred_common.copy())
             scan_data_list.append(item)
@@ -1671,19 +1774,18 @@ def main():
         and not args.no_height_matrix
     ):
         counts_h = build_cooccurrence_height_class(
-            scan_data_list, num_bins=args.height_bins,
-            z_low_percentile=args.height_z_low_percentile,
-            z_high_percentile=args.height_z_high_percentile,
+            scan_data_list,
+            step_meters=args.height_step_meters,
+            max_meters=args.height_max_meters,
         )
-        height_matrix = derive_height_matrix(counts_h, num_bins=args.height_bins)
-        print(f"\nOSM height confusion matrix: {args.height_bins} bins x {N_CLASSES - 1} class cols")
-        print("  (bin 1 = lowest z in scan, bin %d = highest)" % args.height_bins)
-        if args.height_z_low_percentile > 0 or args.height_z_high_percentile < 100:
-            print("  (Z extent per scan: %g–%g percentiles)" % (args.height_z_low_percentile, args.height_z_high_percentile))
-
-    # Optionally flip height axis so that bin 1 corresponds to highest Z instead of lowest
-    if height_matrix is not None and args.flip_height_axis:
-        height_matrix = height_matrix[::-1, :].copy()
+        height_matrix = derive_height_matrix(counts_h)
+        num_bins_used = counts_h.shape[0]
+        print(f"\nOSM height confusion matrix: {num_bins_used} bins x {N_CLASSES - 1} class cols")
+        print(f"  (step={args.height_step_meters}m, max height={args.height_max_meters}m, "
+              f"bin 1 = h_above_bottom [0, {args.height_step_meters:.2f}] m, "
+              f"bin {num_bins_used} = h_above_bottom "
+              f"[{(num_bins_used-1)*args.height_step_meters:.2f}, "
+              f"{num_bins_used*args.height_step_meters:.2f}] m)")
 
     if args.scale_by_class_points:
         print("Matrix derived with scaling by class point counts (rows weighted by GT count per class).")
@@ -1709,6 +1811,8 @@ def main():
         args.output,
         height_matrix=height_matrix,
         geometry_params=geometry_params_out,
+        height_step_meters=args.height_step_meters,
+        height_max_meters=args.height_max_meters,
     )
     print(f"\nSaved optimized matrix to {args.output}")
 

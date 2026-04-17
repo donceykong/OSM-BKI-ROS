@@ -390,9 +390,18 @@ namespace osm_bki {
         /// Only affects unclassified nodes (new blocks). Called during insert_pointcloud.
         void init_osm_prior_for_block(Block *block);
 
-        /// OSM height filter: per-scan relative bins, multiply OSM priors by height confusion matrix.
+        /// OSM height filter: fixed-metric bins measured upward from the per-scan
+        /// bottom-most point along a fixed reference "up" axis (the +z of the first
+        /// scan's lidar, set once via set_osm_height_up_ref). Multiplies OSM priors
+        /// by rows of the height confusion matrix.
         void set_osm_height_filter_enabled(bool enabled);
         void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
+        /// Set the bin step (meters per row of the confusion matrix). Matches the
+        /// osm_height_bin_step_meters field written by the optimizer.
+        void set_osm_height_bin_step(float step_meters);
+        /// Set the fixed reference up axis (unit 3-vector in the map frame). Typically
+        /// the +z of the first scan's lidar. Called once before the insert loop.
+        void set_osm_height_up_ref(float ux, float uy, float uz);
 
         /// Set scan radius extension factor for OSM geometry pre-filtering.
         /// The filter radius = max_xy_distance * extension_factor + osm_decay_meters.
@@ -546,9 +555,13 @@ namespace osm_bki {
         // common-class row (same index space as osm_cm_ rows), so columns == osm_cm_rows_.
         bool use_osm_height_filter_{false};
         bool osm_height_cm_loaded_{false};
-        float osm_height_min_z_{0.f};
-        float osm_height_max_z_{0.f};
         int osm_height_num_bins_{0};
+        float osm_height_step_meters_{1.0f};
+        float osm_height_up_ref_x_{0.f};
+        float osm_height_up_ref_y_{0.f};
+        float osm_height_up_ref_z_{1.f};
+        bool osm_height_up_ref_set_{false};
+        float osm_height_z_base_{0.f};  // per-scan: min(up_ref · p) over training points
         std::vector<std::vector<float>> osm_height_cm_{};
     };
 

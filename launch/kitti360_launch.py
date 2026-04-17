@@ -51,10 +51,22 @@ def launch_setup(context):
         pkg_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
     method_config_path = os.path.join(pkg_src_dir, 'config', 'methods', f'{method}.yaml')
+    osm_bki_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'osm_bki.yaml')
     data_config_path = os.path.join(pkg_src_dir, 'config', 'methods', 'kitti360.yaml')
     data_dir_path = _data_dir_from_config(data_config_path, pkg_src_dir, dataset, data_root_override)
     config_datasets_dir = os.path.join(pkg_src_dir, 'config', 'datasets')
     rviz_config_path = os.path.join(pkg_src_dir, 'rviz', 'kitti360_node.rviz')
+
+    # Load geometry parameters from osm_bki.yaml
+    geom_params = {}
+    if os.path.isfile(osm_bki_config_path):
+        try:
+            with open(osm_bki_config_path) as f:
+                raw = yaml.safe_load(f)
+            params = raw.get('/**', {}).get('ros__parameters', raw.get('ros__parameters', {}))
+            geom_params = params.get('osm_geometry_parameters', {})
+        except Exception as e:
+            print(f'[WARN] Failed to load osm_bki.yaml geometry parameters: {e}')
 
     kitti360_params = [
         {'dir': data_dir_path},
@@ -63,6 +75,9 @@ def launch_setup(context):
         method_config_path,
         data_config_path
     ]
+    # Add osm_bki.yaml geometry parameters (overrides any in dataset config)
+    if geom_params:
+        kitti360_params.append({'osm_geometry_parameters': geom_params})
 
     kitti360_node = Node(
         package='osm_bki',
@@ -80,13 +95,17 @@ def launch_setup(context):
         output='screen'
     )
 
-    # OSM visualizer uses same config (kitti360.yaml) and data_dir from launch; config from src
+    # OSM visualizer uses same config (kitti360.yaml) and data_dir from launch; use osm_bki.yaml geometry
+    osm_params = [data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
+    if geom_params:
+        osm_params.append({'osm_geometry_parameters': geom_params})
+
     osm_node = Node(
         package='osm_bki',
         executable='osm_visualizer_node',
         name='osm_visualizer_node',
         output='screen',
-        parameters=[data_config_path, {'data_dir': data_dir_path, 'config_datasets_dir': config_datasets_dir}]
+        parameters=osm_params
     )
 
     return [rviz_node, kitti360_node, osm_node]

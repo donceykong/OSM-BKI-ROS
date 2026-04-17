@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_011/datasets/"
+    data_root: "/media/donceykong/doncey_ssd_02/datasets/"
 
     # Map information
     resolution: 0.5
@@ -53,6 +53,16 @@
     # Requires inferred_use_multiclass. Jet colormap: blue=confident, red=uncertain.
     publish_semantic_uncertainty: false
     semantic_uncertainty_topic: /semantic_uncertainty_map
+
+    # OSM height-bin visualization: color each point by its per-scan relative z-bin
+    # (same binning as osm_height_filtering). Scan and map can be toggled independently.
+    # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
+    publish_osm_height_bins_scan: false
+    publish_osm_height_bins_map: false
+    osm_height_bins_step_meters: 0.5     # meters per bin; num_bins derived per scan, symmetric about sensor origin
+    osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
+    osm_height_bins_scan_topic: /osm_height_bins_scan
+    osm_height_bins_map_topic: /osm_height_bins_map
 
     # Color configuration (matters if color_mode is set to 'semantic').
     # Uses common taxonomy colors from labels_common.yaml.
