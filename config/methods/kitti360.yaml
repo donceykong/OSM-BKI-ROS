@@ -103,6 +103,23 @@
     osm_scan_radius_extension: 1.5  # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
     osm_height_filtering: true  # use height-based filtering for OSM priors
 
+    # Height filtering mode: "discreet" (per-bin CM, existing behavior) or
+    # "gaussian" (per-common-class Gaussian applied to ybars). Only one fires.
+    # Requires osm_height_filtering: true.
+    height_filter_type: discreet
+
+    # --- Gaussian-mode parameters (ignored when height_filter_type != gaussian) ---
+    height_kernel_lambda: 0.5        # blend weight (0 = disabled, 1 = full gating)
+    height_kernel_dead_zone: 0.0     # meters: no suppression within ±dead_zone of mu
+    height_kernel_redistribute: false
+    height_kernel_gate: 0.0          # >0 skips when argmax ybar already height-compatible
+    sensor_mounting_height: 1.73     # KITTI-360 Velodyne height above ground (m)
+    # Per-common-class μ / τ (size == num_class; order matches labels_common.yaml:
+    # 0 unlabeled, 1 road, 2 sidewalk, 3 parking, 4 building, 5 fence,
+    # 6 vegetation, 7 vehicle, 8 terrain)
+    height_kernel_mu:  [0.0, 0.0, 0.0, 0.0, 8.0, 1.0, 8.0, 0.8, 0.0]
+    height_kernel_tau: [100.0, 0.5, 0.5, 0.5, 15.0, 1.5, 5.0, 1.0, 0.5]
+
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
     # --------------------------------

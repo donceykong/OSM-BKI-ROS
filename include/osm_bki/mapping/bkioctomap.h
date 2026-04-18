@@ -403,6 +403,19 @@ namespace osm_bki {
         /// the +z of the first scan's lidar. Called once before the insert loop.
         void set_osm_height_up_ref(float ux, float uy, float uz);
 
+        /// Gaussian height filter: per-common-class Gaussian height prior applied to
+        /// ybars right before node.update. When enabled, the existing "discreet"
+        /// bin-by-CM path is bypassed so the two modes don't stack. Requires
+        /// set_osm_height_filter_enabled(true) to actually run.
+        void set_height_filter_mode_gaussian(bool gaussian);
+        void set_height_kernel_params(float lambda,
+                                      const std::vector<float> &mu,
+                                      const std::vector<float> &tau,
+                                      float dead_zone,
+                                      bool redistribute,
+                                      float gate,
+                                      float sensor_mounting_height);
+
         /// Set scan radius extension factor for OSM geometry pre-filtering.
         /// The filter radius = max_xy_distance * extension_factor + osm_decay_meters.
         void set_osm_scan_radius_extension(float factor) { osm_scan_radius_extension_ = factor; }
@@ -431,6 +444,12 @@ namespace osm_bki {
         /// Fills k_vec with all 1.0s when OSM is disabled (backward compatible).
         void compute_osm_semantic_kernel(float x, float y, float z,
                                          std::vector<float> &k_vec) const;
+
+        /// Per-common-class Gaussian height prior applied in-place to ybars.
+        /// h = z - (origin_z - sensor_mounting_height_). No-op unless the gaussian
+        /// mode is enabled and lambda > 0.
+        void apply_height_kernel_to_ybars(std::vector<float> &ybars,
+                                          float z, float origin_z) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -563,6 +582,16 @@ namespace osm_bki {
         bool osm_height_up_ref_set_{false};
         float osm_height_z_base_{0.f};  // per-scan: min(up_ref · p) over training points
         std::vector<std::vector<float>> osm_height_cm_{};
+
+        // Gaussian per-common-class height filter (alternative to the discreet CM path)
+        bool use_gaussian_height_filter_{false};
+        float height_kernel_lambda_{0.f};
+        std::vector<float> height_kernel_mu_;    // per-common-class expected height above ground
+        std::vector<float> height_kernel_tau_;   // per-common-class tolerance (std dev)
+        float height_kernel_dead_zone_{0.f};
+        bool height_kernel_redistribute_{false};
+        float height_kernel_gate_{0.f};
+        float sensor_mounting_height_{0.f};
     };
 
 }

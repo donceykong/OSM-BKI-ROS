@@ -97,6 +97,14 @@ int main(int argc, char **argv) {
     node->declare_parameter<double>("osm_dirichlet_prior_strength", 0.0);
     node->declare_parameter<double>("osm_scan_radius_extension", 1.2);
     node->declare_parameter<bool>("osm_height_filtering", false);
+    node->declare_parameter<std::string>("height_filter_type", "discreet");
+    node->declare_parameter<double>("height_kernel_lambda", 0.0);
+    node->declare_parameter<double>("height_kernel_dead_zone", 0.0);
+    node->declare_parameter<bool>("height_kernel_redistribute", false);
+    node->declare_parameter<double>("height_kernel_gate", 0.0);
+    node->declare_parameter<double>("sensor_mounting_height", 0.0);
+    node->declare_parameter<std::vector<double>>("height_kernel_mu", std::vector<double>());
+    node->declare_parameter<std::vector<double>>("height_kernel_tau", std::vector<double>());
     node->declare_parameter<bool>("publish_osm_height_bins_scan", false);
     node->declare_parameter<bool>("publish_osm_height_bins_map", false);
     node->declare_parameter<double>("osm_height_bins_step_meters", 5.0);
@@ -361,6 +369,38 @@ int main(int argc, char **argv) {
                                          static_cast<float>(osm_height_bins_step_meters),
                                          static_cast<float>(osm_height_bins_map_leaf_size),
                                          osm_height_bins_scan_topic, osm_height_bins_map_topic);
+
+        // Height filter mode selection.
+        std::string height_filter_type = "discreet";
+        node->get_parameter<std::string>("height_filter_type", height_filter_type);
+        bool use_gaussian_height = osm_height_filtering && (height_filter_type == "gaussian");
+        mcd_data.set_height_filter_mode_gaussian(use_gaussian_height);
+        if (use_gaussian_height) {
+            double hk_lambda = 0.0, hk_dead_zone = 0.0, hk_gate = 0.0, sensor_height = 0.0;
+            bool hk_redistribute = false;
+            std::vector<double> mu_d, tau_d;
+            node->get_parameter<double>("height_kernel_lambda", hk_lambda);
+            node->get_parameter<double>("height_kernel_dead_zone", hk_dead_zone);
+            node->get_parameter<bool>("height_kernel_redistribute", hk_redistribute);
+            node->get_parameter<double>("height_kernel_gate", hk_gate);
+            node->get_parameter<double>("sensor_mounting_height", sensor_height);
+            node->get_parameter<std::vector<double>>("height_kernel_mu", mu_d);
+            node->get_parameter<std::vector<double>>("height_kernel_tau", tau_d);
+            std::vector<float> mu_f(mu_d.begin(), mu_d.end());
+            std::vector<float> tau_f(tau_d.begin(), tau_d.end());
+            mcd_data.set_height_kernel_params(static_cast<float>(hk_lambda), mu_f, tau_f,
+                                              static_cast<float>(hk_dead_zone), hk_redistribute,
+                                              static_cast<float>(hk_gate),
+                                              static_cast<float>(sensor_height));
+            RCLCPP_INFO_STREAM(node->get_logger(),
+                "Height filter mode: gaussian (lambda=" << hk_lambda
+                << ", dead_zone=" << hk_dead_zone << ", gate=" << hk_gate
+                << ", sensor_height=" << sensor_height
+                << ", " << mu_f.size() << " mu / " << tau_f.size() << " tau)");
+        } else if (osm_height_filtering) {
+            RCLCPP_INFO_STREAM(node->get_logger(), "Height filter mode: discreet (CM-based)");
+        }
+
         // Widths and decay come from ROS params (osm_geometry_parameters.*) applied before
         // loadFromOSM; do not re-load from the confusion-matrix yaml here.
         if (!osm_cm_file.empty() && osm_prior_str > 0.0) {
@@ -370,7 +410,7 @@ int main(int argc, char **argv) {
             } else {
                 RCLCPP_WARN_STREAM(node->get_logger(), "Failed to load OSM confusion matrix from " << cm_path);
             }
-            if (osm_height_filtering) {
+            if (osm_height_filtering && !use_gaussian_height) {
                 if (mcd_data.load_osm_height_confusion_matrix(cm_path)) {
                     RCLCPP_INFO_STREAM(node->get_logger(), "Loaded OSM height confusion matrix from " << cm_path);
                 } else {

@@ -238,6 +238,10 @@ namespace osm_bki {
             int j = 0;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                 SemanticOcTreeNode &node = leaf_it.get_node();
+                if (use_gaussian_height_filter_) {
+                    point3f loc = block->get_loc(leaf_it);
+                    apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                }
                 node.update(ybars[j]);
             }
 
@@ -357,7 +361,8 @@ namespace osm_bki {
                     Mm[r] += osm_cm_[r][c] * osm_vec[c];
 
             // Apply fixed-metric height filter (same scheme as compute_osm_semantic_kernel)
-            if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+            if (use_osm_height_filter_ && !use_gaussian_height_filter_
+                && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
                 && osm_height_up_ref_set_) {
                 float h = osm_height_up_ref_x_ * loc.x() + osm_height_up_ref_y_ * loc.y()
                           + osm_height_up_ref_z_ * loc.z() - osm_height_z_base_;
@@ -425,6 +430,87 @@ namespace osm_bki {
         osm_height_up_ref_set_ = true;
     }
 
+    void SemanticBKIOctoMap::set_height_filter_mode_gaussian(bool gaussian) {
+        use_gaussian_height_filter_ = gaussian;
+    }
+
+    void SemanticBKIOctoMap::set_height_kernel_params(float lambda,
+                                                      const std::vector<float> &mu,
+                                                      const std::vector<float> &tau,
+                                                      float dead_zone,
+                                                      bool redistribute,
+                                                      float gate,
+                                                      float sensor_mounting_height) {
+        height_kernel_lambda_ = lambda;
+        height_kernel_mu_ = mu;
+        height_kernel_tau_ = tau;
+        height_kernel_dead_zone_ = dead_zone;
+        height_kernel_redistribute_ = redistribute;
+        height_kernel_gate_ = gate;
+        sensor_mounting_height_ = sensor_mounting_height;
+    }
+
+    void SemanticBKIOctoMap::apply_height_kernel_to_ybars(std::vector<float> &ybars,
+                                                           float z, float origin_z) const {
+        if (!use_gaussian_height_filter_ || height_kernel_lambda_ <= 0.f) return;
+
+        // Scan-relative height estimate: ground_z = origin_z - sensor_mounting_height
+        float estimated_ground_z = origin_z - sensor_mounting_height_;
+        float h = z - estimated_ground_z;
+
+        int nc = static_cast<int>(ybars.size());
+        float lam = height_kernel_lambda_;
+        float dz = height_kernel_dead_zone_;
+
+        std::vector<float> phi(nc, 1.f);
+        for (int k = 0; k < nc; ++k) {
+            float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
+            float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
+            if (tau_k <= 0.f) { phi[k] = 1.f; continue; }
+            float abs_diff = std::abs(h - mu_k);
+            if (abs_diff <= dz) continue;           // within dead zone → phi = 1
+            float excess = abs_diff - dz;
+            phi[k] = std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
+        }
+
+        // Prediction gate: only apply kernel when argmax is height-incompatible
+        if (height_kernel_gate_ > 0.f && nc > 0) {
+            int argmax_k = 0;
+            for (int k = 1; k < nc; ++k) {
+                if (ybars[k] > ybars[argmax_k]) argmax_k = k;
+            }
+            if (phi[argmax_k] >= height_kernel_gate_) return;
+        }
+
+        if (height_kernel_redistribute_) {
+            // Redistribution mode: reweight by phi while preserving total positive evidence.
+            float sum_pos = 0.f, sum_weighted = 0.f;
+            for (int k = 0; k < nc; ++k) {
+                if (ybars[k] > 0.f) {
+                    sum_pos += ybars[k];
+                    sum_weighted += ybars[k] * phi[k];
+                }
+            }
+            if (sum_weighted > 1e-12f && sum_pos > 1e-12f) {
+                float norm = sum_pos / sum_weighted;
+                for (int k = 0; k < nc; ++k) {
+                    if (ybars[k] > 0.f) {
+                        float new_ybar = ybars[k] * phi[k] * norm;
+                        ybars[k] = (1.f - lam) * ybars[k] + lam * new_ybar;
+                    }
+                }
+            }
+        } else {
+            // Suppression mode: ybars[k] *= (1-λ) + λ * phi_k
+            for (int k = 0; k < nc; ++k) {
+                if (phi[k] < 1.f) {
+                    float scale = (1.f - lam) + lam * phi[k];
+                    ybars[k] *= scale;
+                }
+            }
+        }
+    }
+
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
                                                               float &grassland, float &tree, float &parking,
                                                               float &fence) const {
@@ -485,7 +571,8 @@ namespace osm_bki {
 
         // Height filter applied to common-class rows (not raw OSM cols).
         // Fixed-metric bin upward from per-scan bottom along the reference up axis.
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+        if (use_osm_height_filter_ && !use_gaussian_height_filter_
+            && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
             && osm_height_up_ref_set_) {
             float h = osm_height_up_ref_x_ * x + osm_height_up_ref_y_ * y + osm_height_up_ref_z_ * z
                       - osm_height_z_base_;
@@ -537,7 +624,8 @@ namespace osm_bki {
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 Mm[r] += osm_cm_[r][c] * osm_vec[c];
 
-        if (use_osm_height_filter_ && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+        if (use_osm_height_filter_ && !use_gaussian_height_filter_
+            && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
             && osm_height_up_ref_set_) {
             float h = osm_height_up_ref_x_ * x + osm_height_up_ref_y_ * y + osm_height_up_ref_z_ * z
                       - osm_height_z_base_;
@@ -899,6 +987,10 @@ namespace osm_bki {
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();
                     // OSM prior is now in the kernel weights — no post-prediction bias needed
+                    if (use_gaussian_height_filter_) {
+                        point3f loc = block->get_loc(leaf_it);
+                        apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                    }
                     node.update(ybars[j]);
                 }
             }
@@ -1320,6 +1412,10 @@ namespace osm_bki {
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();
                     // OSM prior is now in the kernel weights — no post-prediction bias needed
+                    if (use_gaussian_height_filter_) {
+                        point3f loc = block->get_loc(leaf_it);
+                        apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                    }
                     node.update(ybars[j]);
                 }
             }

@@ -614,6 +614,21 @@ class MCDData {
       if (map_) map_->set_osm_height_filter_enabled(enabled);
     }
 
+    void set_height_filter_mode_gaussian(bool gaussian) {
+      if (map_) map_->set_height_filter_mode_gaussian(gaussian);
+    }
+
+    void set_height_kernel_params(float lambda,
+                                  const std::vector<float> &mu,
+                                  const std::vector<float> &tau,
+                                  float dead_zone,
+                                  bool redistribute,
+                                  float gate,
+                                  float sensor_mounting_height) {
+      if (map_) map_->set_height_kernel_params(lambda, mu, tau, dead_zone,
+                                                redistribute, gate, sensor_mounting_height);
+    }
+
     /// Enable per-scan and/or accumulated-map OSM height-bin visualization as colored
     /// PointCloud2. Scan and map can be toggled independently. The map cloud is voxel-
     /// downsampled with `map_leaf_size` after each scan is appended.
