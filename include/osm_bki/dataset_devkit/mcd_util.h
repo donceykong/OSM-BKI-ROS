@@ -835,7 +835,8 @@ class MCDData {
       return true;
     }
 
-    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, double keyframe_dist, bool query, bool visualize) {
+    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, double keyframe_dist, bool query, bool publish_semantic_occ_map) {
+      publish_semantic_occ_map_ = publish_semantic_occ_map;
       if (!map_) {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: process_scans: map_ is null!");
         return false;
@@ -1272,20 +1273,27 @@ class MCDData {
           }
         }
 
-        if (visualize) {
+        if (any_publish_enabled()) {
           publish_map();
           // Small delay to allow rviz to process the visualization
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
       }
-      
+
       // Final publish after all scans are processed
-      if (visualize) {
+      if (any_publish_enabled()) {
         RCLCPP_INFO_STREAM(node_->get_logger(), "All scans processed. Publishing final map visualization...");
         publish_map();
       }
       
       return true;
+    }
+
+    bool any_publish_enabled() const {
+      return publish_semantic_occ_map_
+          || publish_variance_
+          || publish_osm_prior_map_
+          || publish_semantic_uncertainty_;
     }
 
     void publish_map() {
@@ -1298,8 +1306,10 @@ class MCDData {
         return;
       }
 
-      m_pub_->clear_map(resolution_);
-      
+      if (publish_semantic_occ_map_) {
+        m_pub_->clear_map(resolution_);
+      }
+
       // Check if map is empty before iterating - get iterators separately to catch segfault location
       try {
         auto begin_it = map_->begin_leaf();
@@ -1308,7 +1318,7 @@ class MCDData {
         
         if (begin_it == end_it) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Map is empty (begin == end), nothing to publish");
-          m_pub_->publish();
+          if (publish_semantic_occ_map_) m_pub_->publish();
           return;
         }
       } catch (const std::exception& e) {
@@ -1349,7 +1359,9 @@ class MCDData {
                   if (v < min_var) min_var = v;
                 }
               }
-              m_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, node.get_semantics(), 2);
+              if (publish_semantic_occ_map_) {
+                m_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, node.get_semantics(), 2);
+              }
               voxel_count++;
             }
             
@@ -1371,7 +1383,9 @@ class MCDData {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Exception during map iteration: " << e.what());
         return;
       }
-      m_pub_->publish();
+      if (publish_semantic_occ_map_) {
+        m_pub_->publish();
+      }
 
       // Second pass: publish variance map if enabled
       if (publish_variance_ && variance_pub_) {
@@ -1677,6 +1691,7 @@ class MCDData {
     double max_range_;
     osm_bki::SemanticBKIOctoMap* map_;
     osm_bki::MarkerArrayPub* m_pub_;
+    bool publish_semantic_occ_map_{true};
     osm_bki::MarkerArrayPub* variance_pub_{nullptr};
     bool publish_variance_{false};
     osm_bki::MarkerArrayPub* osm_prior_map_pub_{nullptr};

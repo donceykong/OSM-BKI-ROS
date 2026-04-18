@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
     std::string gt_label_prefix;
     std::string evaluation_result_prefix;
     bool query = false;
-    bool visualize = false;
+    bool publish_semantic_occ_map = false;
 
     // Declare parameters
     node->declare_parameter<std::string>("map_topic", map_topic);
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("gt_label_prefix", gt_label_prefix);
     node->declare_parameter<std::string>("evaluation_result_prefix", evaluation_result_prefix);
     node->declare_parameter<bool>("query", query);
-    node->declare_parameter<bool>("visualize", visualize);
+    node->declare_parameter<bool>("publish_semantic_occ_map", publish_semantic_occ_map);
     node->declare_parameter<std::string>("colors_file", "");
     node->declare_parameter<std::string>("calibration_file", "");
     node->declare_parameter<std::string>("osm_file", "");
@@ -166,7 +166,7 @@ int main(int argc, char **argv) {
       if (!evaluation_result_prefix.empty()) evaluation_result_prefix = sequence_name + "/" + evaluation_result_prefix;
     }
     node->get_parameter<bool>("query", query);
-    node->get_parameter<bool>("visualize", visualize);
+    node->get_parameter<bool>("publish_semantic_occ_map", publish_semantic_occ_map);
     
     // Color configuration
     std::string colors_file;
@@ -213,7 +213,7 @@ int main(int argc, char **argv) {
       "gt_label_prefix: " << gt_label_prefix << std::endl <<
       "evaluation_result_prefix: " << evaluation_result_prefix << std::endl <<
       "query: " << query << std::endl <<
-      "visualize:" << visualize
+      "publish_semantic_occ_map: " << publish_semantic_occ_map
       );
 
     
@@ -568,7 +568,7 @@ int main(int argc, char **argv) {
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Evaluation setup completed");
     
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: About to process scans. input_data_prefix=" << input_data_prefix << ", scan_num=" << scan_num);
-    mcd_data.process_scans(dir + '/' + input_data_prefix, dir + '/' + input_label_prefix, scan_num, keyframe_dist, query, visualize);
+    mcd_data.process_scans(dir + '/' + input_data_prefix, dir + '/' + input_label_prefix, scan_num, keyframe_dist, query, publish_semantic_occ_map);
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Scan processing completed, about to spin");
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Node pointer: " << node.get());
     RCLCPP_WARN_STREAM(node->get_logger(), "CHECKPOINT: Starting rclcpp::spin(node)...");
