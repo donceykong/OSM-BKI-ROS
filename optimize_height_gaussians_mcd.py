@@ -20,12 +20,21 @@ For each scan we:
   1. Transform points to the (first-pose-normalized) map frame.
   2. Compute per-point h using the formula above.
   3. Drop per-scan z outliers (percentile clip) to stabilize stats.
-  4. Accumulate per-class height samples (with a memory cap).
+  4. Stratify per-class: randomly subsample to at most
+     `--max-points-per-class-per-scan` so a single dense scan can't
+     dominate the distribution.
+  5. Accumulate per-class height samples (with a memory cap).
 
-After all scans we apply a per-class percentile clip to reject outliers,
-then report mean (mu) and std (tau) with a floor on tau. Class 0
-(unlabeled) gets a wide tau override so the kernel effectively leaves it
-alone.
+After all scans we compute robust per-class stats:
+  mu  = median(h)
+  tau = max(1.4826 * MAD(h), min_tau)        # MAD = median absolute deviation
+(Optionally preceded by a percentile clip when `--class-clip-*` tightens
+the defaults). Median + MAD has a 50% breakdown point, so it handles
+skewed / heavy-tailed classes (buildings, vegetation) far better than
+trimmed mean/std.
+
+Class 0 (unlabeled) gets a wide tau override so the kernel effectively
+leaves it alone.
 
 Output: a YAML at config/datasets/height_gaussians_mcd.yaml containing
 the ready-to-paste `height_kernel_mu` / `height_kernel_tau` lists plus
@@ -102,7 +111,14 @@ def reservoir_append(store, arr, limit, rng):
 
 
 def robust_mu_tau(h, clip_low, clip_high, min_tau):
-    """Percentile-clipped mean/std. Returns (mu, tau, n_used, raw_stats)."""
+    """Robust (mu, tau) via median + 1.4826*MAD.
+
+    A percentile clip is still applied first when the args tighten the
+    default window (0/100 = disabled). MAD alone is high-breakdown, so the
+    clip is optional belt-and-suspenders.
+
+    Returns (mu, tau, n_used, raw_stats).
+    """
     raw_stats = {
         "count_raw": int(h.size),
         "raw_mean": float(h.mean()) if h.size else None,
@@ -111,15 +127,16 @@ def robust_mu_tau(h, clip_low, clip_high, min_tau):
     }
     if h.size == 0:
         return None, None, 0, raw_stats
-    if h.size >= 4:
+    if h.size >= 4 and (clip_low > 0.0 or clip_high < 100.0):
         lo = np.percentile(h, clip_low)
         hi = np.percentile(h, clip_high)
         h = h[(h >= lo) & (h <= hi)]
     if h.size == 0:
         return None, None, 0, raw_stats
-    mu = float(h.mean())
-    tau = float(h.std(ddof=0))
-    return mu, max(tau, float(min_tau)), int(h.size), raw_stats
+    med = float(np.median(h))
+    mad = float(np.median(np.abs(h - med)))
+    tau = 1.4826 * mad
+    return med, max(tau, float(min_tau)), int(h.size), raw_stats
 
 
 def main():
@@ -138,11 +155,15 @@ def main():
     parser.add_argument("--z-clip-low", type=float, default=1.0,
                         help="Per-scan percentile clip on h (stabilize against stray reflections).")
     parser.add_argument("--z-clip-high", type=float, default=99.0)
-    parser.add_argument("--class-clip-low", type=float, default=1.0,
-                        help="Per-class percentile clip applied before computing mu/tau.")
-    parser.add_argument("--class-clip-high", type=float, default=99.0)
+    parser.add_argument("--class-clip-low", type=float, default=0.0,
+                        help="Optional per-class percentile clip applied before median+MAD "
+                             "(0/100 = disabled; MAD alone is robust).")
+    parser.add_argument("--class-clip-high", type=float, default=100.0)
+    parser.add_argument("--max-points-per-class-per-scan", type=int, default=50000,
+                        help="Stratify: cap samples per class *per scan* so a dense scan "
+                             "can't dominate the distribution (0 = unlimited).")
     parser.add_argument("--max-points-per-class", type=int, default=5_000_000,
-                        help="Cap stored samples per class (0 = unlimited).")
+                        help="Overall cap on stored samples per class (0 = unlimited).")
     parser.add_argument("--min-tau", type=float, default=0.3,
                         help="Lower bound on tau (m) to avoid degenerate zero-width Gaussians.")
     parser.add_argument("--unlabeled-tau", type=float, default=100.0,
@@ -256,7 +277,15 @@ def main():
             mask = gt_common == c
             if not mask.any():
                 continue
-            reservoir_append(per_class_samples[c], h[mask],
+            h_c = h[mask]
+            # Per-scan stratification: each scan contributes at most
+            # --max-points-per-class-per-scan to class c, so dense scans
+            # don't swamp the overall distribution.
+            cap = args.max_points_per_class_per_scan
+            if cap > 0 and h_c.size > cap:
+                idx = rng.choice(h_c.size, size=cap, replace=False)
+                h_c = h_c[idx]
+            reservoir_append(per_class_samples[c], h_c,
                              args.max_points_per_class, rng)
 
     # Finalize per-class stats.
@@ -299,6 +328,8 @@ def main():
         "sensor_mounting_height": float(sensor_mounting_height),
         "lidar_up_ref": lidar_up_ref.tolist(),
         "height_reference": "z_map - (origin_z - sensor_mounting_height)  # matches runtime",
+        "estimator": "mu = median(h);  tau = max(1.4826 * MAD(h), min_tau)",
+        "stratified_per_scan_cap": int(args.max_points_per_class_per_scan),
         "outlier_clip": {
             "z_clip_low_pct": args.z_clip_low,
             "z_clip_high_pct": args.z_clip_high,
