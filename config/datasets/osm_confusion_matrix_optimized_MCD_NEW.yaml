@@ -9,14 +9,14 @@
 osm_prior_columns: [roads, sidewalks, cycleways, parking, grasslands, trees, forest, buildings, fences]
 
 confusion_matrix:
-  1:  [  0.03,   0.01,   0.00,   0.02,   0.00,   0.01,   0.01,   0.00,   0.00]   # road
-  2:  [  0.08,   0.11,   0.17,   0.01,   0.03,   0.08,   0.11,   0.04,   0.07]   # sidewalk
-  3:  [  0.00,   0.00,   0.00,   0.01,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
-  4:  [  0.06,   0.14,   0.00,   0.03,   0.09,   0.05,   0.03,   0.79,   0.26]   # building
-  5:  [  0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.01]   # fence
-  6:  [  0.12,   0.08,   0.48,   0.03,   0.20,   0.41,   0.40,   0.02,   0.11]   # vegetation
-  7:  [  0.01,   0.01,   0.01,   0.03,   0.00,   0.00,   0.00,   0.00,   0.00]   # vehicle
-  8:  [  0.00,   0.01,   0.00,   0.00,   0.10,   0.02,   0.02,   0.00,   0.01]   # terrain
+  1:  [  0.70,   0.10,   0.10,   0.00,   0.00,   0.00,   0.01,   0.00,   0.00]   # road
+  2:  [  0.20,   0.80,   0.50,   0.00,   0.00,   0.00,   0.00,   0.00,   0.10]   # sidewalk
+  3:  [  0.00,   0.00,   0.00,   0.60,   0.00,   0.00,   0.00,   0.00,   0.00]   # parking
+  4:  [  0.00,   0.00,   0.00,   0.00,   0.00,   0.05,   0.03,   1.00,   0.10]   # building
+  5:  [  0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.70]   # fence
+  6:  [  0.00,   0.00,   0.10,   0.00,   0.50,   0.75,   0.50,   0.00,   0.10]   # vegetation
+  7:  [  0.10,   0.10,   0.00,   0.40,   0.00,   0.00,   0.00,   0.00,   0.00]   # vehicle
+  8:  [  0.00,   0.00,   0.00,   0.00,   0.50,   0.20,   0.50,   0.00,   0.00]   # terrain
 
 # OSM height confusion matrix (fixed-metric bins measured upward from the bottom-most lidar point of each scan). Step = 0.100 m, max height = 50.000 m, num_bins = 500. Bin i (1-indexed) covers height_above_bottom in [(i-1)*step, i*step] m; bin 1 is the bottom-most, bin 500 is the top-most. Cols = common-taxonomy classes 1..8: [road, sidewalk, parking, building, fence, vegetation, vehicle, terrain]. Multipliers in [0, 1] applied to p_super[class] after the OSM→common projection.
 osm_height_bin_step_meters: 0.100
