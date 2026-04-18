@@ -427,9 +427,11 @@ namespace osm_bki {
         /// Clear per-scan filtered geometry (called after scan processing).
         void clear_osm_scan_filter();
 
-        /// OSM priors for visualization: compute on-the-fly (building, road, grassland, tree, parking, fence).
+        /// OSM priors for visualization: compute on-the-fly
+        /// (building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest).
         void get_osm_priors_for_visualization(float x, float y, float &building, float &road, float &grassland,
-                                              float &tree, float &parking, float &fence) const;
+                                              float &tree, float &parking, float &fence,
+                                              float &sidewalk, float &cycleway, float &forest) const;
 
     private:
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;

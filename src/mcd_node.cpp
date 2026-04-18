@@ -528,6 +528,12 @@ int main(int argc, char **argv) {
         osm_color_mode = osm_bki::MapColorMode::OSMParking;
       } else if (osm_prior_map_color_mode_str == "osm_fence") {
         osm_color_mode = osm_bki::MapColorMode::OSMFence;
+      } else if (osm_prior_map_color_mode_str == "osm_sidewalk") {
+        osm_color_mode = osm_bki::MapColorMode::OSMSidewalk;
+      } else if (osm_prior_map_color_mode_str == "osm_cycleway") {
+        osm_color_mode = osm_bki::MapColorMode::OSMCycleway;
+      } else if (osm_prior_map_color_mode_str == "osm_forest") {
+        osm_color_mode = osm_bki::MapColorMode::OSMForest;
       } else if (osm_prior_map_color_mode_str == "osm_blend") {
         osm_color_mode = osm_bki::MapColorMode::OSMBlend;
       }

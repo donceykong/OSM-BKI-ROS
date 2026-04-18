@@ -39,8 +39,9 @@
     inferred_labels_key: mcd   # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: kitti360              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
-    # Visualization: show OSM priors colored (blend of building/road/grassland/tree). Use semantic for class colors.
-    # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence, osm_blend (all priors blended)
+    # Visualization: show OSM priors colored. Use semantic for class colors.
+    # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence,
+    #          osm_sidewalk, osm_cycleway, osm_forest, osm_blend (all priors blended)
     publish_osm_prior_map: false
     osm_prior_map_color_mode: osm_blend
     osm_prior_map_topic: /semantic_osm_prior_map

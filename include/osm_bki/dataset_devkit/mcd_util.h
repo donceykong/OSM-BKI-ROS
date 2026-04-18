@@ -1401,21 +1401,27 @@ class MCDData {
           if (node.get_state() != osm_bki::State::OCCUPIED) continue;
           osm_bki::point3f p = it.get_loc();
           float size = it.get_size();
-          float building, road, grassland, tree, parking, fence;
-          map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland, tree, parking, fence);
+          float building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest;
+          map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland,
+                                                  tree, parking, fence,
+                                                  sidewalk, cycleway, forest);
           if (mode == osm_bki::MapColorMode::OSMBlend) {
             osm_prior_map_pub_->insert_point3d_osm_blend(p.x(), p.y(), p.z(), size,
-                building, road, grassland, tree, parking, fence);
+                building, road, grassland, tree, parking, fence,
+                sidewalk, cycleway, forest);
           } else {
             int prior_type = 0;
             float value = 0.f;
             switch (mode) {
               case osm_bki::MapColorMode::OSMBuilding:   prior_type = 0; value = building; break;
-              case osm_bki::MapColorMode::OSMRoad:      prior_type = 1; value = road; break;
+              case osm_bki::MapColorMode::OSMRoad:       prior_type = 1; value = road; break;
               case osm_bki::MapColorMode::OSMGrassland:  prior_type = 2; value = grassland; break;
-              case osm_bki::MapColorMode::OSMTree:     prior_type = 3; value = tree; break;
-              case osm_bki::MapColorMode::OSMParking:  prior_type = 4; value = parking; break;
-              case osm_bki::MapColorMode::OSMFence:    prior_type = 5; value = fence; break;
+              case osm_bki::MapColorMode::OSMTree:       prior_type = 3; value = tree; break;
+              case osm_bki::MapColorMode::OSMParking:    prior_type = 4; value = parking; break;
+              case osm_bki::MapColorMode::OSMFence:      prior_type = 5; value = fence; break;
+              case osm_bki::MapColorMode::OSMSidewalk:   prior_type = 6; value = sidewalk; break;
+              case osm_bki::MapColorMode::OSMCycleway:   prior_type = 7; value = cycleway; break;
+              case osm_bki::MapColorMode::OSMForest:     prior_type = 8; value = forest; break;
               default: prior_type = 0; value = building; break;
             }
             osm_prior_map_pub_->insert_point3d_osm_prior(p.x(), p.y(), p.z(), size, value, prior_type);

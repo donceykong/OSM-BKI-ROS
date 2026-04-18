@@ -350,6 +350,9 @@ int main(int argc, char **argv) {
         else if (osm_prior_map_color_mode_str == "osm_tree") osm_color_mode = osm_bki::MapColorMode::OSMTree;
         else if (osm_prior_map_color_mode_str == "osm_parking") osm_color_mode = osm_bki::MapColorMode::OSMParking;
         else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = osm_bki::MapColorMode::OSMFence;
+        else if (osm_prior_map_color_mode_str == "osm_sidewalk") osm_color_mode = osm_bki::MapColorMode::OSMSidewalk;
+        else if (osm_prior_map_color_mode_str == "osm_cycleway") osm_color_mode = osm_bki::MapColorMode::OSMCycleway;
+        else if (osm_prior_map_color_mode_str == "osm_forest") osm_color_mode = osm_bki::MapColorMode::OSMForest;
         mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
 
         bool publish_osm_height_bins_scan = false;

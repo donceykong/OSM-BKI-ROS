@@ -410,11 +410,15 @@ namespace osm_bki {
         OSMTree,
         OSMParking,
         OSMFence,
-        OSMBlend   /// All six OSM priors at once; overlapping weights blend colors
+        OSMSidewalk,
+        OSMCycleway,
+        OSMForest,
+        OSMBlend   /// All OSM priors at once; overlapping weights blend colors
     };
 
     /// Color for OSM prior value in [0,1]: blend from light gray (0) to class color (1).
-    /// prior_type: 0=building, 1=road, 2=grassland, 3=tree, 4=parking, 5=fence.
+    /// prior_type: 0=building, 1=road, 2=grassland, 3=tree, 4=parking, 5=fence,
+    ///             6=sidewalk, 7=cycleway, 8=forest.
     inline std_msgs::msg::ColorRGBA OSMPriorMapColor(int prior_type, float value) {
         std_msgs::msg::ColorRGBA color;
         color.a = 1.0;
@@ -428,6 +432,9 @@ namespace osm_bki {
             case 3: cr = 0.1f;  cg = 0.5f;  cb = 0.2f; break;   // tree dark green
             case 4: cr = 1.0f;  cg = 0.65f; cb = 0.0f; break;   // parking orange
             case 5: cr = 0.5f;  cg = 0.45f; cb = 0.4f; break;   // fence gray/brown
+            case 6: cr = 0.91f; cg = 0.14f; cb = 0.96f; break;  // sidewalk magenta (labels_common.yaml)
+            case 7: cr = 0.0f;  cg = 0.7f;  cb = 0.9f; break;   // cycleway cyan/teal
+            case 8: cr = 0.0f;  cg = 0.35f; cb = 0.1f; break;   // forest very dark green
             default: cr = cg = cb = 0.5f; break;
         }
         value = std::max(0.f, std::min(1.f, value));
@@ -437,8 +444,11 @@ namespace osm_bki {
         return color;
     }
 
-    /// Blend the six OSM prior colors by weight. Weights in [0,1]. If all zero, returns light gray.
-    inline std_msgs::msg::ColorRGBA OSMPriorBlendColor(float w_building, float w_road, float w_grassland, float w_tree, float w_parking, float w_fence) {
+    /// Blend OSM prior colors by weight. Weights in [0,1]. If all zero, returns light gray.
+    /// Channels: building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest.
+    inline std_msgs::msg::ColorRGBA OSMPriorBlendColor(float w_building, float w_road, float w_grassland,
+                                                       float w_tree, float w_parking, float w_fence,
+                                                       float w_sidewalk, float w_cycleway, float w_forest) {
         std_msgs::msg::ColorRGBA color;
         color.a = 1.0;
         const float gray = 0.85f;
@@ -448,15 +458,25 @@ namespace osm_bki {
         w_tree      = std::max(0.f, std::min(1.f, w_tree));
         w_parking   = std::max(0.f, std::min(1.f, w_parking));
         w_fence     = std::max(0.f, std::min(1.f, w_fence));
-        float sum = w_building + w_road + w_grassland + w_tree + w_parking + w_fence;
+        w_sidewalk  = std::max(0.f, std::min(1.f, w_sidewalk));
+        w_cycleway  = std::max(0.f, std::min(1.f, w_cycleway));
+        w_forest    = std::max(0.f, std::min(1.f, w_forest));
+        float sum = w_building + w_road + w_grassland + w_tree + w_parking + w_fence
+                  + w_sidewalk + w_cycleway + w_forest;
         if (sum <= 0.f) {
             color.r = color.g = color.b = gray;
             return color;
         }
-        // Weighted blend: building=blue, road=red, grassland=light green, tree=dark green, parking=orange, fence=gray
-        color.r = (w_building * 0.f   + w_road * 1.f + w_grassland * 0.4f + w_tree * 0.1f + w_parking * 1.0f + w_fence * 0.5f) / sum;
-        color.g = (w_building * 0.f   + w_road * 0.f + w_grassland * 0.85f + w_tree * 0.5f + w_parking * 0.65f + w_fence * 0.45f) / sum;
-        color.b = (w_building * 1.f  + w_road * 0.f + w_grassland * 0.35f + w_tree * 0.2f + w_parking * 0.f + w_fence * 0.4f) / sum;
+        // Weighted blend. Palette must match the single-prior case above.
+        color.r = (w_building * 0.f   + w_road * 1.f + w_grassland * 0.4f  + w_tree * 0.1f
+                 + w_parking  * 1.0f  + w_fence * 0.5f + w_sidewalk * 0.91f
+                 + w_cycleway * 0.0f  + w_forest * 0.0f) / sum;
+        color.g = (w_building * 0.f   + w_road * 0.f + w_grassland * 0.85f + w_tree * 0.5f
+                 + w_parking  * 0.65f + w_fence * 0.45f + w_sidewalk * 0.14f
+                 + w_cycleway * 0.7f  + w_forest * 0.35f) / sum;
+        color.b = (w_building * 1.f   + w_road * 0.f + w_grassland * 0.35f + w_tree * 0.2f
+                 + w_parking  * 0.f   + w_fence * 0.4f + w_sidewalk * 0.96f
+                 + w_cycleway * 0.9f  + w_forest * 0.1f) / sum;
         return color;
     }
 
@@ -572,8 +592,12 @@ namespace osm_bki {
             msg_->markers[depth].colors.push_back(OSMPriorMapColor(prior_type, value));
         }
 
-        /// Insert voxel colored by blending all six OSM prior weights (overlapping weights blend colors).
-        void insert_point3d_osm_blend(float x, float y, float z, float size, float w_building, float w_road, float w_grassland, float w_tree, float w_parking, float w_fence) {
+        /// Insert voxel colored by blending all OSM prior weights (overlapping weights blend colors).
+        /// Channels: building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest.
+        void insert_point3d_osm_blend(float x, float y, float z, float size,
+                                      float w_building, float w_road, float w_grassland,
+                                      float w_tree, float w_parking, float w_fence,
+                                      float w_sidewalk, float w_cycleway, float w_forest) {
             geometry_msgs::msg::Point center;
             center.x = x;
             center.y = y;
@@ -583,7 +607,9 @@ namespace osm_bki {
                 depth = (int) log2(size / 0.1);
             depth = std::max(0, std::min(depth, (int)msg_->markers.size() - 1));
             msg_->markers[depth].points.push_back(center);
-            msg_->markers[depth].colors.push_back(OSMPriorBlendColor(w_building, w_road, w_grassland, w_tree, w_parking, w_fence));
+            msg_->markers[depth].colors.push_back(OSMPriorBlendColor(
+                w_building, w_road, w_grassland, w_tree, w_parking, w_fence,
+                w_sidewalk, w_cycleway, w_forest));
         }
 
         /// Set color mode for map visualization (semantic class vs OSM prior layer).

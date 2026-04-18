@@ -513,13 +513,17 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::get_osm_priors_for_visualization(float x, float y, float &building, float &road,
                                                               float &grassland, float &tree, float &parking,
-                                                              float &fence) const {
+                                                              float &fence, float &sidewalk, float &cycleway,
+                                                              float &forest) const {
         building = compute_osm_building_prior(x, y);
         road = compute_osm_road_prior(x, y);
         grassland = compute_osm_grassland_prior(x, y);
         tree = compute_osm_tree_prior(x, y);
         parking = compute_osm_parking_prior(x, y);
         fence = compute_osm_fence_prior(x, y);
+        sidewalk = compute_osm_sidewalk_prior(x, y);
+        cycleway = compute_osm_cycleway_prior(x, y);
+        forest = compute_osm_forest_prior(x, y);
     }
 
     void SemanticBKIOctoMap::set_osm_confusion_matrix(
