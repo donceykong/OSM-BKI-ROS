@@ -1354,15 +1354,160 @@ def build_cooccurrence_inferred(inferred_labels, gt_labels, osm_vecs):
     return counts, class_totals
 
 
-def derive_matrix(counts, class_totals, scale_by_class_points=True):
+CLASS_WEIGHT_MODES = ("points", "equal", "sqrt", "median_freq")
+
+
+def _compute_row_weights(class_totals, mode):
+    """Per-class row weight used before column normalization in derive_matrix.
+
+    Modes:
+      - "points":      weight[c] = class_totals[c]
+                       Rows scale with point count. Favors common classes → higher
+                       overall accuracy, often lower mIoU.
+      - "equal":       weight[c] = 1
+                       All classes contribute equally. Favors mIoU, can hurt accuracy.
+      - "sqrt":        weight[c] = sqrt(class_totals[c])
+                       Dampens dominant classes without silencing them. Often a good
+                       compromise between accuracy and mIoU.
+      - "median_freq": weight[c] = median(totals_nonzero) / class_totals[c]
+                       Median-frequency balancing (Eigen et al. 2015). Rare classes
+                       get large weights — strongest mIoU boost.
+    """
+    n_rows = N_CLASSES - 1
+    totals = np.array([class_totals[cls] for cls in range(1, N_CLASSES)], dtype=np.float64)
+    if mode == "points":
+        return totals
+    if mode == "equal":
+        return np.ones(n_rows, dtype=np.float64)
+    if mode == "sqrt":
+        return np.sqrt(np.maximum(totals, 0.0))
+    if mode == "median_freq":
+        nonzero = totals[totals > 0]
+        med = float(np.median(nonzero)) if nonzero.size > 0 else 0.0
+        w = np.zeros(n_rows, dtype=np.float64)
+        for i, t in enumerate(totals):
+            if t > 1e-10:
+                w[i] = med / t
+        return w
+    raise ValueError(f"Unknown class_weight_mode: {mode!r} (choose from {CLASS_WEIGHT_MODES})")
+
+
+def _column_selectivity(matrix):
+    """Per-column selectivity in [0, 1] based on normalized entropy.
+
+    For each column (viewed as a distribution over the class rows), compute
+    1 - H(col) / log(n_rows). A one-hot column scores 1 (perfect indicator of a
+    single class); a uniform column scores 0 (OSM tells us nothing). Empty or
+    all-zero columns score 0.
+    """
+    n_rows, n_cols = matrix.shape
+    sel = np.zeros(n_cols, dtype=np.float64)
+    if n_rows < 2:
+        return sel
+    h_max = math.log(n_rows)
+    for j in range(n_cols):
+        col = matrix[:, j]
+        s = col.sum()
+        if s <= 1e-12:
+            continue
+        p = col / s
+        h = 0.0
+        for pi in p:
+            if pi > 1e-12:
+                h -= pi * math.log(pi)
+        sel[j] = max(0.0, min(1.0, 1.0 - h / h_max))
+    return sel
+
+
+def _compute_class_prior(class_totals, class_weight_mode):
+    """Prior distribution P(c) over labeled classes (1..N_CLASSES-1), sums to 1.
+
+    Shape controlled by `class_weight_mode` (same vocabulary as _compute_row_weights):
+      - "points":      empirical marginal (proportional to GT point count)
+      - "equal":       uniform
+      - "sqrt":        proportional to sqrt(count) — dampened marginal
+      - "median_freq": proportional to median(count) / count — inverse-frequency
+    """
+    n_rows = N_CLASSES - 1
+    totals = np.array([class_totals[cls] for cls in range(1, N_CLASSES)], dtype=np.float64)
+    total = totals.sum()
+    if total <= 0:
+        return np.ones(n_rows) / n_rows
+    if class_weight_mode == "points":
+        w = totals
+    elif class_weight_mode == "equal":
+        w = np.ones(n_rows, dtype=np.float64)
+    elif class_weight_mode == "sqrt":
+        w = np.sqrt(np.maximum(totals, 0.0))
+    elif class_weight_mode == "median_freq":
+        nonzero = totals[totals > 0]
+        med = float(np.median(nonzero)) if nonzero.size > 0 else 1.0
+        w = np.array([med / t if t > 1e-10 else 0.0 for t in totals], dtype=np.float64)
+    else:
+        raise ValueError(f"Unknown class_weight_mode: {class_weight_mode!r}")
+    s = w.sum()
+    return w / s if s > 1e-12 else np.ones(n_rows) / n_rows
+
+
+def derive_matrix_shrinkage(counts, class_totals, kappa=10.0,
+                            class_weight_mode="points", selectivity_weight=False):
+    """Derive the OSM confusion matrix via Bayesian shrinkage toward a class prior.
+
+    For each OSM column j:
+        M[:, j] = n_j/(n_j+kappa) · P(c|j) + kappa/(n_j+kappa) · P(c)
+
+    where n_j = labeled-point co-occurrence count for column j,
+    P(c|j) = counts[c,j]/n_j (empirical posterior over labeled classes), and
+    P(c) is the prior shaped by `class_weight_mode`. Each column sums to 1 by
+    construction.
+
+    Why this beats the lift-based `max(0, P(c|j)/P(c) - 1)` derivation:
+      - Data-poor columns gracefully revert to the prior rather than producing a
+        post-normalized column out of a few noisy samples.
+      - Cells where a class is genuinely UNDER-represented are no longer clipped
+        to zero; the full signed signal is preserved.
+      - κ is one interpretable knob (how many "prior pseudo-samples" equal one
+        real sample). Low κ trusts the data; high κ trusts the prior.
+    """
+    n_rows = N_CLASSES - 1
+    # Rows are emitted for classes 1..N_CLASSES-1 (exclude class 0 / unlabeled).
+    counts_lbl = counts[1:] if counts.shape[0] == N_CLASSES else counts
+    prior = _compute_class_prior(class_totals, class_weight_mode)
+    col_totals = counts_lbl.sum(axis=0)
+    matrix = np.zeros((n_rows, N_OSM))
+    for j in range(N_OSM):
+        n_j = float(col_totals[j])
+        denom = n_j + kappa
+        if denom <= 0.0:
+            matrix[:, j] = prior
+            continue
+        w_emp = n_j / denom
+        w_prior = kappa / denom
+        if n_j > 1e-10:
+            p_emp = counts_lbl[:, j] / n_j
+        else:
+            p_emp = np.zeros(n_rows)
+        matrix[:, j] = w_emp * p_emp + w_prior * prior
+    if selectivity_weight:
+        sel = _column_selectivity(matrix)
+        matrix = matrix * sel[np.newaxis, :]
+    return matrix
+
+
+def derive_matrix(counts, class_totals, class_weight_mode="points",
+                  selectivity_weight=False):
     """Derive (N_CLASSES-1) x N_OSM matrix from co-occurrence (rows = classes 1..N_CLASSES-1).
 
-    Entries are non-negative and each column sums to 1, i.e. matrix[c-1, j] is
-    P(class=c | osm_col=j) restricted to classes 1..N_CLASSES-1 (excluding unlabeled).
+    By default each column sums to 1, so matrix[c-1, j] is P(class=c | osm_col=j)
+    restricted to classes 1..N_CLASSES-1 (excluding unlabeled).
 
-    If scale_by_class_points=True, each row is weighted by the number of GT points
-    for that class before column normalization, so classes with more points have
-    proportionally more influence in the final matrix.
+    See _compute_row_weights for the `class_weight_mode` options.
+
+    If `selectivity_weight=True`, each column is additionally multiplied by its
+    selectivity score in [0, 1] (1 - normalized entropy). Columns with a peaked
+    class distribution keep near-unit mass (strong unique association); uniform
+    columns (no discriminative power) fade toward zero. This makes the effective
+    OSM-prior strength proportional to how informative each OSM class actually is.
     """
     n_rows = N_CLASSES - 1
     total_points = class_totals.sum()
@@ -1379,15 +1524,18 @@ def derive_matrix(counts, class_totals, scale_by_class_points=True):
                 # Boost = max(0, P(c|osm)/P(c) - 1): non-negative correction signal.
                 p_cls_given_osm = counts[cls][j] / col_totals[j]
                 matrix[ri][j] = max(0.0, p_cls_given_osm / p_cls - 1.0)
-    if scale_by_class_points:
-        for ri, cls in enumerate(range(1, N_CLASSES)):
-            if class_totals[cls] > 1e-10:
-                matrix[ri, :] *= class_totals[cls]
+    row_weights = _compute_row_weights(class_totals, class_weight_mode)
+    for ri in range(n_rows):
+        matrix[ri, :] *= row_weights[ri]
     # Per-column probability normalization: each column sums to 1.
     for j in range(N_OSM):
         col_sum = matrix[:, j].sum()
         if col_sum > 1e-10:
             matrix[:, j] /= col_sum
+    # Optional: weight by per-column selectivity so weak columns fade.
+    if selectivity_weight:
+        sel = _column_selectivity(matrix)
+        matrix = matrix * sel[np.newaxis, :]
     return matrix
 
 
@@ -1403,13 +1551,15 @@ def build_cooccurrence_height_class(scan_data_list, step_meters=1.0, max_meters=
     Making height relative to the scan's bottom removes dependence on the sensor's
     absolute z.
 
-    counts_h[bin][class_idx] accumulates OSM-weighted GT counts (fallback weight 1.0
-    for points where OSM is silent). Matches the C++ viz and filter binning."""
+    counts_h[bin][class_idx] is a pure GT-point histogram — each valid point contributes
+    unit weight. The distribution P(class | z_bin) is a property of the data, NOT of
+    OSM overlap, so no OSM signal is used here (fixes prior behavior that biased the
+    histogram toward OSM-overlapping points)."""
     num_bins = compute_num_bins(step_meters, max_meters)
     n_rows = N_CLASSES - 1
     counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
     for item in scan_data_list:
-        z_local, gt, osm = item[:3]
+        z_local, gt = item[0], item[1]  # OSM component intentionally ignored
         gt = np.asarray(gt, dtype=np.int32)
         z_arr = np.asarray(z_local, dtype=np.float64)
         if z_arr.size == 0:
@@ -1420,12 +1570,9 @@ def build_cooccurrence_height_class(scan_data_list, step_meters=1.0, max_meters=
             continue
         z_m = z_arr[mask] - z_base
         gt_m = gt[mask]
-        osm_m = np.asarray(osm, dtype=np.float64)[mask]
         bins = np.clip(np.floor(z_m / float(step_meters)).astype(np.int32), 0, num_bins - 1)
-        w = osm_m.sum(axis=1)
-        w[w <= 0.0] = 1.0
         cols = gt_m - 1
-        np.add.at(counts_h, (bins, cols), w)
+        np.add.at(counts_h, (bins, cols), 1.0)
     return counts_h
 
 
@@ -1705,6 +1852,207 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
 # 8. Main
 # ═══════════════════════════════════════════════════════════════════
 
+def _process_sequence_scans(
+    seq, cfg, args, data_dir, *,
+    gt_mapping, inferred_mapping, learning_map_inv,
+    inferred_label_prefix, inferred_use_multiclass,
+    body_to_lidar, lidar_to_body,
+    decay_m, keyframe_dist, max_range, ds_resolution, tree_radius,
+    all_gt, all_osm, all_inferred, scan_data_list, all_map_pts,
+):
+    """Load one sequence's poses + OSM + scans, and extend the passed accumulator lists.
+
+    The sequence is processed in its own first-pose-relative frame; statistics are
+    frame-invariant so data from multiple sequences can be concatenated for a single
+    derivation at the end. Returns the trimmed `geom` dict for the sequence (useful
+    for downstream visualization), or None if no scans were found.
+    """
+    # Resolve per-sequence suffix-based paths (shallow-merged onto cfg).
+    seq_cfg = dict(cfg)
+    if seq:
+        if seq_cfg.get("lidar_pose_suffix"):
+            seq_cfg["lidar_pose_file"] = f"{seq}/{seq_cfg['lidar_pose_suffix']}"
+        if seq_cfg.get("input_data_suffix"):
+            seq_cfg["input_data_prefix"] = f"{seq}/{seq_cfg['input_data_suffix']}"
+        if seq_cfg.get("gt_label_suffix"):
+            seq_cfg["gt_label_prefix"] = f"{seq}/{seq_cfg['gt_label_suffix']}"
+        if seq_cfg.get("input_label_suffix"):
+            seq_cfg["input_label_prefix"] = f"{seq}/{seq_cfg['input_label_suffix']}"
+
+    pose_file = os.path.join(data_dir, seq_cfg.get("lidar_pose_file", ""))
+    gt_label_dir = os.path.join(data_dir, seq_cfg.get("gt_label_prefix", ""))
+    scan_dir = os.path.join(data_dir, seq_cfg.get("input_data_prefix", ""))
+    osm_file = os.path.join(data_dir, seq_cfg.get("osm_file", ""))
+    origin_lat = seq_cfg.get("osm_origin_lat", 0.0)
+    origin_lon = seq_cfg.get("osm_origin_lon", 0.0)
+    seq_inferred_dir = os.path.join(data_dir, inferred_label_prefix) if args.use_inferred_row else None
+
+    label_tag = seq or "default"
+    print(f"\n=== Sequence: {label_tag} ===")
+    print(f"  pose={pose_file}")
+    print(f"  gt_labels={gt_label_dir}")
+    print(f"  scans={scan_dir}")
+    print(f"  osm={osm_file}")
+
+    print(f"  Loading poses...")
+    poses = load_poses(pose_file)
+    print(f"  Loaded {len(poses)} poses")
+    if not poses:
+        print(f"  No poses; skipping sequence.")
+        return None
+
+    # Transform poses to first-pose-relative frame so inter-sequence coordinate
+    # systems don't collide (co-occurrence statistics are frame-invariant).
+    first_pose = poses[0][1].copy()
+    first_inv = np.linalg.inv(first_pose)
+    for i in range(len(poses)):
+        poses[i] = (poses[i][0], first_inv @ poses[i][1])
+
+    print(f"  Parsing OSM geometry from {osm_file}")
+    geom = parse_osm_xml(osm_file, origin_lat, origin_lon)
+    for cat in geom:
+        print(f"    {cat}: {len(geom[cat])} items")
+
+    def _transform_ring(ring):
+        for k in range(len(ring)):
+            x, y = ring[k]
+            p = first_inv @ np.array([x, y, 0, 1])
+            ring[k] = (float(p[0]), float(p[1]))
+    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
+                "parking", "fences", "sidewalks", "cycleways"):
+        if cat not in geom:
+            continue
+        for item in geom[cat]:
+            if _poly_holes(item):
+                outer, holes = _poly_outer(item), _poly_holes(item)
+                _transform_ring(outer)
+                for h in holes:
+                    _transform_ring(h)
+            else:
+                ring = _poly_outer(item)
+                _transform_ring(ring)
+    for pt_key in ("tree_points",):
+        if pt_key not in geom:
+            continue
+        for k in range(len(geom[pt_key])):
+            x, y = geom[pt_key][k]
+            p = first_inv @ np.array([x, y, 0, 1])
+            geom[pt_key][k] = (float(p[0]), float(p[1]))
+
+    # Build keyframe-filtered scan list.
+    scan_list = []
+    last_keyframe_pos = None
+    for idx, T in poses:
+        sp = os.path.join(scan_dir, f"{idx:010d}.bin")
+        lp = os.path.join(gt_label_dir, f"{idx:010d}.bin")
+        if not (os.path.isfile(sp) and os.path.isfile(lp)):
+            continue
+        if args.use_inferred_row:
+            ip = os.path.join(seq_inferred_dir, f"{idx:010d}.bin")
+            if not os.path.isfile(ip):
+                continue
+        else:
+            ip = None
+        pos = T[:3, 3]
+        if last_keyframe_pos is not None and keyframe_dist > 0:
+            if np.linalg.norm(pos - last_keyframe_pos) < keyframe_dist:
+                continue
+        scan_list.append((idx, T, sp, lp, ip))
+        last_keyframe_pos = pos
+        if len(scan_list) >= args.max_scans:
+            break
+
+    if not scan_list:
+        print(f"  No valid scans found; skipping sequence.")
+        return None
+
+    xs = [T[0, 3] for _, T, _, _, _ in scan_list]
+    ys = [T[1, 3] for _, T, _, _, _ in scan_list]
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    margin = max_range + decay_m
+    geom_trimmed = trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin)
+    n_before = sum(len(geom[c]) for c in geom)
+    n_after = sum(len(geom_trimmed[c]) for c in geom_trimmed)
+    print(f"  OSM trim: kept {n_after}/{n_before} items in bbox "
+          f"[x:{xmin:.0f}..{xmax:.0f}, y:{ymin:.0f}..{ymax:.0f}] margin={margin:.0f}m")
+    geom = geom_trimmed
+
+    print("  Precomputing OSM prior grid...")
+    precomputed_grid, osm_index = precompute_osm_grid(
+        geom, xmin, xmax, ymin, ymax, margin, args.grid_res, decay_m, tree_radius
+    )
+    print(f"    Grid has {len(precomputed_grid)} cells "
+          f"(Shapely={'on' if osm_index else 'off'})")
+
+    # Lidar up reference (first scan of this sequence; after first-pose normalization
+    # poses[0][1] is identity, so lidar_to_map = lidar_to_body).
+    _first_lidar_to_map = poses[0][1] @ lidar_to_body
+    lidar_up_ref = _first_lidar_to_map[:3, 2].astype(np.float64)
+    _n = np.linalg.norm(lidar_up_ref)
+    if _n > 1e-6:
+        lidar_up_ref = lidar_up_ref / _n
+
+    print(f"  Processing {len(scan_list)} scans "
+          f"(keyframe_dist={keyframe_dist}m, max={args.max_scans}, grid_res={args.grid_res}m)")
+    for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(
+            tqdm(scan_list, desc=f"scans [{label_tag}]", unit="scan")):
+        pts = read_scan_bin(scan_path)
+        labels_raw = read_label_bin(label_path)
+        n = min(len(pts), len(labels_raw))
+        pts, labels_raw = pts[:n], labels_raw[:n]
+        gt_common = np.array([gt_mapping.get(int(l), 0) for l in labels_raw], dtype=np.int32)
+
+        if args.use_inferred_row and inferred_path is not None:
+            if inferred_use_multiclass:
+                inferred_common = read_multiclass_labels(
+                    inferred_path, n, learning_map_inv, inferred_mapping
+                )
+            else:
+                inf_raw = read_label_bin(inferred_path)
+                inf_raw = inf_raw[:n]
+                inferred_common = np.array(
+                    [inferred_mapping.get(int(l), 0) for l in inf_raw], dtype=np.int32
+                )
+            if inferred_common is None:
+                inferred_common = gt_common.copy()
+        else:
+            inferred_common = None
+
+        lidar_to_map = T @ lidar_to_body
+        xyz_h = np.hstack([pts[:, :3], np.ones((n, 1), dtype=np.float32)])
+        map_pts = (lidar_to_map @ xyz_h.T).T[:, :3]
+
+        if ds_resolution > 0:
+            vkeys = np.floor(map_pts / ds_resolution).astype(np.int64)
+            _, uidx = np.unique(vkeys, axis=0, return_index=True)
+            map_pts = map_pts[uidx]
+            gt_common = gt_common[uidx]
+            if inferred_common is not None:
+                inferred_common = inferred_common[uidx]
+
+        osm_vecs = build_osm_grid(
+            map_pts[:, :2], geom, decay_m, tree_radius, args.grid_res,
+            precomputed_grid=precomputed_grid, osm_index=osm_index,
+        )
+
+        all_gt.append(gt_common)
+        all_osm.append(osm_vecs)
+        if all_inferred is not None and inferred_common is not None:
+            all_inferred.append(inferred_common)
+        if all_map_pts is not None:
+            all_map_pts.append(map_pts[:, :2])
+        if scan_data_list is not None:
+            origin_map = lidar_to_map[:3, 3]
+            z_local = (map_pts - origin_map) @ lidar_up_ref
+            item = (z_local.astype(np.float64), gt_common.copy(), osm_vecs.copy())
+            if all_inferred is not None and inferred_common is not None:
+                item = (*item, inferred_common.copy())
+            scan_data_list.append(item)
+
+    return geom
+
+
 def main():
     parser = argparse.ArgumentParser(description="Optimize OSM confusion matrix from GT data.")
 
@@ -1712,18 +2060,24 @@ def main():
     parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config/methods/mcd.yaml"))
     parser.add_argument("--output", default=os.path.join(SCRIPT_DIR, "config/datasets/osm_confusion_matrix_optimized_MCD_NEW.yaml"))
     parser.add_argument("--data-dir", type=str, default=None)
-    parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--keyframe-dist", type=float, default=1.0)
-    parser.add_argument("--decay", type=float, default=0.0)
-    parser.add_argument("--tree-radius", type=float, default=4.0)
+    parser.add_argument("--sequences", type=str, default=None,
+                        help=("Comma-separated list of sequence names to process "
+                              "(e.g. 'kth_day_09,kth_day_10,kth_night_04'). Each sequence's "
+                              "scans contribute to the SAME aggregated co-occurrence matrix. "
+                              "If omitted, falls back to the single 'sequence_name' from --config."))
+    parser.add_argument("--max-scans", type=int, default=50000,
+                        help="Per-sequence scan cap (applied independently to each entry in --sequences).")
+    parser.add_argument("--keyframe-dist", type=float, default=5.0)
+    parser.add_argument("--decay", type=float, default=2.0)
+    parser.add_argument("--tree-radius", type=float, default=5.0)
     parser.add_argument("--road-width", type=float, default=None, help="Override road width (m); default from osm_bki.yaml")
     parser.add_argument("--sidewalk-width", type=float, default=None, help="Override sidewalk width (m); default from osm_bki.yaml")
     parser.add_argument("--cycleway-width", type=float, default=None, help="Override cycleway width (m); default from osm_bki.yaml")
     parser.add_argument("--fence-width", type=float, default=None, help="Override fence width (m); default from osm_bki.yaml")
-    parser.add_argument("--grid-res", type=float, default=1.0)
+    parser.add_argument("--grid-res", type=float, default=0.5)
 
     # Height matrix options (fixed-metric bins along lidar z, symmetric about sensor origin)
-    parser.add_argument("--height-step-meters", type=float, default=0.5,
+    parser.add_argument("--height-step-meters", type=float, default=0.1,
                         help="Per-bin height step in meters (default: 1.0)")
     parser.add_argument("--height-max-meters", type=float, default=50.0,
                         help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 30.0)")
@@ -1750,13 +2104,44 @@ def main():
     parser.add_argument("--inferred-key", type=str, default=None,
                         help="Override inferred_labels_key (mcd or semkitti) for label mapping")
     
-    # Options for height-based analysis and matrix
-    parser.add_argument("--scale-by-class-points", action="store_true", default=True,
-                        help="Weight each class row by its point count before column norm (default: True)")
-    parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
-                        help="Disable scaling by class point count")
-    
+    # Row-weighting scheme for the confusion matrix (balances accuracy vs mIoU).
+    parser.add_argument("--class-weight-mode", type=str, default="sqrt",
+                        choices=list(CLASS_WEIGHT_MODES),
+                        help=("Row weighting: points (accuracy-leaning), equal, "
+                              "sqrt (compromise), median_freq (mIoU-leaning). "
+                              "Default: points."))
+    # Legacy aliases — preserved for backward compatibility.
+    parser.add_argument("--scale-by-class-points", action="store_true", default=None,
+                        dest="_legacy_scale_true",
+                        help="[deprecated] alias for --class-weight-mode=points")
+    parser.add_argument("--no-scale-by-class-points", action="store_true", default=None,
+                        dest="_legacy_scale_false",
+                        help="[deprecated] alias for --class-weight-mode=equal")
+    parser.add_argument("--selectivity-weight", action="store_true", default=True,
+                        help=("Scale each OSM column by its selectivity (1 - normalized "
+                              "entropy). Weak/uniform columns fade toward zero so the "
+                              "prior boost is proportional to how uniquely an OSM class "
+                              "predicts a semantic class."))
+    parser.add_argument("--shrinkage-kappa", type=float, default=None,
+                        help=("Enable calibrated-posterior derivation via Bayesian "
+                              "shrinkage: M[c,j] = n_j/(n_j+κ)·P(c|j) + κ/(n_j+κ)·P(c). "
+                              "The prior P(c) is shaped by --class-weight-mode. Higher κ "
+                              "shrinks data-poor columns toward the prior; lower κ trusts "
+                              "the empirical posterior. Typical values 5–50. If unset, "
+                              "the default lift-based derivation is used."))
+
     args = parser.parse_args()
+
+    # Resolve row-weighting mode (explicit flag wins; otherwise legacy alias; otherwise "points").
+    if args.class_weight_mode is None:
+        if args._legacy_scale_false:
+            args.class_weight_mode = "equal"
+            print("[deprecation] --no-scale-by-class-points; use --class-weight-mode=equal")
+        elif args._legacy_scale_true:
+            args.class_weight_mode = "points"
+            print("[deprecation] --scale-by-class-points; use --class-weight-mode=points")
+        else:
+            args.class_weight_mode = "points"
 
     print(f"Loading config from {args.config}")
     with open(args.config) as f:
@@ -1767,17 +2152,13 @@ def main():
     elif "ros__parameters" in cfg:
         cfg = cfg["ros__parameters"]
 
-    # Resolve paths from sequence_name + suffix when present (matches config/methods/mcd.yaml)
-    seq = cfg.get("sequence_name")
-    if seq:
-        if cfg.get("lidar_pose_suffix"):
-            cfg["lidar_pose_file"] = f"{seq}/{cfg['lidar_pose_suffix']}"
-        if cfg.get("input_data_suffix"):
-            cfg["input_data_prefix"] = f"{seq}/{cfg['input_data_suffix']}"
-        if cfg.get("gt_label_suffix"):
-            cfg["gt_label_prefix"] = f"{seq}/{cfg['gt_label_suffix']}"
-        if cfg.get("input_label_suffix"):
-            cfg["input_label_prefix"] = f"{seq}/{cfg['input_label_suffix']}"
+    # Resolve sequence list: --sequences CLI > single cfg[sequence_name] > sentinel [None]
+    # (None means "use cfg paths as-is without suffix substitution").
+    if args.sequences:
+        seq_list = [s.strip() for s in args.sequences.split(",") if s.strip()]
+    else:
+        _single = cfg.get("sequence_name")
+        seq_list = [_single] if _single else [None]
 
     # Data directory: --data-dir override, else data_root from config, else package data/<dataset_name>
     if args.data_dir is not None and args.data_dir.strip():
@@ -1790,19 +2171,16 @@ def main():
         else:
             data_dir = os.path.join(SCRIPT_DIR, "data", dataset_name)
     print(f"Using data directory: {data_dir}")
-    pose_file = os.path.join(data_dir, cfg["lidar_pose_file"])
-    gt_label_dir = os.path.join(data_dir, cfg.get("gt_label_prefix", "kth_day_09/gt_labels"))
+    print(f"Processing {len(seq_list)} sequence(s): {seq_list}")
+
+    # Shared (non per-sequence) config values.
     gt_labels_key = cfg.get("gt_labels_key", "mcd")
-    scan_dir = os.path.join(data_dir, cfg.get("input_data_prefix", "kth_day_09/lidar_bin/data"))
     inferred_label_prefix = args.inferred_prefix if args.inferred_prefix else cfg.get(
         "input_label_prefix", "kth_day_09/inferred_labels/cenet_semkitti/multiclass_confidence_scores"
     )
     inferred_labels_key = args.inferred_key if args.inferred_key else cfg.get("inferred_labels_key", "semkitti")
     inferred_use_multiclass = cfg.get("inferred_use_multiclass", True)
     calib_file = os.path.join(data_dir, "hhs_calib.yaml")
-    osm_file = os.path.join(data_dir, cfg.get("osm_file", "kth_large.osm"))
-    origin_lat = cfg.get("osm_origin_lat", 0.0)
-    origin_lon = cfg.get("osm_origin_lon", 0.0)
     decay_m = args.decay if args.decay is not None else cfg.get("osm_decay_meters", 5.0)
 
     # 1. Load defaults from osm_bki.yaml
@@ -1868,170 +2246,57 @@ def main():
         labels_config_path = os.path.join(SCRIPT_DIR, f"config/datasets/labels_{inferred_labels_key}.yaml")
         if os.path.isfile(labels_config_path):
             learning_map_inv = load_learning_map_inv(labels_config_path)
-        inferred_label_dir = os.path.join(data_dir, inferred_label_prefix)
         print(f"Inferred-row mode: using {inferred_label_prefix} (key={inferred_labels_key}, multiclass={inferred_use_multiclass})")
-
-    print(f"Loading poses from {pose_file}")
-    poses = load_poses(pose_file)
-    print(f"  Loaded {len(poses)} poses")
-
-    first_pose = poses[0][1].copy()
-    first_inv = np.linalg.inv(first_pose)
-    for i in range(len(poses)):
-        poses[i] = (poses[i][0], first_inv @ poses[i][1])
 
     print(f"Loading calibration from {calib_file}")
     body_to_lidar = load_calibration(calib_file)
     lidar_to_body = np.linalg.inv(body_to_lidar)
 
-    print(f"Parsing OSM geometry from {osm_file}")
-    geom = parse_osm_xml(osm_file, origin_lat, origin_lon)
-    for cat in geom:
-        print(f"  {cat}: {len(geom[cat])} items")
-
-    # Transform OSM coords to first-pose-relative frame
-    def _transform_ring(ring):
-        for k in range(len(ring)):
-            x, y = ring[k]
-            p = first_inv @ np.array([x, y, 0, 1])
-            ring[k] = (float(p[0]), float(p[1]))
-    for cat in ("buildings", "roads", "grasslands", "trees", "forests",
-                "parking", "fences", "sidewalks", "cycleways"):
-        if cat not in geom:
-            continue
-        for item in geom[cat]:
-            if _poly_holes(item):  # polygon with holes: (outer, [hole1, hole2, ...])
-                outer, holes = _poly_outer(item), _poly_holes(item)
-                _transform_ring(outer)
-                for h in holes:
-                    _transform_ring(h)
-            else:  # simple polyline or polygon
-                ring = _poly_outer(item)
-                _transform_ring(ring)
-    for pt_key in ("tree_points",):
-        if pt_key not in geom:
-            continue
-        for k in range(len(geom[pt_key])):
-            x, y = geom[pt_key][k]
-            p = first_inv @ np.array([x, y, 0, 1])
-            geom[pt_key][k] = (float(p[0]), float(p[1]))
-
-    # Select scans using keyframe distance filtering
-    scan_list = []
-    last_keyframe_pos = None
-    inferred_label_dir = os.path.join(data_dir, inferred_label_prefix) if args.use_inferred_row else None
-    for idx, T in poses:
-        sp = os.path.join(scan_dir, f"{idx:010d}.bin")
-        lp = os.path.join(gt_label_dir, f"{idx:010d}.bin")
-        if not (os.path.isfile(sp) and os.path.isfile(lp)):
-            continue
-        if args.use_inferred_row:
-            ip = os.path.join(inferred_label_dir, f"{idx:010d}.bin")
-            if not os.path.isfile(ip):
-                continue
-        else:
-            ip = None
-        pos = T[:3, 3]
-        if last_keyframe_pos is not None and keyframe_dist > 0:
-            if np.linalg.norm(pos - last_keyframe_pos) < keyframe_dist:
-                continue
-        scan_list.append((idx, T, sp, lp, ip))
-        last_keyframe_pos = pos
-        if len(scan_list) >= args.max_scans:
-            break
-
-    # Trim OSM geometry to trajectory bbox to speed up prior computation
-    xs = [T[0, 3] for _, T, _, _, _ in scan_list]
-    ys = [T[1, 3] for _, T, _, _, _ in scan_list]
-    xmin, xmax = min(xs), max(xs)
-    ymin, ymax = min(ys), max(ys)
-    margin = max_range + decay_m
-    geom_trimmed = trim_osm_to_bbox(geom, xmin, xmax, ymin, ymax, margin)
-    n_before = sum(len(geom[c]) for c in geom)
-    n_after = sum(len(geom_trimmed[c]) for c in geom_trimmed)
-    print(f"OSM trim: kept {n_after}/{n_before} items in bbox [x:{xmin:.0f}..{xmax:.0f}, y:{ymin:.0f}..{ymax:.0f}] margin={margin:.0f}m")
-    geom = geom_trimmed
-
-    print("Precomputing OSM prior grid (once for all scans)...")
-    precomputed_grid, osm_index = precompute_osm_grid(
-        geom, xmin, xmax, ymin, ymax, margin, args.grid_res, decay_m, tree_radius
-    )
-    print(f"  Grid has {len(precomputed_grid)} cells (Shapely={'on' if osm_index else 'off'})")
-
-    print(f"Processing {len(scan_list)} scans (keyframe_dist={keyframe_dist}m, max={args.max_scans}, grid_res={args.grid_res}m)")
-
+    # Accumulators shared across sequences — co-occurrence statistics are frame-invariant,
+    # so per-sequence first-pose-relative transforms don't interfere when concatenated.
     all_gt, all_osm = [], []
     all_inferred = [] if args.use_inferred_row else None
     all_map_pts = [] if args.visualize_points else None
     scan_data_list = [] if not args.no_height_matrix else None
-    # Height axis is fixed: +z of the first scan's lidar, expressed in the (first-pose-relative)
-    # map frame. poses[0] is identity after the first-pose normalization, so
-    # lidar_to_map = I @ lidar_to_body = lidar_to_body.
-    _first_lidar_to_map = poses[0][1] @ lidar_to_body
-    lidar_up_ref = _first_lidar_to_map[:3, 2].astype(np.float64)
-    _n = np.linalg.norm(lidar_up_ref)
-    if _n > 1e-6:
-        lidar_up_ref = lidar_up_ref / _n
 
-    for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(tqdm(scan_list, desc="scans", unit="scan")):
-        pts = read_scan_bin(scan_path)
-        labels_raw = read_label_bin(label_path)
-        n = min(len(pts), len(labels_raw))
-        pts, labels_raw = pts[:n], labels_raw[:n]
-
-        gt_common = np.array([gt_mapping.get(int(l), 0) for l in labels_raw], dtype=np.int32)
-
-        if args.use_inferred_row and inferred_path is not None:
-            if inferred_use_multiclass:
-                inferred_common = read_multiclass_labels(
-                    inferred_path, n, learning_map_inv, inferred_mapping
-                )
-            else:
-                inf_raw = read_label_bin(inferred_path)
-                inf_raw = inf_raw[:n]
-                inferred_common = np.array([inferred_mapping.get(int(l), 0) for l in inf_raw], dtype=np.int32)
-            if inferred_common is None:
-                inferred_common = gt_common.copy()
-        else:
-            inferred_common = None
-
-        lidar_to_map = T @ lidar_to_body
-        xyz_h = np.hstack([pts[:, :3], np.ones((n, 1), dtype=np.float32)])
-        map_pts = (lidar_to_map @ xyz_h.T).T[:, :3]
-
-        # Voxel downsample
-        if ds_resolution > 0:
-            vkeys = np.floor(map_pts / ds_resolution).astype(np.int64)
-            _, uidx = np.unique(vkeys, axis=0, return_index=True)
-            map_pts = map_pts[uidx]
-            gt_common = gt_common[uidx]
-            if inferred_common is not None:
-                inferred_common = inferred_common[uidx]
-
-        osm_vecs = build_osm_grid(
-            map_pts[:, :2], geom, decay_m, tree_radius, args.grid_res,
-            precomputed_grid=precomputed_grid, osm_index=osm_index,
+    last_geom = None
+    for seq in seq_list:
+        result_geom = _process_sequence_scans(
+            seq, cfg, args, data_dir,
+            gt_mapping=gt_mapping,
+            inferred_mapping=inferred_mapping,
+            learning_map_inv=learning_map_inv,
+            inferred_label_prefix=inferred_label_prefix,
+            inferred_use_multiclass=inferred_use_multiclass,
+            body_to_lidar=body_to_lidar,
+            lidar_to_body=lidar_to_body,
+            decay_m=decay_m,
+            keyframe_dist=keyframe_dist,
+            max_range=max_range,
+            ds_resolution=ds_resolution,
+            tree_radius=tree_radius,
+            all_gt=all_gt,
+            all_osm=all_osm,
+            all_inferred=all_inferred,
+            scan_data_list=scan_data_list,
+            all_map_pts=all_map_pts,
         )
+        if result_geom is not None:
+            last_geom = result_geom
 
-        all_gt.append(gt_common)
-        all_osm.append(osm_vecs)
-        if all_inferred is not None and inferred_common is not None:
-            all_inferred.append(inferred_common)
-        if all_map_pts is not None:
-            all_map_pts.append(map_pts[:, :2])
-        if scan_data_list is not None:
-            origin_map = lidar_to_map[:3, 3]
-            z_local = (map_pts - origin_map) @ lidar_up_ref
-            item = (z_local.astype(np.float64), gt_common.copy(), osm_vecs.copy())
-            if all_inferred is not None and inferred_common is not None:
-                item = (*item, inferred_common.copy())
-            scan_data_list.append(item)
+    if not all_gt:
+        print("\nERROR: No valid scans found across the given sequence(s); cannot derive matrix.")
+        return
 
     all_gt = np.concatenate(all_gt)
     all_osm = np.concatenate(all_osm)
-    if all_inferred is not None:
+    if all_inferred is not None and all_inferred:
         all_inferred = np.concatenate(all_inferred)
-    print(f"\nTotal points: {len(all_gt)}")
+    print(f"\nTotal points across {len(seq_list)} sequence(s): {len(all_gt)}")
+
+    # `geom` is used by the visualization paths below; use the last sequence's trimmed
+    # geom (per-sequence coord frames make multi-sequence viz ambiguous).
+    geom = last_geom
 
     # Single-pass optimization: in the class-indexed height-filter scheme, the OSM→common
     # confusion matrix M and the class-indexed height matrix H decouple (H is a post-hoc
@@ -2041,7 +2306,15 @@ def main():
         print("Co-occurrence: inferred-row with GT compatibility")
     else:
         counts, class_totals = build_cooccurrence(all_gt, all_osm)
-    matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
+    if args.shrinkage_kappa is not None:
+        matrix = derive_matrix_shrinkage(counts, class_totals,
+                                         kappa=args.shrinkage_kappa,
+                                         class_weight_mode=args.class_weight_mode,
+                                         selectivity_weight=args.selectivity_weight)
+    else:
+        matrix = derive_matrix(counts, class_totals,
+                               class_weight_mode=args.class_weight_mode,
+                               selectivity_weight=args.selectivity_weight)
 
     height_matrix = None
     if (
@@ -2063,8 +2336,21 @@ def main():
               f"[{(num_bins_used-1)*args.height_step_meters:.2f}, "
               f"{num_bins_used*args.height_step_meters:.2f}] m)")
 
-    if args.scale_by_class_points:
-        print("Matrix derived with scaling by class point counts (rows weighted by GT count per class).")
+    _mode_desc = {
+        "points":      "rows/prior scaled by GT point count per class (accuracy-leaning)",
+        "equal":       "all class rows/priors weighted equally",
+        "sqrt":        "rows/prior scaled by sqrt(GT points); compromise between accuracy and mIoU",
+        "median_freq": "rows/prior weighted by median-frequency balancing (mIoU-leaning)",
+    }.get(args.class_weight_mode, args.class_weight_mode)
+    if args.shrinkage_kappa is not None:
+        print(f"Matrix derived via Bayesian shrinkage (kappa={args.shrinkage_kappa:g}, "
+              f"prior={args.class_weight_mode!r}: {_mode_desc}).")
+    else:
+        print(f"Matrix derived with class_weight_mode={args.class_weight_mode!r} "
+              f"({_mode_desc}).")
+    if args.selectivity_weight:
+        print("Columns scaled by selectivity (1 - normalized entropy); "
+              "weak OSM columns fade, unique OSM→class associations stay full-strength.")
     print("\nOptimized OSM confusion matrix:")
     header = "                " + "  ".join(f"{c:>7s}" for c in OSM_COLUMNS)
     print(header)

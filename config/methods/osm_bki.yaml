@@ -19,12 +19,21 @@
     free_thresh: 0.4
     occupied_thresh: 0.6
 
-    # Default OSM geometry parameters (used by optimize_osm_cm_*.py scripts).
-    # Dataset-specific confusion matrix yamls or CLI args can override these.
+    # Geometry parameters used for polygon-band OSM priors and visualization.
     osm_geometry_parameters:
-      osm_decay_meters: 0.000
-      road_width_meters: 3.0   # fallback for unmapped highway types (OSM2World "else" default)
-      sidewalk_width_meters: 3.0
-      cycleway_width_meters: 3.0
-      fence_width_meters: 0.6
-      tree_point_radius_meters: 5.0
+      osm_decay_meters: 2.000
+      road_width_meters: 1.000
+      sidewalk_width_meters: 2.000
+      cycleway_width_meters: 2.000
+      fence_width_meters: 0.600
+      tree_point_radius_meters: 5.000
+
+    # # Default OSM geometry parameters (used by optimize_osm_cm_*.py scripts).
+    # # Dataset-specific confusion matrix yamls or CLI args can override these.
+    # osm_geometry_parameters:
+    #   osm_decay_meters: 2.000
+    #   road_width_meters: 3.0   # fallback for unmapped highway types (OSM2World "else" default)
+    #   sidewalk_width_meters: 3.0
+    #   cycleway_width_meters: 3.0
+    #   fence_width_meters: 0.6
+    #   tree_point_radius_meters: 5.0

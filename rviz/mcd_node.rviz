@@ -189,26 +189,26 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/XYOrbit
-      Distance: 554.1555786132812
+      Class: rviz_default_plugins/Orbit
+      Distance: 485.16009521484375
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 23.561433792114258
-        Y: 41.84127426147461
-        Z: 0
+        X: 111.52497863769531
+        Y: -34.00874710083008
+        Z: 7.670065879821777
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: -1.5697963237762451
-      Target Frame: lidar
-      Value: XYOrbit (rviz_default_plugins)
-      Yaw: 5.552395343780518
+      Pitch: -1.509796380996704
+      Target Frame: map
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 5.610400199890137
     Saved: ~
 Window Geometry:
   Displays:
