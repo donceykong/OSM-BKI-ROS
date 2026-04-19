@@ -526,6 +526,81 @@ namespace osm_bki {
         forest = compute_osm_forest_prior(x, y);
     }
 
+    bool SemanticBKIOctoMap::compute_osm_converted_prior(float x, float y, float z,
+                                                          std::vector<float> &common_priors) const {
+        int nc = SemanticOcTreeNode::num_class;
+        common_priors.assign(static_cast<size_t>(nc), 0.f);
+
+        if (!osm_cm_loaded_ || osm_cm_rows_ <= 0) return false;
+
+        float osm_vec[N_OSM_PRIOR_COLS];
+        compute_osm_prior_vec(x, y, osm_vec);
+
+        // Skip cells with no OSM geometry coverage (excluding the synthetic "none" col).
+        float c_x = 0.f;
+        for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
+            if (osm_vec[c] > c_x) c_x = osm_vec[c];
+        }
+        if (c_x <= 0.f) return false;
+
+        // Project OSM cols → matrix rows (common-class super-rows).
+        std::vector<float> Mm(static_cast<size_t>(osm_cm_rows_), 0.f);
+        for (int r = 0; r < osm_cm_rows_; ++r)
+            for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
+                Mm[static_cast<size_t>(r)] += osm_cm_[r][c] * osm_vec[c];
+
+        // Discreet height filter: scale matrix rows by the bin's hrow.
+        if (use_osm_height_filter_ && !use_gaussian_height_filter_
+            && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
+            && osm_height_up_ref_set_) {
+            float h = osm_height_up_ref_x_ * x + osm_height_up_ref_y_ * y + osm_height_up_ref_z_ * z
+                      - osm_height_z_base_;
+            int bin = static_cast<int>(std::floor(h / osm_height_step_meters_));
+            bin = std::max(0, std::min(bin, osm_height_num_bins_ - 1));
+            const auto &hrow = osm_height_cm_[static_cast<size_t>(bin)];
+            int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
+            for (int r = 0; r < ncols; ++r)
+                Mm[static_cast<size_t>(r)] *= hrow[r];
+        }
+
+        // Spread Mm to per-common-class scores via row_to_labels (same scheme as
+        // apply_osm_prior_to_ybars / init_osm_prior_for_block).
+        for (int r = 0; r < osm_cm_rows_; ++r) {
+            const auto &labels = osm_cm_row_to_labels_[r];
+            if (labels.empty() || Mm[r] <= 0.f) continue;
+            float share = Mm[r] / static_cast<float>(labels.size());
+            for (int lbl : labels) {
+                if (lbl >= 0 && lbl < nc)
+                    common_priors[static_cast<size_t>(lbl)] += share;
+            }
+        }
+
+        // Gaussian height filter: per-common-class phi_k(h). For visualization we
+        // assume ground_z = 0 in the map frame (true for first-pose normalized maps).
+        if (use_osm_height_filter_ && use_gaussian_height_filter_ && height_kernel_lambda_ > 0.f) {
+            float h = z;
+            float lam = height_kernel_lambda_;
+            float dz = height_kernel_dead_zone_;
+            for (int k = 0; k < nc; ++k) {
+                float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
+                float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
+                if (tau_k <= 0.f) continue;
+                float abs_diff = std::abs(h - mu_k);
+                float phi = 1.f;
+                if (abs_diff > dz) {
+                    float excess = abs_diff - dz;
+                    phi = std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
+                }
+                if (phi < 1.f) {
+                    float scale = (1.f - lam) + lam * phi;
+                    common_priors[static_cast<size_t>(k)] *= scale;
+                }
+            }
+        }
+
+        return true;
+    }
+
     void SemanticBKIOctoMap::set_osm_confusion_matrix(
             const std::vector<std::vector<float>> &matrix,
             const std::vector<std::vector<int>> &row_to_labels) {

@@ -433,6 +433,19 @@ namespace osm_bki {
                                               float &tree, float &parking, float &fence,
                                               float &sidewalk, float &cycleway, float &forest) const;
 
+        /// Project the OSM prior at (x, y) through the OSM confusion matrix to a
+        /// per-common-class score vector, then apply whichever height filter is
+        /// active (discreet bin CM or per-class Gaussian). Used by the OSM-converted
+        /// map visualization to render "what OSM + height filter alone would predict."
+        ///
+        /// Gaussian-mode reference: ground_z is assumed to be 0 in the (first-pose
+        /// normalized) map frame, so h = z. Discreet-mode reference: uses the per-scan
+        /// `osm_height_z_base_` along the fixed up axis (same as the runtime path).
+        ///
+        /// Returns true when the OSM CM is loaded and (x, y) has non-zero OSM coverage.
+        bool compute_osm_converted_prior(float x, float y, float z,
+                                         std::vector<float> &common_priors) const;
+
     private:
         void compute_osm_prior_vec(float x, float y, float osm_vec[N_OSM_PRIOR_COLS]) const;
 

@@ -45,6 +45,13 @@
     publish_osm_prior_map: false
     osm_prior_map_color_mode: osm_blend
     osm_prior_map_topic: /semantic_osm_prior_map
+    osm_prior_map_z: 0.0    # ground-plane z for the 2D raster (first-pose-relative map frame)
+
+    # OSM-converted map: per-occupied-voxel argmax of (OSM CM projection + active height
+    # filter), rendered with semantic-class colors. Shows what the map would predict using
+    # OSM + height filter alone — directly comparable to the main /occupied_cells_vis_array.
+    publish_osm_converted_map: false
+    osm_converted_map_topic: /semantic_osm_converted_map
 
     # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
     publish_variance: false

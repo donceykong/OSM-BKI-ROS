@@ -416,14 +416,12 @@ namespace osm_bki {
         OSMBlend   /// All OSM priors at once; overlapping weights blend colors
     };
 
-    /// Color for OSM prior value in [0,1]: blend from light gray (0) to class color (1).
+    /// Color for OSM prior value in [0,1]: pure class color with alpha = value (linear
+    /// dropoff via transparency — cells far from geometry fade out).
     /// prior_type: 0=building, 1=road, 2=grassland, 3=tree, 4=parking, 5=fence,
     ///             6=sidewalk, 7=cycleway, 8=forest.
     inline std_msgs::msg::ColorRGBA OSMPriorMapColor(int prior_type, float value) {
         std_msgs::msg::ColorRGBA color;
-        color.a = 1.0;
-        float g = 0.85f;  // light gray at 0
-        float r = g, b = g;
         float cr = 0, cg = 0, cb = 0;
         switch (prior_type) {
             case 0: cr = 0.0f;  cg = 0.0f;  cb = 1.0f; break;   // building blue
@@ -437,21 +435,21 @@ namespace osm_bki {
             case 8: cr = 0.0f;  cg = 0.35f; cb = 0.1f; break;   // forest very dark green
             default: cr = cg = cb = 0.5f; break;
         }
-        value = std::max(0.f, std::min(1.f, value));
-        color.r = (1.f - value) * r + value * cr;
-        color.g = (1.f - value) * g + value * cg;
-        color.b = (1.f - value) * b + value * cb;
+        color.r = cr;
+        color.g = cg;
+        color.b = cb;
+        color.a = std::max(0.f, std::min(1.f, value));
         return color;
     }
 
-    /// Blend OSM prior colors by weight. Weights in [0,1]. If all zero, returns light gray.
-    /// Channels: building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest.
+    /// Blend OSM prior colors by weight. Weights in [0,1]. Color = normalized hue blend;
+    /// alpha = max(weights), so cells far from any geometry fade to transparent (linear
+    /// dropoff). Channels: building, road, grassland, tree, parking, fence, sidewalk,
+    /// cycleway, forest.
     inline std_msgs::msg::ColorRGBA OSMPriorBlendColor(float w_building, float w_road, float w_grassland,
                                                        float w_tree, float w_parking, float w_fence,
                                                        float w_sidewalk, float w_cycleway, float w_forest) {
         std_msgs::msg::ColorRGBA color;
-        color.a = 1.0;
-        const float gray = 0.85f;
         w_building  = std::max(0.f, std::min(1.f, w_building));
         w_road      = std::max(0.f, std::min(1.f, w_road));
         w_grassland = std::max(0.f, std::min(1.f, w_grassland));
@@ -463,8 +461,11 @@ namespace osm_bki {
         w_forest    = std::max(0.f, std::min(1.f, w_forest));
         float sum = w_building + w_road + w_grassland + w_tree + w_parking + w_fence
                   + w_sidewalk + w_cycleway + w_forest;
+        float max_w = std::max({w_building, w_road, w_grassland, w_tree, w_parking,
+                                w_fence, w_sidewalk, w_cycleway, w_forest});
         if (sum <= 0.f) {
-            color.r = color.g = color.b = gray;
+            color.r = color.g = color.b = 0.f;
+            color.a = 0.f;  // fully transparent — no OSM coverage
             return color;
         }
         // Weighted blend. Palette must match the single-prior case above.
@@ -477,6 +478,7 @@ namespace osm_bki {
         color.b = (w_building * 1.f   + w_road * 0.f + w_grassland * 0.35f + w_tree * 0.2f
                  + w_parking  * 0.f   + w_fence * 0.4f + w_sidewalk * 0.96f
                  + w_cycleway * 0.9f  + w_forest * 0.1f) / sum;
+        color.a = std::min(1.f, max_w);
         return color;
     }
 

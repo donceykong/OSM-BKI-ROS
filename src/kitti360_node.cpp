@@ -114,6 +114,9 @@ int main(int argc, char **argv) {
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
+    node->declare_parameter<double>("osm_prior_map_z", 0.0);
+    node->declare_parameter<bool>("publish_osm_converted_map", false);
+    node->declare_parameter<std::string>("osm_converted_map_topic", "/semantic_osm_converted_map");
     node->declare_parameter<bool>("publish_variance", false);
     node->declare_parameter<std::string>("variance_topic", "/osm_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
@@ -353,7 +356,16 @@ int main(int argc, char **argv) {
         else if (osm_prior_map_color_mode_str == "osm_sidewalk") osm_color_mode = osm_bki::MapColorMode::OSMSidewalk;
         else if (osm_prior_map_color_mode_str == "osm_cycleway") osm_color_mode = osm_bki::MapColorMode::OSMCycleway;
         else if (osm_prior_map_color_mode_str == "osm_forest") osm_color_mode = osm_bki::MapColorMode::OSMForest;
-        mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
+        double osm_prior_map_z = 0.0;
+        node->get_parameter<double>("osm_prior_map_z", osm_prior_map_z);
+        mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode,
+                                           static_cast<float>(osm_prior_map_z));
+
+        bool publish_osm_converted_map = false;
+        std::string osm_converted_map_topic = "/semantic_osm_converted_map";
+        node->get_parameter<bool>("publish_osm_converted_map", publish_osm_converted_map);
+        node->get_parameter<std::string>("osm_converted_map_topic", osm_converted_map_topic);
+        mcd_data.set_publish_osm_converted_map(publish_osm_converted_map, osm_converted_map_topic);
 
         bool publish_osm_height_bins_scan = false;
         bool publish_osm_height_bins_map = false;

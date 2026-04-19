@@ -31,7 +31,7 @@
 
     evaluation_result_prefix: evaluations/osm_bki  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
-    publish_semantic_occ_map: true   # publish /occupied_cells_vis_array; other map topics are gated independently
+    publish_semantic_occ_map: false   # publish /occupied_cells_vis_array; other map topics are gated independently
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
@@ -42,9 +42,16 @@
     # Visualization: show OSM priors colored. Use semantic for class colors.
     # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence,
     #          osm_sidewalk, osm_cycleway, osm_forest, osm_blend (all priors blended)
-    publish_osm_prior_map: false
+    publish_osm_prior_map: true
     osm_prior_map_color_mode: osm_blend
     osm_prior_map_topic: /semantic_osm_prior_map
+    osm_prior_map_z: 0.0    # ground-plane z for the 2D raster (first-pose-relative map frame)
+
+    # OSM-converted map: per-occupied-voxel argmax of (OSM CM projection + active height
+    # filter), rendered with semantic-class colors. Shows what the map would predict using
+    # OSM + height filter alone — directly comparable to the main /occupied_cells_vis_array.
+    publish_osm_converted_map: false
+    osm_converted_map_topic: /semantic_osm_converted_map
 
     # Variance visualization: publish prediction variance on a separate topic (jet colormap: blue=low, red=high)
     publish_variance: false
