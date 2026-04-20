@@ -39,7 +39,7 @@
 
     evaluation_result_prefix: evaluations/
     query: true # GT Data not available
-    visualize: true
+    publish_semantic_occ_map: true   # publish /occupied_cells_vis_array; other map topics are gated independently
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix

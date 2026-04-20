@@ -659,13 +659,33 @@ class MCDData {
       }
     }
 
-    /// Enable OSM prior map on a separate topic. Priors computed on-the-fly (not stored in octree).
-    void set_publish_osm_prior_map(bool enabled, const std::string& topic, osm_bki::MapColorMode osm_color_mode) {
+    /// Enable OSM prior map on a separate topic. Renders as a 2D raster (single z layer)
+    /// over the BKI's xy bounding box; OSM priors computed on-the-fly (no height filter).
+    void set_publish_osm_prior_map(bool enabled, const std::string& topic,
+                                   osm_bki::MapColorMode osm_color_mode, float raster_z = 0.f) {
       publish_osm_prior_map_ = enabled;
       osm_prior_map_color_mode_ = osm_color_mode;
+      osm_prior_map_z_ = raster_z;
       if (enabled && !osm_prior_map_pub_) {
         osm_prior_map_pub_ = new osm_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
-        RCLCPP_INFO_STREAM(node_->get_logger(), "OSM prior map visualization enabled on topic: " << topic);
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "OSM prior map (2D raster) enabled on topic: " << topic
+            << " (z=" << raster_z << ")");
+      }
+    }
+
+    /// Enable OSM-converted map on a separate topic. Renders the post-CM, post-height-filter
+    /// argmax common-class prediction at every occupied voxel; uses semantic colors.
+    void set_publish_osm_converted_map(bool enabled, const std::string& topic) {
+      publish_osm_converted_map_ = enabled;
+      if (enabled && !osm_converted_map_pub_) {
+        osm_converted_map_pub_ = new osm_bki::MarkerArrayPub(node_, topic, static_cast<float>(resolution_));
+        // Mirror the main map's semantic palette so the two are directly comparable.
+        if (!colors_file_path_.empty()) {
+          osm_converted_map_pub_->load_colors_from_yaml(colors_file_path_);
+        }
+        RCLCPP_INFO_STREAM(node_->get_logger(),
+            "OSM-converted map (CM + height filter) enabled on topic: " << topic);
       }
     }
 
@@ -835,7 +855,8 @@ class MCDData {
       return true;
     }
 
-    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, double keyframe_dist, bool query, bool visualize) {
+    bool process_scans(std::string input_data_dir, std::string input_label_dir, int scan_num, double keyframe_dist, bool query, bool publish_semantic_occ_map) {
+      publish_semantic_occ_map_ = publish_semantic_occ_map;
       if (!map_) {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: process_scans: map_ is null!");
         return false;
@@ -1257,6 +1278,29 @@ class MCDData {
           continue;
         }
         insertion_count++;
+
+        // Capture this scan's xy footprint (cloud is in the map frame). Used by the
+        // OSM prior-map raster so its extent matches the current scan, not the cumulative map.
+        if (!cloud->points.empty()) {
+          float min_x = std::numeric_limits<float>::infinity();
+          float min_y = std::numeric_limits<float>::infinity();
+          float max_x = -std::numeric_limits<float>::infinity();
+          float max_y = -std::numeric_limits<float>::infinity();
+          for (const auto& pt : cloud->points) {
+            if (!std::isfinite(pt.x) || !std::isfinite(pt.y)) continue;
+            if (pt.x < min_x) min_x = pt.x;
+            if (pt.y < min_y) min_y = pt.y;
+            if (pt.x > max_x) max_x = pt.x;
+            if (pt.y > max_y) max_y = pt.y;
+          }
+          if (std::isfinite(min_x) && std::isfinite(max_x) && max_x > min_x && max_y > min_y) {
+            scan_xy_min_x_ = min_x;
+            scan_xy_min_y_ = min_y;
+            scan_xy_max_x_ = max_x;
+            scan_xy_max_y_ = max_y;
+            scan_xy_set_ = true;
+          }
+        }
         
         // Skip query/visualize for first insertion to avoid potential segfaults with empty/initializing octree
         if (insertion_count == 1) {
@@ -1272,20 +1316,28 @@ class MCDData {
           }
         }
 
-        if (visualize) {
+        if (any_publish_enabled()) {
           publish_map();
           // Small delay to allow rviz to process the visualization
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
       }
-      
+
       // Final publish after all scans are processed
-      if (visualize) {
+      if (any_publish_enabled()) {
         RCLCPP_INFO_STREAM(node_->get_logger(), "All scans processed. Publishing final map visualization...");
         publish_map();
       }
       
       return true;
+    }
+
+    bool any_publish_enabled() const {
+      return publish_semantic_occ_map_
+          || publish_variance_
+          || publish_osm_prior_map_
+          || publish_osm_converted_map_
+          || publish_semantic_uncertainty_;
     }
 
     void publish_map() {
@@ -1298,8 +1350,10 @@ class MCDData {
         return;
       }
 
-      m_pub_->clear_map(resolution_);
-      
+      if (publish_semantic_occ_map_) {
+        m_pub_->clear_map(resolution_);
+      }
+
       // Check if map is empty before iterating - get iterators separately to catch segfault location
       try {
         auto begin_it = map_->begin_leaf();
@@ -1308,7 +1362,7 @@ class MCDData {
         
         if (begin_it == end_it) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Map is empty (begin == end), nothing to publish");
-          m_pub_->publish();
+          if (publish_semantic_occ_map_) m_pub_->publish();
           return;
         }
       } catch (const std::exception& e) {
@@ -1349,7 +1403,9 @@ class MCDData {
                   if (v < min_var) min_var = v;
                 }
               }
-              m_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, node.get_semantics(), 2);
+              if (publish_semantic_occ_map_) {
+                m_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, node.get_semantics(), 2);
+              }
               voxel_count++;
             }
             
@@ -1371,7 +1427,9 @@ class MCDData {
         RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: Exception during map iteration: " << e.what());
         return;
       }
-      m_pub_->publish();
+      if (publish_semantic_occ_map_) {
+        m_pub_->publish();
+      }
 
       // Second pass: publish variance map if enabled
       if (publish_variance_ && variance_pub_) {
@@ -1391,37 +1449,81 @@ class MCDData {
         variance_pub_->publish();
       }
 
-      // OSM prior map pass: publish OSM priors on separate topic (computed on-the-fly, not stored in octree)
-      if (publish_osm_prior_map_ && osm_prior_map_pub_ && map_) {
+      // OSM prior map (2D raster): sample a regular xy grid over the *current scan's*
+      // xy footprint at a single z layer; raw OSM priors, no height filter. The
+      // footprint is captured during insertion so the raster doesn't grow with the map.
+      if (publish_osm_prior_map_ && osm_prior_map_pub_ && map_ && scan_xy_set_) {
         osm_prior_map_pub_->clear_map(static_cast<float>(resolution_));
         osm_prior_map_pub_->set_color_mode(osm_prior_map_color_mode_);
         osm_bki::MapColorMode mode = osm_prior_map_color_mode_;
+
+        const float min_x = scan_xy_min_x_;
+        const float min_y = scan_xy_min_y_;
+        const float max_x = scan_xy_max_x_;
+        const float max_y = scan_xy_max_y_;
+        const float step = static_cast<float>(resolution_);
+        const float z_layer = osm_prior_map_z_;
+        const float size = step;
+        if (max_x > min_x && max_y > min_y && step > 0.f) {
+          for (float x = min_x; x <= max_x; x += step) {
+            for (float y = min_y; y <= max_y; y += step) {
+              float building, road, grassland, tree, parking, fence, sidewalk, cycleway, forest;
+              map_->get_osm_priors_for_visualization(x, y, building, road, grassland,
+                                                      tree, parking, fence,
+                                                      sidewalk, cycleway, forest);
+              if (mode == osm_bki::MapColorMode::OSMBlend) {
+                osm_prior_map_pub_->insert_point3d_osm_blend(x, y, z_layer, size,
+                    building, road, grassland, tree, parking, fence,
+                    sidewalk, cycleway, forest);
+              } else {
+                int prior_type = 0;
+                float value = 0.f;
+                switch (mode) {
+                  case osm_bki::MapColorMode::OSMBuilding:   prior_type = 0; value = building; break;
+                  case osm_bki::MapColorMode::OSMRoad:       prior_type = 1; value = road; break;
+                  case osm_bki::MapColorMode::OSMGrassland:  prior_type = 2; value = grassland; break;
+                  case osm_bki::MapColorMode::OSMTree:       prior_type = 3; value = tree; break;
+                  case osm_bki::MapColorMode::OSMParking:    prior_type = 4; value = parking; break;
+                  case osm_bki::MapColorMode::OSMFence:      prior_type = 5; value = fence; break;
+                  case osm_bki::MapColorMode::OSMSidewalk:   prior_type = 6; value = sidewalk; break;
+                  case osm_bki::MapColorMode::OSMCycleway:   prior_type = 7; value = cycleway; break;
+                  case osm_bki::MapColorMode::OSMForest:     prior_type = 8; value = forest; break;
+                  default: prior_type = 0; value = building; break;
+                }
+                osm_prior_map_pub_->insert_point3d_osm_prior(x, y, z_layer, size, value, prior_type);
+              }
+            }
+          }
+        }
+        osm_prior_map_pub_->publish();
+      }
+
+      // OSM-converted map: per-occupied-voxel argmax of the OSM CM projection with the
+      // active height filter applied. Colored with the semantic palette so the result
+      // is directly comparable to the main semantic occupancy map.
+      if (publish_osm_converted_map_ && osm_converted_map_pub_ && map_) {
+        osm_converted_map_pub_->clear_map(static_cast<float>(resolution_));
+        std::vector<float> common_priors;
         for (auto it = map_->begin_leaf(); it != map_->end_leaf(); ++it) {
           auto node = it.get_node();
           if (node.get_state() != osm_bki::State::OCCUPIED) continue;
           osm_bki::point3f p = it.get_loc();
           float size = it.get_size();
-          float building, road, grassland, tree, parking, fence;
-          map_->get_osm_priors_for_visualization(p.x(), p.y(), building, road, grassland, tree, parking, fence);
-          if (mode == osm_bki::MapColorMode::OSMBlend) {
-            osm_prior_map_pub_->insert_point3d_osm_blend(p.x(), p.y(), p.z(), size,
-                building, road, grassland, tree, parking, fence);
-          } else {
-            int prior_type = 0;
-            float value = 0.f;
-            switch (mode) {
-              case osm_bki::MapColorMode::OSMBuilding:   prior_type = 0; value = building; break;
-              case osm_bki::MapColorMode::OSMRoad:      prior_type = 1; value = road; break;
-              case osm_bki::MapColorMode::OSMGrassland:  prior_type = 2; value = grassland; break;
-              case osm_bki::MapColorMode::OSMTree:     prior_type = 3; value = tree; break;
-              case osm_bki::MapColorMode::OSMParking:  prior_type = 4; value = parking; break;
-              case osm_bki::MapColorMode::OSMFence:    prior_type = 5; value = fence; break;
-              default: prior_type = 0; value = building; break;
+          if (!map_->compute_osm_converted_prior(p.x(), p.y(), p.z(), common_priors)) continue;
+
+          int best = 0;
+          float best_val = common_priors.empty() ? 0.f : common_priors[0];
+          for (int k = 1; k < static_cast<int>(common_priors.size()); ++k) {
+            if (common_priors[k] > best_val) {
+              best_val = common_priors[k];
+              best = k;
             }
-            osm_prior_map_pub_->insert_point3d_osm_prior(p.x(), p.y(), p.z(), size, value, prior_type);
           }
+          // Skip when the argmax falls on the unlabeled / zero-prior bucket.
+          if (best <= 0 || best_val <= 0.f) continue;
+          osm_converted_map_pub_->insert_point3d_semantics(p.x(), p.y(), p.z(), size, best, 2);
         }
-        osm_prior_map_pub_->publish();
+        osm_converted_map_pub_->publish();
       }
 
       // Fourth pass: publish semantic uncertainty map if enabled (input observation uncertainty per voxel)
@@ -1478,6 +1580,11 @@ class MCDData {
       }
       RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: m_pub_ is valid, calling load_colors_from_yaml");
       bool result = m_pub_->load_colors_from_yaml(yaml_file_path);
+      if (result) colors_file_path_ = yaml_file_path;  // cache for downstream pubs that share semantic colors
+      // Apply to any already-created semantic-colored publishers (e.g. osm_converted_map_pub_).
+      if (result && osm_converted_map_pub_) {
+        osm_converted_map_pub_->load_colors_from_yaml(yaml_file_path);
+      }
       RCLCPP_WARN_STREAM(node_->get_logger(), "CHECKPOINT: MCDData::load_colors_from_yaml: Result=" << result);
       return result;
     }
@@ -1671,11 +1778,25 @@ class MCDData {
     double max_range_;
     osm_bki::SemanticBKIOctoMap* map_;
     osm_bki::MarkerArrayPub* m_pub_;
+    bool publish_semantic_occ_map_{true};
     osm_bki::MarkerArrayPub* variance_pub_{nullptr};
     bool publish_variance_{false};
     osm_bki::MarkerArrayPub* osm_prior_map_pub_{nullptr};
     bool publish_osm_prior_map_{false};
     osm_bki::MapColorMode osm_prior_map_color_mode_{osm_bki::MapColorMode::OSMBlend};
+    float osm_prior_map_z_{0.f};  // ground-plane z for the 2D raster
+    osm_bki::MarkerArrayPub* osm_converted_map_pub_{nullptr};
+    bool publish_osm_converted_map_{false};
+    std::string colors_file_path_;  // last-loaded semantic colors yaml; reused for downstream pubs
+
+    // Per-scan xy bbox in the map frame, captured from the most recently inserted
+    // cloud. Used as the raster footprint for the OSM prior-map visualization so
+    // it doesn't grow with the cumulative map.
+    bool scan_xy_set_{false};
+    float scan_xy_min_x_{0.f};
+    float scan_xy_min_y_{0.f};
+    float scan_xy_max_x_{0.f};
+    float scan_xy_max_y_{0.f};
     std::string variance_topic_;
     osm_bki::MarkerArrayPub* semantic_uncertainty_pub_{nullptr};
     bool publish_semantic_uncertainty_{false};

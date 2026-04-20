@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     std::string gt_label_prefix;
     std::string evaluation_result_prefix;
     bool query = false;
-    bool visualize = false;
+    bool publish_semantic_occ_map = false;
 
     node->declare_parameter<std::string>("map_topic", map_topic);
     node->declare_parameter<int>("block_depth", block_depth);
@@ -74,7 +74,7 @@ int main(int argc, char **argv) {
     node->declare_parameter<std::string>("gt_label_prefix", gt_label_prefix);
     node->declare_parameter<std::string>("evaluation_result_prefix", evaluation_result_prefix);
     node->declare_parameter<bool>("query", query);
-    node->declare_parameter<bool>("visualize", visualize);
+    node->declare_parameter<bool>("publish_semantic_occ_map", publish_semantic_occ_map);
     node->declare_parameter<std::string>("colors_file", "");
     node->declare_parameter<std::string>("calibration_file", "");
     node->declare_parameter<std::string>("osm_file", "");
@@ -114,6 +114,9 @@ int main(int argc, char **argv) {
     node->declare_parameter<bool>("publish_osm_prior_map", false);
     node->declare_parameter<std::string>("osm_prior_map_color_mode", "osm_blend");
     node->declare_parameter<std::string>("osm_prior_map_topic", "/semantic_osm_prior_map");
+    node->declare_parameter<double>("osm_prior_map_z", 0.0);
+    node->declare_parameter<bool>("publish_osm_converted_map", false);
+    node->declare_parameter<std::string>("osm_converted_map_topic", "/semantic_osm_converted_map");
     node->declare_parameter<bool>("publish_variance", false);
     node->declare_parameter<std::string>("variance_topic", "/osm_bki_variance");
     node->declare_parameter<bool>("publish_semantic_uncertainty", false);
@@ -155,7 +158,7 @@ int main(int argc, char **argv) {
         if (!evaluation_result_prefix.empty()) evaluation_result_prefix = sequence_name + "/" + evaluation_result_prefix;
     }
     node->get_parameter<bool>("query", query);
-    node->get_parameter<bool>("visualize", visualize);
+    node->get_parameter<bool>("publish_semantic_occ_map", publish_semantic_occ_map);
 
     std::string colors_file, calibration_file, osm_file, config_datasets_dir;
     double osm_origin_lat, osm_origin_lon, osm_decay_meters, osm_tree_point_radius_meters;
@@ -350,7 +353,19 @@ int main(int argc, char **argv) {
         else if (osm_prior_map_color_mode_str == "osm_tree") osm_color_mode = osm_bki::MapColorMode::OSMTree;
         else if (osm_prior_map_color_mode_str == "osm_parking") osm_color_mode = osm_bki::MapColorMode::OSMParking;
         else if (osm_prior_map_color_mode_str == "osm_fence") osm_color_mode = osm_bki::MapColorMode::OSMFence;
-        mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode);
+        else if (osm_prior_map_color_mode_str == "osm_sidewalk") osm_color_mode = osm_bki::MapColorMode::OSMSidewalk;
+        else if (osm_prior_map_color_mode_str == "osm_cycleway") osm_color_mode = osm_bki::MapColorMode::OSMCycleway;
+        else if (osm_prior_map_color_mode_str == "osm_forest") osm_color_mode = osm_bki::MapColorMode::OSMForest;
+        double osm_prior_map_z = 0.0;
+        node->get_parameter<double>("osm_prior_map_z", osm_prior_map_z);
+        mcd_data.set_publish_osm_prior_map(publish_osm_prior_map, osm_prior_map_topic, osm_color_mode,
+                                           static_cast<float>(osm_prior_map_z));
+
+        bool publish_osm_converted_map = false;
+        std::string osm_converted_map_topic = "/semantic_osm_converted_map";
+        node->get_parameter<bool>("publish_osm_converted_map", publish_osm_converted_map);
+        node->get_parameter<std::string>("osm_converted_map_topic", osm_converted_map_topic);
+        mcd_data.set_publish_osm_converted_map(publish_osm_converted_map, osm_converted_map_topic);
 
         bool publish_osm_height_bins_scan = false;
         bool publish_osm_height_bins_map = false;
@@ -421,7 +436,7 @@ int main(int argc, char **argv) {
     }
 
     mcd_data.set_up_evaluation(dir + "/" + gt_label_prefix, dir + "/" + evaluation_result_prefix);
-    mcd_data.process_scans(dir + "/" + input_data_prefix, dir + "/" + input_label_prefix, scan_num, keyframe_dist, query, visualize);
+    mcd_data.process_scans(dir + "/" + input_data_prefix, dir + "/" + input_label_prefix, scan_num, keyframe_dist, query, publish_semantic_occ_map);
 
     rclcpp::spin(node);
     rclcpp::shutdown();
