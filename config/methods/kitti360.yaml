@@ -114,7 +114,7 @@
     # Height filtering mode: "discreet" (per-bin CM, existing behavior) or
     # "gaussian" (per-common-class Gaussian applied to ybars). Only one fires.
     # Requires osm_height_filtering: true.
-    height_filter_type: discreet
+    height_filter_type: gaussian
 
     # --- Gaussian-mode parameters (ignored when height_filter_type != gaussian) ---
     height_kernel_lambda: 0.5        # blend weight (0 = disabled, 1 = full gating)

@@ -1417,7 +1417,7 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None,
                         help="Root directory for dataset (lidar, poses, labels, OSM). Overrides data_root in config.")
     parser.add_argument("--max-scans", type=int, default=50000)
-    parser.add_argument("--keyframe-dist", type=float, default=1.0,
+    parser.add_argument("--keyframe-dist", type=float, default=20.0,
                         help="Min euclidean distance (m) between consecutive poses for keyframe selection (0=every frame)")
     parser.add_argument("--decay", type=float, default=0.0)
     parser.add_argument("--tree-radius", type=float, default=4.0)
@@ -1448,11 +1448,11 @@ def main():
                              "Auto-detected from config pose_format if not set.")
     parser.add_argument("--sequence", type=str, default=None,
                         help="Override sequence_name from config (e.g. 2013_05_28_drive_0009_sync)")
-    parser.add_argument("--scale-by-class-points", action="store_true", default=True,
+    parser.add_argument("--scale-by-class-points", action="store_true", default=False,
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    parser.add_argument("--height-step-meters", type=float, default=5.0,
+    parser.add_argument("--height-step-meters", type=float, default=1.0,
                         help="Per-bin height step in meters (default: 5.0)")
     parser.add_argument("--height-max-meters", type=float, default=50.0,
                         help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 50.0)")
