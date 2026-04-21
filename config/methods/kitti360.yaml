@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_02/datasets/"
+    data_root: "/media/donceykong/doncey_ssd_011/datasets/"
 
     # Map information
     resolution: 0.5
