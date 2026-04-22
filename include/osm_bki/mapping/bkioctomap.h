@@ -464,7 +464,7 @@ namespace osm_bki {
         /// h = z - (origin_z - sensor_mounting_height_). No-op unless the gaussian
         /// mode is enabled and lambda > 0.
         void apply_height_kernel_to_ybars(std::vector<float> &ybars,
-                                          float z, float origin_z) const;
+                                          float x, float y, float z, float origin_z) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;

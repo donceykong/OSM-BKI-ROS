@@ -240,7 +240,7 @@ namespace osm_bki {
                 SemanticOcTreeNode &node = leaf_it.get_node();
                 if (use_gaussian_height_filter_) {
                     point3f loc = block->get_loc(leaf_it);
-                    apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
                 }
                 node.update(ybars[j]);
             }
@@ -451,8 +451,18 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::apply_height_kernel_to_ybars(std::vector<float> &ybars,
-                                                           float z, float origin_z) const {
+                                                           float x, float y, float z, float origin_z) const {
         if (!use_gaussian_height_filter_ || height_kernel_lambda_ <= 0.f) return;
+
+        // Only apply where OSM has coverage — mirrors the non-Gaussian height filter behaviour.
+        if (osm_cm_loaded_) {
+            float osm_vec[N_OSM_PRIOR_COLS];
+            compute_osm_prior_vec(x, y, osm_vec);
+            float c_x = 0.f;
+            for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c)
+                if (osm_vec[c] > c_x) c_x = osm_vec[c];
+            if (c_x <= 0.f) return;
+        }
 
         // Scan-relative height estimate: ground_z = origin_z - sensor_mounting_height
         float estimated_ground_z = origin_z - sensor_mounting_height_;
@@ -1068,7 +1078,7 @@ namespace osm_bki {
                     // OSM prior is now in the kernel weights — no post-prediction bias needed
                     if (use_gaussian_height_filter_) {
                         point3f loc = block->get_loc(leaf_it);
-                        apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                        apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
                     }
                     node.update(ybars[j]);
                 }
@@ -1493,7 +1503,7 @@ namespace osm_bki {
                     // OSM prior is now in the kernel weights — no post-prediction bias needed
                     if (use_gaussian_height_filter_) {
                         point3f loc = block->get_loc(leaf_it);
-                        apply_height_kernel_to_ybars(ybars[j], loc.z(), origin.z());
+                        apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
                     }
                     node.update(ybars[j]);
                 }
