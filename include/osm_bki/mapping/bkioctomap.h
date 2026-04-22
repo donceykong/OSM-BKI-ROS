@@ -388,30 +388,15 @@ namespace osm_bki {
 
         /// Initialize OSM-derived Dirichlet priors for all leaf nodes in a block.
         /// Only affects unclassified nodes (new blocks). Called during insert_pointcloud.
-        void init_osm_prior_for_block(Block *block);
+        void init_osm_prior_for_block(Block *block, float origin_z = 0.f);
 
-        /// OSM height filter: fixed-metric bins measured upward from the per-scan
-        /// bottom-most point along a fixed reference "up" axis (the +z of the first
-        /// scan's lidar, set once via set_osm_height_up_ref). Multiplies OSM priors
-        /// by rows of the height confusion matrix.
-        void set_osm_height_filter_enabled(bool enabled);
-        void set_osm_height_confusion_matrix(const std::vector<std::vector<float>> &matrix);
-        /// Set the bin step (meters per row of the confusion matrix). Matches the
-        /// osm_height_bin_step_meters field written by the optimizer.
-        void set_osm_height_bin_step(float step_meters);
-        /// Set the fixed reference up axis (unit 3-vector in the map frame). Typically
-        /// the +z of the first scan's lidar. Called once before the insert loop.
-        void set_osm_height_up_ref(float ux, float uy, float uz);
-
-        /// Gaussian height filter: per-common-class Gaussian height prior applied to
-        /// ybars right before node.update. When enabled, the existing "discreet"
-        /// bin-by-CM path is bypassed so the two modes don't stack. Requires
-        /// set_osm_height_filter_enabled(true) to actually run.
-        void set_height_filter_mode_gaussian(bool gaussian);
+        /// Gaussian height filter: per-common-class Gaussian height prior.
+        /// When lambda > 0, applied inside compute_osm_semantic_kernel to modulate
+        /// kernel weights. Call set_height_kernel_params with lambda=0 to disable.
         void set_height_kernel_params(float lambda,
                                       const std::vector<float> &mu,
                                       const std::vector<float> &tau,
-                                      float dead_zone,
+                                      const std::vector<float> &dead_zone,
                                       bool redistribute,
                                       float gate,
                                       float sensor_mounting_height);
@@ -434,13 +419,10 @@ namespace osm_bki {
                                               float &sidewalk, float &cycleway, float &forest) const;
 
         /// Project the OSM prior at (x, y) through the OSM confusion matrix to a
-        /// per-common-class score vector, then apply whichever height filter is
-        /// active (discreet bin CM or per-class Gaussian). Used by the OSM-converted
-        /// map visualization to render "what OSM + height filter alone would predict."
-        ///
-        /// Gaussian-mode reference: ground_z is assumed to be 0 in the (first-pose
-        /// normalized) map frame, so h = z. Discreet-mode reference: uses the per-scan
-        /// `osm_height_z_base_` along the fixed up axis (same as the runtime path).
+        /// per-common-class score vector, then apply the Gaussian height filter.
+        /// Used by the OSM-converted map visualization to render "what OSM + height
+        /// filter alone would predict." Ground z is assumed to be 0 in the
+        /// (first-pose normalized) map frame, so h = z.
         ///
         /// Returns true when the OSM CM is loaded and (x, y) has non-zero OSM coverage.
         bool compute_osm_converted_prior(float x, float y, float z,
@@ -457,14 +439,8 @@ namespace osm_bki {
         /// (> 1.0), others stay at 1.0 (no suppression). Height filtering modulates
         /// the OSM prior before computing per-class support.
         /// Fills k_vec with all 1.0s when OSM is disabled (backward compatible).
-        void compute_osm_semantic_kernel(float x, float y, float z,
+        void compute_osm_semantic_kernel(float x, float y, float z, float origin_z,
                                          std::vector<float> &k_vec) const;
-
-        /// Per-common-class Gaussian height prior applied in-place to ybars.
-        /// h = z - (origin_z - sensor_mounting_height_). No-op unless the gaussian
-        /// mode is enabled and lambda > 0.
-        void apply_height_kernel_to_ybars(std::vector<float> &ybars,
-                                          float z, float origin_z) const;
 
         /// Compute OSM priors at (x,y): building (polygon), road (polyline), grassland (polygon), tree (polygon + points), parking (polygon), fence (polyline), stairs (polyline with width).
         float compute_osm_building_prior(float x, float y) const;
@@ -584,26 +560,11 @@ namespace osm_bki {
         // For each confusion matrix row, list of raw label IDs (SemanticKITTI) that map to it
         std::vector<std::vector<int>> osm_cm_row_to_labels_;
 
-        // OSM height filter: per-scan min/max z, bin count, height confusion matrix [bin][common_class_row]
-        // Variant A: height multipliers are applied AFTER the OSM->common projection, indexed by
-        // common-class row (same index space as osm_cm_ rows), so columns == osm_cm_rows_.
-        bool use_osm_height_filter_{false};
-        bool osm_height_cm_loaded_{false};
-        int osm_height_num_bins_{0};
-        float osm_height_step_meters_{1.0f};
-        float osm_height_up_ref_x_{0.f};
-        float osm_height_up_ref_y_{0.f};
-        float osm_height_up_ref_z_{1.f};
-        bool osm_height_up_ref_set_{false};
-        float osm_height_z_base_{0.f};  // per-scan: min(up_ref · p) over training points
-        std::vector<std::vector<float>> osm_height_cm_{};
-
-        // Gaussian per-common-class height filter (alternative to the discreet CM path)
-        bool use_gaussian_height_filter_{false};
+        // Gaussian per-common-class height filter
         float height_kernel_lambda_{0.f};
         std::vector<float> height_kernel_mu_;    // per-common-class expected height above ground
         std::vector<float> height_kernel_tau_;   // per-common-class tolerance (std dev)
-        float height_kernel_dead_zone_{0.f};
+        std::vector<float> height_kernel_dead_zone_;  // per-class dead zone half-width (m)
         bool height_kernel_redistribute_{false};
         float height_kernel_gate_{0.f};
         float sensor_mounting_height_{0.f};

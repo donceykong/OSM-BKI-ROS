@@ -1,0 +1,124 @@
+dataset: kitti360
+sequence_name: 2013_05_28_drive_0000_sync
+num_scans: 401
+keyframe_dist_m: 20.0
+ds_resolution_m: 0.5
+sensor_mounting_height: 1.73
+lidar_up_ref:
+- 1.001827056081163e-17
+- -1.7379712473109308e-18
+- 1.0
+height_reference: 'z_map - (origin_z - sensor_mounting_height)  # matches runtime'
+estimator: mu = median(h);  tau = max(1.4826 * MAD(h), min_tau)
+stratified_per_scan_cap: 200
+outlier_clip:
+  z_clip_low_pct: 1.0
+  z_clip_high_pct: 99.0
+  class_clip_low_pct: 0.0
+  class_clip_high_pct: 100.0
+min_tau: 0.3
+unlabeled_tau_override: 100.0
+class_names:
+- unlabeled
+- road
+- sidewalk
+- parking
+- building
+- fence
+- vegetation
+- vehicle
+- terrain
+height_kernel_mu:
+- 1.264
+- 0.087
+- 0.2458
+- 0.1835
+- 1.7148
+- 0.8478
+- 1.5646
+- 0.9032
+- 0.2284
+height_kernel_tau:
+- 100.0
+- 0.6748
+- 0.7656
+- 0.7749
+- 1.6158
+- 0.9547
+- 1.413
+- 1.1327
+- 0.7397
+per_class:
+  unlabeled:
+    count_raw: 5000
+    raw_mean: 1.3332024812698364
+    raw_std: 1.6800950765609741
+    raw_median: 1.2639720439910889
+    count_used: 5000
+    mu: 1.2639720439910889
+    tau: 100.0
+    note: tau overridden via --unlabeled-tau=100.0
+  road:
+    count_raw: 5000
+    raw_mean: 0.015235467813909054
+    raw_std: 0.9292207360267639
+    raw_median: 0.08699540048837662
+    count_used: 5000
+    mu: 0.08699540048837662
+    tau: 0.6748489243090152
+  sidewalk:
+    count_raw: 5000
+    raw_mean: 0.17146801948547363
+    raw_std: 0.9123977422714233
+    raw_median: 0.24580949544906616
+    count_used: 5000
+    mu: 0.24580949544906616
+    tau: 0.7655895127058029
+  parking:
+    count_raw: 5000
+    raw_mean: 0.16239453852176666
+    raw_std: 0.8458582162857056
+    raw_median: 0.18351006507873535
+    count_used: 5000
+    mu: 0.18351006507873535
+    tau: 0.7748683465719223
+  building:
+    count_raw: 5000
+    raw_mean: 1.7361814975738525
+    raw_std: 1.5139391422271729
+    raw_median: 1.7148165702819824
+    count_used: 5000
+    mu: 1.7148165702819824
+    tau: 1.6157685864686966
+  fence:
+    count_raw: 5000
+    raw_mean: 0.8544998168945312
+    raw_std: 1.0868006944656372
+    raw_median: 0.847827672958374
+    count_used: 5000
+    mu: 0.847827672958374
+    tau: 0.9547434897780418
+  vegetation:
+    count_raw: 5000
+    raw_mean: 1.6427218914031982
+    raw_std: 1.4693212509155273
+    raw_median: 1.5646367073059082
+    count_used: 5000
+    mu: 1.5646367073059082
+    tau: 1.4130444474220276
+  vehicle:
+    count_raw: 5000
+    raw_mean: 0.8938744068145752
+    raw_std: 1.2000024318695068
+    raw_median: 0.9032122492790222
+    count_used: 5000
+    mu: 0.9032122492790222
+    tau: 1.1326575293540955
+  terrain:
+    count_raw: 5000
+    raw_mean: 0.24222588539123535
+    raw_std: 0.9432476162910461
+    raw_median: 0.22835436463356018
+    count_used: 5000
+    mu: 0.22835436463356018
+    tau: 0.7396642741441726
