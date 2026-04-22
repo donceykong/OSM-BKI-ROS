@@ -388,7 +388,7 @@ namespace osm_bki {
 
         /// Initialize OSM-derived Dirichlet priors for all leaf nodes in a block.
         /// Only affects unclassified nodes (new blocks). Called during insert_pointcloud.
-        void init_osm_prior_for_block(Block *block);
+        void init_osm_prior_for_block(Block *block, float origin_z = 0.f);
 
         /// OSM height filter: fixed-metric bins measured upward from the per-scan
         /// bottom-most point along a fixed reference "up" axis (the +z of the first
@@ -457,7 +457,7 @@ namespace osm_bki {
         /// (> 1.0), others stay at 1.0 (no suppression). Height filtering modulates
         /// the OSM prior before computing per-class support.
         /// Fills k_vec with all 1.0s when OSM is disabled (backward compatible).
-        void compute_osm_semantic_kernel(float x, float y, float z,
+        void compute_osm_semantic_kernel(float x, float y, float z, float origin_z,
                                          std::vector<float> &k_vec) const;
 
         /// Per-common-class Gaussian height prior applied in-place to ybars.

@@ -182,7 +182,7 @@ namespace osm_bki {
                 std::vector<float> k_vec(nc_csm, 1.0f);
                 int lbl = static_cast<int>(it->second);
                 if (lbl > 0 && lbl < nc_csm)  // skip free-space (label 0)
-                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), origin.z(), k_vec);
                 block_w_class.push_back(std::move(k_vec));
             }
 
@@ -218,7 +218,7 @@ namespace osm_bki {
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
                 if (is_new_block)
-                    init_osm_prior_for_block(block);
+                    init_osm_prior_for_block(block, origin.z());
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -238,10 +238,6 @@ namespace osm_bki {
             int j = 0;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                 SemanticOcTreeNode &node = leaf_it.get_node();
-                if (use_gaussian_height_filter_) {
-                    point3f loc = block->get_loc(leaf_it);
-                    apply_height_kernel_to_ybars(ybars[j], loc.x(), loc.y(), loc.z(), origin.z());
-                }
                 node.update(ybars[j]);
             }
 
@@ -331,7 +327,7 @@ namespace osm_bki {
         osm_dirichlet_prior_strength_ = strength;
     }
 
-    void SemanticBKIOctoMap::init_osm_prior_for_block(Block *block) {
+    void SemanticBKIOctoMap::init_osm_prior_for_block(Block *block, float origin_z) {
         if (!osm_cm_loaded_ || osm_dirichlet_prior_strength_ <= 0.0f || block == nullptr) return;
 
         int nc = SemanticOcTreeNode::num_class;
@@ -360,7 +356,6 @@ namespace osm_bki {
                 for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                     Mm[r] += osm_cm_[r][c] * osm_vec[c];
 
-            // Apply fixed-metric height filter (same scheme as compute_osm_semantic_kernel)
             if (use_osm_height_filter_ && !use_gaussian_height_filter_
                 && osm_height_cm_loaded_ && osm_height_num_bins_ > 0
                 && osm_height_up_ref_set_) {
@@ -372,6 +367,26 @@ namespace osm_bki {
                 int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
                 for (int r = 0; r < ncols; ++r)
                     Mm[r] *= hrow[r];
+            }
+
+            if (use_osm_height_filter_ && use_gaussian_height_filter_ && height_kernel_lambda_ > 0.f) {
+                float h = loc.z() - (origin_z - sensor_mounting_height_);
+                float lam = height_kernel_lambda_;
+                for (int r = 0; r < osm_cm_rows_; ++r) {
+                    const auto &labels = osm_cm_row_to_labels_[r];
+                    if (labels.empty()) continue;
+                    float phi_row = 0.f;
+                    for (int lbl : labels) {
+                        float mu_k  = (lbl < static_cast<int>(height_kernel_mu_.size()))        ? height_kernel_mu_[lbl]        : 0.f;
+                        float tau_k = (lbl < static_cast<int>(height_kernel_tau_.size()))       ? height_kernel_tau_[lbl]       : 100.f;
+                        float dz_k  = (lbl < static_cast<int>(height_kernel_dead_zone_.size())) ? height_kernel_dead_zone_[lbl] : 0.f;
+                        if (tau_k <= 0.f) { phi_row += 1.f; continue; }
+                        float excess = std::max(0.f, std::abs(h - mu_k) - dz_k);
+                        phi_row += std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
+                    }
+                    phi_row /= static_cast<float>(labels.size());
+                    Mm[r] *= (1.f - lam) + lam * phi_row;
+                }
             }
 
             float max_Mm = 0.f;
@@ -689,7 +704,7 @@ namespace osm_bki {
     }
 
     void SemanticBKIOctoMap::compute_osm_semantic_kernel(
-            float x, float y, float z, std::vector<float> &k_vec) const {
+            float x, float y, float z, float origin_z, std::vector<float> &k_vec) const {
         int nc = static_cast<int>(k_vec.size());
         // Default: all classes get weight 1.0 (no modulation)
         std::fill(k_vec.begin(), k_vec.end(), 1.0f);
@@ -724,6 +739,26 @@ namespace osm_bki {
             int ncols = std::min(osm_cm_rows_, static_cast<int>(hrow.size()));
             for (int r = 0; r < ncols; ++r)
                 Mm[r] *= hrow[r];
+        }
+
+        if (use_osm_height_filter_ && use_gaussian_height_filter_ && height_kernel_lambda_ > 0.f) {
+            float h = z - (origin_z - sensor_mounting_height_);
+            float lam = height_kernel_lambda_;
+            for (int r = 0; r < osm_cm_rows_; ++r) {
+                const auto &labels = osm_cm_row_to_labels_[r];
+                if (labels.empty()) continue;
+                float phi_row = 0.f;
+                for (int lbl : labels) {
+                    float mu_k  = (lbl < static_cast<int>(height_kernel_mu_.size()))        ? height_kernel_mu_[lbl]        : 0.f;
+                    float tau_k = (lbl < static_cast<int>(height_kernel_tau_.size()))       ? height_kernel_tau_[lbl]       : 100.f;
+                    float dz_k  = (lbl < static_cast<int>(height_kernel_dead_zone_.size())) ? height_kernel_dead_zone_[lbl] : 0.f;
+                    if (tau_k <= 0.f) { phi_row += 1.f; continue; }
+                    float excess = std::max(0.f, std::abs(h - mu_k) - dz_k);
+                    phi_row += std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
+                }
+                phi_row /= static_cast<float>(labels.size());
+                Mm[r] *= (1.f - lam) + lam * phi_row;
+            }
         }
 
         float max_Mm = 0.f;
@@ -1017,7 +1052,7 @@ namespace osm_bki {
                 std::vector<float> k_vec(nc_basic, 1.0f);
                 int lbl = static_cast<int>(it->second);
                 if (lbl > 0 && lbl < nc_basic)
-                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                    compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), origin.z(), k_vec);
                 block_w_class.push_back(std::move(k_vec));
             }
 
@@ -1053,7 +1088,7 @@ namespace osm_bki {
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
                 if (is_new_block)
-                    init_osm_prior_for_block(block);
+                    init_osm_prior_for_block(block, origin.z());
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
@@ -1438,7 +1473,7 @@ namespace osm_bki {
                 if (use_soft) {
                     if (it->soft_probs && it->soft_probs->size() == static_cast<size_t>(nc)) {
                         block_y_soft.push_back(*it->soft_probs);
-                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), origin.z(), k_vec);
                     } else {
                         // Free-space points: zero soft probs, no OSM modulation
                         std::vector<float> zero_vec(static_cast<size_t>(nc), 0.f);
@@ -1447,7 +1482,7 @@ namespace osm_bki {
                 } else {
                     int lbl = static_cast<int>(it->second);
                     if (lbl > 0 && lbl < nc)
-                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), k_vec);
+                        compute_osm_semantic_kernel(it->first.x(), it->first.y(), it->first.z(), origin.z(), k_vec);
                 }
                 block_w_class.push_back(std::move(k_vec));
             }
@@ -1478,7 +1513,7 @@ namespace osm_bki {
                     block_arr.emplace(key, new Block(hash_key_to_block(key)));
                 block = block_arr[key];
                 if (is_new_block)
-                    init_osm_prior_for_block(block);
+                    init_osm_prior_for_block(block, origin.z());
             };
             vector<float> xs;
             for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it) {
