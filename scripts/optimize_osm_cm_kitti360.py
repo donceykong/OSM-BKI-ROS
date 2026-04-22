@@ -16,14 +16,10 @@ Usage:
                                [--data-dir DATA_DIR] [--max-scans N] [--keyframe-dist D]
                                [--grid-res G] [--visualize] [--visualize-points]
                                [--no-show] [--vis-output VIS_PNG] [--vis-points-output VIS_PNG]
-                               [--height-step-meters S] [--height-max-meters M] [--no-height-matrix]
 
     --visualize           Plot the optimized matrix as a heatmap (blue=suppress, red=boost).
     --visualize-points    Plot GT points + OSM geometry + OSM prior heatmap (spatial view).
     --no-show             Save PNG only, do not block to show figure.
-    --height-step-meters  Per-bin height step (m) for osm_height_confusion_matrix (default: 5.0).
-    --height-max-meters   Max |z_local| extent (m); num_bins = 2*ceil(max/step) (default: 50.0).
-    --no-height-matrix    Skip computing and writing osm_height_confusion_matrix.
     --vis-output          Path for matrix PNG (default: <output>.png).
     --vis-points-output   Path for points+OSM PNG (default: <output>_points_osm.png).
     --use-inferred-row    Use inferred (model) labels as matrix rows. Optimizes for OSM to correct inferred toward GT.
@@ -1097,74 +1093,6 @@ def derive_matrix(counts, class_totals, scale_by_class_points=True):
     return matrix
 
 
-def compute_num_bins(step_meters, max_meters):
-    return int(np.ceil(float(max_meters) / float(step_meters)))
-
-
-def build_cooccurrence_height_class(scan_data_list, step_meters=5.0, max_meters=50.0):
-    """Fixed-metric height bins measured upward from the bottom-most lidar point of
-    each scan (z_local = projection onto lidar z). For each scan,
-    z_base = min(z_local) is the zero reference; bin = floor((z_local - z_base)/step),
-    clamped to [0, num_bins-1] where num_bins = ceil(max_meters / step_meters).
-    Making height relative to the scan's bottom removes dependence on the sensor's
-    absolute z.
-
-    counts_h[bin][class_idx] accumulates OSM-weighted GT counts (fallback weight 1.0
-    for points where OSM is silent). Matches the C++ viz and filter binning."""
-    num_bins = compute_num_bins(step_meters, max_meters)
-    n_rows = N_CLASSES - 1
-    counts_h = np.zeros((num_bins, n_rows), dtype=np.float64)
-    for item in scan_data_list:
-        z_local, gt, osm = item[:3]
-        gt = np.asarray(gt, dtype=np.int32)
-        z_arr = np.asarray(z_local, dtype=np.float64)
-        if z_arr.size == 0:
-            continue
-        z_base = float(z_arr.min())
-        mask = (gt >= 1) & (gt < N_CLASSES)
-        if not mask.any():
-            continue
-        z_m = z_arr[mask] - z_base
-        gt_m = gt[mask]
-        osm_m = np.asarray(osm, dtype=np.float64)[mask]
-        bins = np.clip(np.floor(z_m / float(step_meters)).astype(np.int32), 0, num_bins - 1)
-        w = osm_m.sum(axis=1)
-        w[w <= 0.0] = 1.0
-        cols = gt_m - 1
-        np.add.at(counts_h, (bins, cols), w)
-    return counts_h
-
-
-def derive_height_matrix(counts_h, low_percentile=10.0, high_percentile=90.0):
-    """Derive class-indexed height trust matrix: H[bin][class_idx] in [0, 1].
-
-    For each common class c (column), H[:, c-1] is the bin-histogram of class c points
-    normalized so that the peak bin equals 1.0. A high value means "class c is typical
-    at this height"; a low value means "unusual for class c at this height". Classes
-    with no observations are set to neutral (1.0).
-
-    Outliers are smoothed by clipping each column to [low_percentile, high_percentile]
-    of that column's values before the final per-column max-normalization."""
-    num_bins = counts_h.shape[0]
-    n_rows = counts_h.shape[1]
-    matrix = np.zeros((num_bins, n_rows))
-    for c in range(n_rows):
-        col = counts_h[:, c].astype(np.float64)
-        if col.sum() <= 1e-10:
-            matrix[:, c] = 1.0
-            continue
-        lo = np.percentile(col, low_percentile)
-        hi = np.percentile(col, high_percentile)
-        col = np.clip(col, lo, hi)
-        peak = float(col.max())
-        if peak > 1e-10:
-            matrix[:, c] = col / peak
-        else:
-            matrix[:, c] = 1.0
-    matrix = np.clip(matrix, 0.0, 1.0)
-    return matrix
-
-
 # ═══════════════════════════════════════════════════════════════════
 # 6. Visualization
 # ═══════════════════════════════════════════════════════════════════
@@ -1334,8 +1262,7 @@ def plot_osm_confusion_matrix(matrix, save_path=None, show=True):
 # 7. YAML output
 # ═══════════════════════════════════════════════════════════════════
 
-def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=None,
-                       height_step_meters=None, height_max_meters=None):
+def write_osm_cm_yaml(matrix, output_path, geometry_params=None):
     val_comment = "# Values in [0.0, 1.0]: each column is a probability distribution that sums to 1."
     cols_str = ", ".join(OSM_COLUMNS)
     n_rows = N_CLASSES - 1
@@ -1356,31 +1283,6 @@ def write_osm_cm_yaml(matrix, output_path, height_matrix=None, geometry_params=N
     for i in range(N_CLASSES - 1):
         vals = ", ".join(f"{matrix[i, j]:6.2f}" for j in range(N_OSM))
         lines.append(f"  {i+1}:  [{vals}]   # {CLASS_NAMES[i+1]}")
-    if height_matrix is not None:
-        n_bins = height_matrix.shape[0]
-        n_class_cols = height_matrix.shape[1]
-        class_cols_str = ", ".join(CLASS_NAMES[i + 1] for i in range(n_class_cols))
-        step_str = f"{height_step_meters:.3f}" if height_step_meters is not None else "?"
-        max_str = f"{height_max_meters:.3f}" if height_max_meters is not None else "?"
-        step_v = float(height_step_meters) if height_step_meters is not None else 0.0
-        lines += [
-            "",
-            f"# OSM height confusion matrix (fixed-metric bins measured upward from the "
-            f"bottom-most lidar point of each scan). Step = {step_str} m, max height = "
-            f"{max_str} m, num_bins = {n_bins}. Bin i (1-indexed) covers "
-            f"height_above_bottom in [(i-1)*step, i*step] m; bin 1 is the bottom-most, "
-            f"bin {n_bins} is the top-most. Cols = common-taxonomy classes "
-            f"1..{n_class_cols}: [{class_cols_str}]. Multipliers in [0, 1] applied to "
-            "p_super[class] after the OSM→common projection.",
-            f"osm_height_bin_step_meters: {step_str}",
-            f"osm_height_max_meters: {max_str}",
-            "osm_height_confusion_matrix:",
-        ]
-        for b in range(n_bins):
-            z_lo = b * step_v
-            z_hi = z_lo + step_v
-            vals = ", ".join(f"{height_matrix[b, j]:6.2f}" for j in range(n_class_cols))
-            lines.append(f"  {b+1}:  [{vals}]   # BIN {b+1} h_above_bottom in [{z_lo:.2f}, {z_hi:.2f}] m")
     lines += [
         "", "osm_class_map:",
         *[f"  {name}: {j}" for j, name in enumerate(OSM_COLUMNS)],
@@ -1452,12 +1354,6 @@ def main():
                         help="Weight each class row by its point count before column norm (default: True)")
     parser.add_argument("--no-scale-by-class-points", action="store_false", dest="scale_by_class_points",
                         help="Disable scaling by class point count")
-    parser.add_argument("--height-step-meters", type=float, default=1.0,
-                        help="Per-bin height step in meters (default: 5.0)")
-    parser.add_argument("--height-max-meters", type=float, default=50.0,
-                        help="Max |z_local| extent in meters; num_bins = 2*ceil(max/step) (default: 50.0)")
-    parser.add_argument("--no-height-matrix", action="store_true",
-                        help="Skip computing and writing osm_height_confusion_matrix")
     args = parser.parse_args()
 
     print(f"Loading config from {args.config}")
@@ -1687,15 +1583,6 @@ def main():
     all_gt, all_osm = [], []
     all_inferred = [] if args.use_inferred_row else None
     all_map_pts = [] if args.visualize_points else None
-    scan_data_list = [] if not args.no_height_matrix else None
-    # Height axis is fixed: +z of the first scan's lidar, expressed in the (first-pose-relative)
-    # map frame. poses[0] is identity after the first-pose normalization, so
-    # lidar_to_map = I @ lidar_to_body = lidar_to_body.
-    _first_lidar_to_map = poses[0][1] @ lidar_to_body
-    lidar_up_ref = _first_lidar_to_map[:3, 2].astype(np.float64)
-    _n = np.linalg.norm(lidar_up_ref)
-    if _n > 1e-6:
-        lidar_up_ref = lidar_up_ref / _n
 
     for si, (idx, T, scan_path, label_path, inferred_path) in enumerate(tqdm(scan_list, desc="scans", unit="scan")):
         pts = read_scan_bin(scan_path)
@@ -1743,13 +1630,6 @@ def main():
             all_inferred.append(inferred_common)
         if all_map_pts is not None:
             all_map_pts.append(map_pts[:, :2])
-        if scan_data_list is not None:
-            origin_map = lidar_to_map[:3, 3]
-            z_local = (map_pts - origin_map) @ lidar_up_ref
-            item = (z_local.astype(np.float64), gt_common.copy(), osm_vecs.copy())
-            if all_inferred is not None and inferred_common is not None:
-                item = (*item, inferred_common.copy())
-            scan_data_list.append(item)
 
     all_gt = np.concatenate(all_gt)
     all_osm = np.concatenate(all_osm)
@@ -1766,26 +1646,6 @@ def main():
     else:
         counts, class_totals = build_cooccurrence(all_gt, all_osm)
     matrix = derive_matrix(counts, class_totals, scale_by_class_points=args.scale_by_class_points)
-
-    height_matrix = None
-    if (
-        scan_data_list is not None
-        and len(scan_data_list) > 0
-        and not args.no_height_matrix
-    ):
-        counts_h = build_cooccurrence_height_class(
-            scan_data_list,
-            step_meters=args.height_step_meters,
-            max_meters=args.height_max_meters,
-        )
-        height_matrix = derive_height_matrix(counts_h)
-        num_bins_used = counts_h.shape[0]
-        print(f"\nOSM height confusion matrix: {num_bins_used} bins x {N_CLASSES - 1} class cols")
-        print(f"  (step={args.height_step_meters}m, max height={args.height_max_meters}m, "
-              f"bin 1 = h_above_bottom [0, {args.height_step_meters:.2f}] m, "
-              f"bin {num_bins_used} = h_above_bottom "
-              f"[{(num_bins_used-1)*args.height_step_meters:.2f}, "
-              f"{num_bins_used*args.height_step_meters:.2f}] m)")
 
     if args.scale_by_class_points:
         print("Matrix derived with scaling by class point counts (rows weighted by GT count per class).")
@@ -1809,10 +1669,7 @@ def main():
     write_osm_cm_yaml(
         matrix,
         args.output,
-        height_matrix=height_matrix,
         geometry_params=geometry_params_out,
-        height_step_meters=args.height_step_meters,
-        height_max_meters=args.height_max_meters,
     )
     print(f"\nSaved optimized matrix to {args.output}")
 
