@@ -1,0 +1,100 @@
+dataset: kitti360
+sequence_name: 2013_05_28_drive_0000_sync
+num_scans: 5790
+method: dirichlet_posterior
+alpha_0: 0.01
+hdr_mass: 0.5
+bin_width_m: 0.1
+h_range_m:
+- -10.0
+- 15.0
+sensor_mounting_height: 1.73
+class_names:
+- unlabeled
+- road
+- sidewalk
+- parking
+- building
+- fence
+- vegetation
+- vehicle
+- terrain
+height_kernel_mu: [1.485, -0.0011, 0.0682, 0.1366, 1.7499, 0.8846, 1.7249, 0.9045,
+  0.2722]
+height_kernel_tau: [100.0, 0.9315, 0.8144, 0.8657, 1.4464, 1.07, 1.4119, 1.0307, 0.9145]
+height_kernel_dead_zone: [1.135, 0.4511, 0.4182, 0.4134, 0.9001, 0.6346, 0.8749, 0.5545,
+  0.5222]
+per_class:
+  unlabeled:
+    count: 5000000
+    mu: 1.485
+    tau: 100.0
+    dead_zone: 1.135
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 1.25
+    note: ' tau overridden=100.0'
+  road:
+    count: 5000000
+    mu: -0.0011
+    tau: 0.9315
+    dead_zone: 0.4511
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.15
+  sidewalk:
+    count: 3202039
+    mu: 0.0682
+    tau: 0.8144
+    dead_zone: 0.4182
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.25
+  parking:
+    count: 886670
+    mu: 0.1366
+    tau: 0.8657
+    dead_zone: 0.4134
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.25
+  building:
+    count: 5000000
+    mu: 1.7499
+    tau: 1.4464
+    dead_zone: 0.9001
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 1.95
+  fence:
+    count: 757371
+    mu: 0.8846
+    tau: 1.07
+    dead_zone: 0.6346
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.95
+  vegetation:
+    count: 5000000
+    mu: 1.7249
+    tau: 1.4119
+    dead_zone: 0.8749
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 1.55
+  vehicle:
+    count: 2279427
+    mu: 0.9045
+    tau: 1.0307
+    dead_zone: 0.5545
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.95
+  terrain:
+    count: 3967023
+    mu: 0.2722
+    tau: 0.9145
+    dead_zone: 0.5222
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.15
