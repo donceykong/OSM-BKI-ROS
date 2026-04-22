@@ -118,7 +118,7 @@
 
     # --- Gaussian-mode parameters (ignored when height_filter_type != gaussian) ---
     height_kernel_lambda: 0.5        # blend weight (0 = disabled, 1 = full gating)
-    height_kernel_dead_zone: 0.0     # meters: no suppression within ±dead_zone of mu
+    height_kernel_dead_zone: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # per-class half-width (m); update after running optimize_height_dirichlet_kitti360.py
     height_kernel_redistribute: false
     height_kernel_gate: 0.0          # >0 skips when argmax ybar already height-compatible
     sensor_mounting_height: 1.73     # KITTI-360 Velodyne height above ground (m)

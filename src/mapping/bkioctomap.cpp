@@ -437,7 +437,7 @@ namespace osm_bki {
     void SemanticBKIOctoMap::set_height_kernel_params(float lambda,
                                                       const std::vector<float> &mu,
                                                       const std::vector<float> &tau,
-                                                      float dead_zone,
+                                                      const std::vector<float> &dead_zone,
                                                       bool redistribute,
                                                       float gate,
                                                       float sensor_mounting_height) {
@@ -460,16 +460,16 @@ namespace osm_bki {
 
         int nc = static_cast<int>(ybars.size());
         float lam = height_kernel_lambda_;
-        float dz = height_kernel_dead_zone_;
 
         std::vector<float> phi(nc, 1.f);
         for (int k = 0; k < nc; ++k) {
-            float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
-            float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
+            float mu_k  = (k < static_cast<int>(height_kernel_mu_.size()))        ? height_kernel_mu_[k]        : 0.f;
+            float tau_k = (k < static_cast<int>(height_kernel_tau_.size()))       ? height_kernel_tau_[k]       : 100.f;
+            float dz_k  = (k < static_cast<int>(height_kernel_dead_zone_.size())) ? height_kernel_dead_zone_[k] : 0.f;
             if (tau_k <= 0.f) { phi[k] = 1.f; continue; }
             float abs_diff = std::abs(h - mu_k);
-            if (abs_diff <= dz) continue;           // within dead zone → phi = 1
-            float excess = abs_diff - dz;
+            if (abs_diff <= dz_k) continue;         // within per-class dead zone → phi = 1
+            float excess = abs_diff - dz_k;
             phi[k] = std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
         }
 
@@ -580,15 +580,15 @@ namespace osm_bki {
         if (use_osm_height_filter_ && use_gaussian_height_filter_ && height_kernel_lambda_ > 0.f) {
             float h = z;
             float lam = height_kernel_lambda_;
-            float dz = height_kernel_dead_zone_;
             for (int k = 0; k < nc; ++k) {
-                float mu_k = (k < static_cast<int>(height_kernel_mu_.size())) ? height_kernel_mu_[k] : 0.f;
-                float tau_k = (k < static_cast<int>(height_kernel_tau_.size())) ? height_kernel_tau_[k] : 100.f;
+                float mu_k  = (k < static_cast<int>(height_kernel_mu_.size()))        ? height_kernel_mu_[k]        : 0.f;
+                float tau_k = (k < static_cast<int>(height_kernel_tau_.size()))       ? height_kernel_tau_[k]       : 100.f;
+                float dz_k  = (k < static_cast<int>(height_kernel_dead_zone_.size())) ? height_kernel_dead_zone_[k] : 0.f;
                 if (tau_k <= 0.f) continue;
                 float abs_diff = std::abs(h - mu_k);
                 float phi = 1.f;
-                if (abs_diff > dz) {
-                    float excess = abs_diff - dz;
+                if (abs_diff > dz_k) {
+                    float excess = abs_diff - dz_k;
                     phi = std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
                 }
                 if (phi < 1.f) {

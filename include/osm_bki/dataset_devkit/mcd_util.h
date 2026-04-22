@@ -621,7 +621,7 @@ class MCDData {
     void set_height_kernel_params(float lambda,
                                   const std::vector<float> &mu,
                                   const std::vector<float> &tau,
-                                  float dead_zone,
+                                  const std::vector<float> &dead_zone,
                                   bool redistribute,
                                   float gate,
                                   float sensor_mounting_height) {

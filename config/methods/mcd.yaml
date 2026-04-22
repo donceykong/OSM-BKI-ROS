@@ -116,7 +116,7 @@
 
     # --- Gaussian-mode parameters (ignored when height_filter_type != gaussian) ---
     height_kernel_lambda: 0.5        # blend weight (0 = disabled, 1 = full gating)
-    height_kernel_dead_zone: 0.0     # meters: no suppression within ±dead_zone of mu
+    height_kernel_dead_zone: [1.2548, 0.3116, 0.4172, 0.3482, 2.8144, 1.07, 1.8919, 0.6965, 0.9041]  # per-class half-width (m)
     height_kernel_redistribute: false
     height_kernel_gate: 0.0          # >0 skips when argmax ybar already height-compatible
     sensor_mounting_height: 1.73     # meters from ground (tune per platform)

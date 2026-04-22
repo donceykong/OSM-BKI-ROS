@@ -411,7 +411,7 @@ namespace osm_bki {
         void set_height_kernel_params(float lambda,
                                       const std::vector<float> &mu,
                                       const std::vector<float> &tau,
-                                      float dead_zone,
+                                      const std::vector<float> &dead_zone,
                                       bool redistribute,
                                       float gate,
                                       float sensor_mounting_height);
@@ -603,7 +603,7 @@ namespace osm_bki {
         float height_kernel_lambda_{0.f};
         std::vector<float> height_kernel_mu_;    // per-common-class expected height above ground
         std::vector<float> height_kernel_tau_;   // per-common-class tolerance (std dev)
-        float height_kernel_dead_zone_{0.f};
+        std::vector<float> height_kernel_dead_zone_;  // per-class dead zone half-width (m)
         bool height_kernel_redistribute_{false};
         float height_kernel_gate_{0.f};
         float sensor_mounting_height_{0.f};
