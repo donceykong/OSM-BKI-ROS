@@ -1317,10 +1317,10 @@ namespace osm_bki {
                 auto bgk = bgk_arr.find(*block_it);
                 if (bgk == bgk_arr.end()) continue;
                 vector<vector<float>> ybars;
-                if (use_soft)
-                    bgk->second->predict_csm(xs, ybars);
-                else
-                    bgk->second->predict(xs, ybars);
+
+                // Predict is called for both one-hot or if using soft, multiclass labels
+                bgk->second->predict(xs, ybars);
+                
                 int j = 0;
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
                     SemanticOcTreeNode &node = leaf_it.get_node();
