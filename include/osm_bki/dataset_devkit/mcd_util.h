@@ -610,14 +610,6 @@ class MCDData {
       if (map_) map_->set_osm_scan_radius_extension(factor);
     }
 
-    void set_osm_height_filter_enabled(bool enabled) {
-      if (map_) map_->set_osm_height_filter_enabled(enabled);
-    }
-
-    void set_height_filter_mode_gaussian(bool gaussian) {
-      if (map_) map_->set_height_filter_mode_gaussian(gaussian);
-    }
-
     void set_height_kernel_params(float lambda,
                                   const std::vector<float> &mu,
                                   const std::vector<float> &tau,
@@ -783,57 +775,6 @@ class MCDData {
       }
     }
 
-    /// Load OSM height confusion matrix (rows=height bins, cols=common-class rows, Variant A).
-    /// Optional; used when osm_height_filtering enabled. Column count is taken from the YAML
-    /// row length (dynamic, matching number of common-class rows in the OSM confusion matrix).
-    bool load_osm_height_confusion_matrix(const std::string &yaml_path) {
-      if (!map_) return false;
-      try {
-        YAML::Node root = YAML::LoadFile(yaml_path);
-        if (!root["osm_height_confusion_matrix"]) return false;
-
-        auto cm_node = root["osm_height_confusion_matrix"];
-        int max_bin = 0;
-        int n_cols = 0;
-        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
-          max_bin = std::max(max_bin, it->first.as<int>());
-          n_cols = std::max(n_cols, static_cast<int>(it->second.size()));
-        }
-        if (max_bin == 0 || n_cols == 0) return false;
-        std::vector<std::vector<float>> matrix(max_bin, std::vector<float>(n_cols, 0.f));
-        for (auto it = cm_node.begin(); it != cm_node.end(); ++it) {
-          int bin_idx = it->first.as<int>();
-          if (bin_idx < 1 || bin_idx > max_bin) continue;
-          auto vals = it->second;
-          for (int c = 0; c < std::min(static_cast<int>(vals.size()), n_cols); ++c)
-            matrix[bin_idx - 1][c] = vals[c].as<float>();
-        }
-        if (matrix.empty()) return false;
-        map_->set_osm_height_confusion_matrix(matrix);
-
-        // Read fixed-metric bin parameters. Required by the new scheme: rows of the
-        // matrix are fixed-step bins measured upward from the per-scan bottom along
-        // a fixed reference up axis. step_meters must match what the optimizer used.
-        float step_meters = 1.0f;
-        if (root["osm_height_bin_step_meters"]) {
-          step_meters = root["osm_height_bin_step_meters"].as<float>();
-        } else {
-          RCLCPP_WARN_STREAM(node_->get_logger(),
-              "OSM height CM yaml is missing 'osm_height_bin_step_meters'; defaulting to "
-              << step_meters << " m. Regenerate with the updated optimizer for correct binning.");
-        }
-        map_->set_osm_height_bin_step(step_meters);
-        RCLCPP_INFO_STREAM(node_->get_logger(),
-            "OSM height confusion matrix loaded: " << matrix.size() << " bins x " << n_cols
-            << " class cols (step=" << step_meters << " m)");
-        return true;
-      } catch (const std::exception &e) {
-        RCLCPP_WARN_STREAM(node_->get_logger(),
-            "Failed to load OSM height confusion matrix: " << e.what());
-        return false;
-      }
-    }
-
     /// Return true if both the lidar bin and label/multiclass file exist for the given scan file number.
     bool scan_and_label_exist(const std::string& input_data_dir, const std::string& input_label_dir, int scan_file_num) {
       char scan_id_c[256];
@@ -899,19 +840,6 @@ class MCDData {
         have_keyframe = true;
       }
       
-      // Fix the OSM height filter reference up axis to the +z of the first scan's
-      // lidar, expressed in the (first-pose-relative) map frame. After pose
-      // normalization lidar_poses_[0] ≈ I, so this reduces to column 2 of
-      // lidar_to_body, but computing it explicitly is robust.
-      if (!lidar_poses_.empty() && !body_to_lidar_tf_.isZero(1e-10)) {
-        Eigen::Matrix4d lidar_to_body_0 = body_to_lidar_tf_.inverse();
-        Eigen::Matrix4d first_lidar_to_map = lidar_poses_[0] * lidar_to_body_0;
-        map_->set_osm_height_up_ref(
-            static_cast<float>(first_lidar_to_map(0, 2)),
-            static_cast<float>(first_lidar_to_map(1, 2)),
-            static_cast<float>(first_lidar_to_map(2, 2)));
-      }
-
       osm_bki::point3f origin;
       int insertion_count = 0;
 
