@@ -1320,6 +1320,7 @@ namespace osm_bki {
 
                 if (use_soft)
                     bgk->second->predict_soft(xs, ybars);
+                    // bgk->second->predict_csm(xs, ybars);
                 else
                     bgk->second->predict(xs, ybars);
                 
