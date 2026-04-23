@@ -26,15 +26,15 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
     lidar_pose_suffix: pose_inW.csv
-    input_label_suffix: inferred_labels/cenet_kitti360_softmax
+    input_label_suffix: inferred_labels/cenet_kitti360
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/osm_bki  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/osm_bki_onehot  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
-    publish_semantic_occ_map: false   # publish /occupied_cells_vis_array; other map topics are gated independently
+    publish_semantic_occ_map: true   # publish /occupied_cells_vis_array; other map topics are gated independently
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
-    inferred_use_multiclass: true   # inferred labels from input_label_suffix
+    inferred_use_multiclass: false   # inferred labels from input_label_suffix
     gt_use_multiclass: false        # GT labels from gt_label_suffix
     inferred_labels_key: kitti360        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
@@ -42,7 +42,7 @@
     # Visualization: show OSM priors colored. Use semantic for class colors.
     # Options: osm_building, osm_road, osm_grassland, osm_tree, osm_parking, osm_fence,
     #          osm_sidewalk, osm_cycleway, osm_forest, osm_blend (all priors blended)
-    publish_osm_prior_map: true
+    publish_osm_prior_map: false
     osm_prior_map_color_mode: osm_blend
     osm_prior_map_topic: /semantic_osm_prior_map
     osm_prior_map_z: 0.0    # ground-plane z for the 2D raster (first-pose-relative map frame)
@@ -110,8 +110,7 @@
     osm_height_filtering: true           # use height-based filtering for OSM priors
 
     # --- Gaussian height filter parameters (active when osm_height_filtering: true) ---
-    height_kernel_lambda: 0.5        # blend weight (0 = disabled, 1 = full gating)
-    height_kernel_dead_zone: [1.2548, 0.3116, 0.4172, 0.3482, 2.8144, 1.07, 1.8919, 0.6965, 0.9041]  # per-class half-width (m)
+    height_kernel_lambda: 1.0        # blend weight (0 = disabled, 1 = full gating)
     height_kernel_redistribute: false
     height_kernel_gate: 0.0          # >0 skips when argmax ybar already height-compatible
     sensor_mounting_height: 1.73     # meters from ground (tune per platform)
@@ -120,9 +119,7 @@
     # 6 vegetation, 7 vehicle, 8 terrain)
     height_kernel_mu:  [2.6119, 3.1837, 3.6438, 3.178, -2.1106, 2.3396, -0.7354, 2.418, 2.7568]
     height_kernel_tau: [100.0, 0.5922, 0.7175, 0.502, 4.5275, 1.4042, 2.7398, 0.9551, 1.5245]
-    
-    # height_kernel_mu:  [1.760292649269104, 3.0739049911499023, 3.6316754817962646, 3.025782585144043, -2.5178871154785156, 1.6097233295440674, -1.6890032291412354, 2.344460964202881, 2.211047410964966]
-    # height_kernel_tau: [100.0, 0.5835955142974854, 0.7358202934265137, 0.7497875094413757, 3.9747562408447266, 2.1995604038238525, 3.0521724224090576, 1.0082777738571167, 2.0403661727905273]
+    height_kernel_dead_zone: [1.2548, 0.3116, 0.4172, 0.3482, 2.8144, 1.07, 1.8919, 0.6965, 0.9041]
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch
