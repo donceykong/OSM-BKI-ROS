@@ -165,6 +165,33 @@ namespace osm_bki {
           }
       }
 
+      void predict_soft(const std::vector<T> &xs, std::vector<std::vector<T>> &ybars) {
+          assert(xs.size() % dim == 0);
+          MatrixXType _xs = Eigen::Map<const MatrixXType>(xs.data(), xs.size() / dim, dim);
+          assert(trained == true);
+          MatrixKType Ks;
+
+          covSparse(_xs, x, Ks);
+
+          ybars.resize(_xs.rows());
+          for (int r = 0; r < _xs.rows(); ++r)
+              ybars[r].resize(nc);
+
+          bool has_weights = !w_vec.empty();
+          bool has_class_weights = !w_class.empty();
+          MatrixYType _y_vec(y_soft.size(), 1);
+          for (int k = 0; k < nc; ++k) {
+              for (size_t i = 0; i < y_soft.size(); ++i) {
+                  T w = has_weights ? w_vec[i] : static_cast<T>(1);
+                  T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
+                  _y_vec(i, 0) = y_soft[i][k] * w * wc;
+              }
+              MatrixYType _ybar = Ks * _y_vec;
+              for (int r = 0; r < _ybar.rows(); ++r)
+                  ybars[r][k] = _ybar(r, 0);
+          }
+      }
+
       void predict_csm(const std::vector<T> &xs, std::vector<std::vector<T>> &ybars) {
           assert(xs.size() % dim == 0);
           MatrixXType _xs = Eigen::Map<const MatrixXType>(xs.data(), xs.size() / dim, dim);

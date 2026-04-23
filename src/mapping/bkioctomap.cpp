@@ -1318,8 +1318,10 @@ namespace osm_bki {
                 if (bgk == bgk_arr.end()) continue;
                 vector<vector<float>> ybars;
 
-                // Predict is called for both one-hot or if using soft, multiclass labels
-                bgk->second->predict(xs, ybars);
+                if (use_soft)
+                    bgk->second->predict_soft(xs, ybars);
+                else
+                    bgk->second->predict(xs, ybars);
                 
                 int j = 0;
                 for (auto leaf_it = block->begin_leaf(); leaf_it != block->end_leaf(); ++leaf_it, ++j) {
