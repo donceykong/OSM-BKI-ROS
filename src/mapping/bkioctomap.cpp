@@ -8,6 +8,8 @@
 #include "bkioctomap.h"
 #include "bki.h"
 
+#include <rclcpp/rclcpp.hpp>
+
 using std::vector;
 
 // #define DEBUG true;
@@ -540,29 +542,31 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::compute_osm_semantic_kernel(
             float x, float y, float z, float origin_z, std::vector<float> &k_vec) const {
-        int nc = static_cast<int>(k_vec.size());
-        // Default: all classes get weight 1.0 (no modulation)
-        std::fill(k_vec.begin(), k_vec.end(), 1.0f);
 
-        if (!osm_cm_loaded_ || osm_prior_strength_ <= 0.0f) return;
+        // // Set the osm vec to 1.0 (only bc we add one below and not in update
+        // // and return if osm didnt load or if the evidence strength is set to 0
+        // if (!osm_cm_loaded_ || osm_prior_strength_ <= 0.0f) {
+        //     std::fill(k_vec.begin(), k_vec.end(), 1.0f);
+        //     return;
+        // }
+        // else { // Default: all classes get weight 0.0 if strength > 0
+        std::fill(k_vec.begin(), k_vec.end(), 0.0f);
+        // }
+
+        // Set simple constant for number of classes (nc)
+        int nc = static_cast<int>(k_vec.size());
 
         // 1. Compute OSM prior vector m(x,y) at the training point location
         float osm_vec[N_OSM_PRIOR_COLS];
         compute_osm_prior_vec(x, y, osm_vec);
 
-        // 2. OSM confidence c(x) = max of OSM prior (excluding "none" column)
-        float c_x = 0.f;
-        for (int c = 0; c < N_OSM_PRIOR_COLS - 1; ++c) {
-            if (osm_vec[c] > c_x) c_x = osm_vec[c];
-        }
-        if (c_x <= 0.f) return;  // No OSM coverage: all weights stay 1.0
-
-        // 3. Variant A: project OSM -> common, then apply per-class height filter.
+        // 2. Convert to common class label
         std::vector<float> Mm(osm_cm_rows_, 0.f);
         for (int r = 0; r < osm_cm_rows_; ++r)
             for (int c = 0; c < N_OSM_PRIOR_COLS; ++c)
                 Mm[r] += osm_cm_[r][c] * osm_vec[c];
-
+        
+        // 3. Apply per-class gaussian height-filter.
         if (height_kernel_lambda_ > 0.f) {
             float h = z - (origin_z - sensor_mounting_height_);
             float lam = height_kernel_lambda_;
@@ -579,26 +583,18 @@ namespace osm_bki {
                     phi_row += std::exp(-(excess * excess) / (2.f * tau_k * tau_k));
                 }
                 phi_row /= static_cast<float>(labels.size());
+
                 Mm[r] *= (1.f - lam) + lam * phi_row;
             }
         }
 
-        float max_Mm = 0.f;
-        for (int r = 0; r < osm_cm_rows_; ++r)
-            if (Mm[r] > max_Mm) max_Mm = Mm[r];
-        if (max_Mm <= 0.f) return;
-
-        // 5. Per-class boost: classes supported by OSM get weight > 1.0
-        //    Classes not supported stay at 1.0 (no suppression)
-        //    k_vec[lbl] = 1.0 + strength * c(x) * Mm[r] / max(Mm)
+        // 4. Per-class OSM-Derived weight
+        //    k_vec[lbl] = 1.0 + strength * Mm[r]
         for (int r = 0; r < osm_cm_rows_; ++r) {
-            float support = Mm[r] / max_Mm;  // normalized to [0, 1]
-            if (support <= 0.f) continue;     // no boost for unsupported classes
-            float boost = osm_prior_strength_ * c_x * support;
             const auto &labels = osm_cm_row_to_labels_[r];
             for (int lbl : labels) {
                 if (lbl >= 0 && lbl < nc)
-                    k_vec[lbl] = 1.0f + boost;
+                    k_vec[lbl] = osm_prior_strength_ * Mm[r];
             }
         }
     }
