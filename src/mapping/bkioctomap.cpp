@@ -245,30 +245,37 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::set_osm_buildings(const std::vector<Geometry2D> &buildings) {
         osm_buildings_ = buildings;
+        for (auto& g : osm_buildings_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_roads(const std::vector<Geometry2D> &roads) {
         osm_roads_ = roads;
+        for (auto& g : osm_roads_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_sidewalks(const std::vector<Geometry2D> &sidewalks) {
         osm_sidewalks_ = sidewalks;
+        for (auto& g : osm_sidewalks_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_cycleways(const std::vector<Geometry2D> &cycleways) {
         osm_cycleways_ = cycleways;
+        for (auto& g : osm_cycleways_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_grasslands(const std::vector<Geometry2D> &grasslands) {
         osm_grasslands_ = grasslands;
+        for (auto& g : osm_grasslands_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_trees(const std::vector<Geometry2D> &trees) {
         osm_trees_ = trees;
+        for (auto& g : osm_trees_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_forests(const std::vector<Geometry2D> &forests) {
         osm_forests_ = forests;
+        for (auto& g : osm_forests_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_tree_points(const std::vector<std::pair<float, float>> &tree_points) {
@@ -281,10 +288,12 @@ namespace osm_bki {
 
     void SemanticBKIOctoMap::set_osm_parking(const std::vector<Geometry2D> &parking) {
         osm_parking_ = parking;
+        for (auto& g : osm_parking_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_fences(const std::vector<Geometry2D> &fences) {
         osm_fences_ = fences;
+        for (auto& g : osm_fences_) compute_bbox(g);
     }
 
     void SemanticBKIOctoMap::set_osm_road_width(float width_m) {
@@ -639,8 +648,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_building_prior(float x, float y) const {
         const auto &buildings = osm_scan_filtered_ ? active_buildings_ : osm_buildings_;
         if (buildings.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_positive_d = std::numeric_limits<float>::max();
         for (const auto &poly : buildings) {
+            if (bbox_distance_sq(x, y, poly) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside a building
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -651,8 +662,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_road_prior(float x, float y) const {
         const auto &roads = osm_scan_filtered_ ? active_roads_ : osm_roads_;
         if (roads.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &road : roads) {
+            if (bbox_distance_sq(x, y, road) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, road);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -663,8 +676,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_grassland_prior(float x, float y) const {
         const auto &grasslands = osm_scan_filtered_ ? active_grasslands_ : osm_grasslands_;
         if (grasslands.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_positive_d = std::numeric_limits<float>::max();
         for (const auto &poly : grasslands) {
+            if (bbox_distance_sq(x, y, poly) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside grassland
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -675,8 +690,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_forest_prior(float x, float y) const {
         const auto &forests = osm_scan_filtered_ ? active_forests_ : osm_forests_;
         if (forests.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_positive_d = std::numeric_limits<float>::max();
         for (const auto &poly : forests) {
+            if (bbox_distance_sq(x, y, poly) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, poly);
             if (signed_d <= 0.f) return 1.f;  // inside forest
             if (signed_d < min_positive_d) min_positive_d = signed_d;
@@ -687,11 +704,13 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_tree_prior(float x, float y) const {
         const auto &trees = osm_scan_filtered_ ? active_trees_ : osm_trees_;
         const auto &tree_pts = osm_scan_filtered_ ? active_tree_points_ : osm_tree_points_;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float max_prior = 0.f;
         // Check tree polygons (forests/woods)
         if (!trees.empty()) {
             float min_positive_d = std::numeric_limits<float>::max();
             for (const auto &poly : trees) {
+                if (bbox_distance_sq(x, y, poly) > decay_sq) continue;
                 float signed_d = distance_to_polygon_boundary(x, y, poly);
                 if (signed_d <= 0.f) {
                     max_prior = 1.f;  // inside forest, max prior
@@ -726,9 +745,11 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_parking_prior(float x, float y) const {
         const auto &parking = osm_scan_filtered_ ? active_parking_ : osm_parking_;
         if (parking.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float max_prior = 0.f;
         float min_positive_d = std::numeric_limits<float>::max();
         for (const auto &poly : parking) {
+            if (bbox_distance_sq(x, y, poly) > decay_sq) continue;
             if (poly.coords.size() < 3) {
                 float d = distance_to_polyline(x, y, poly);
                 float prior = osm_prior_from_distance(d, osm_decay_meters_);
@@ -746,8 +767,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_fence_prior(float x, float y) const {
         const auto &fences = osm_scan_filtered_ ? active_fences_ : osm_fences_;
         if (fences.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &fence : fences) {
+            if (bbox_distance_sq(x, y, fence) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, fence);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -758,8 +781,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_sidewalk_prior(float x, float y) const {
         const auto &sidewalks = osm_scan_filtered_ ? active_sidewalks_ : osm_sidewalks_;
         if (sidewalks.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &sw : sidewalks) {
+            if (bbox_distance_sq(x, y, sw) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, sw);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
@@ -770,8 +795,10 @@ namespace osm_bki {
     float SemanticBKIOctoMap::compute_osm_cycleway_prior(float x, float y) const {
         const auto &cycleways = osm_scan_filtered_ ? active_cycleways_ : osm_cycleways_;
         if (cycleways.empty()) return 0.f;
+        const float decay_sq = osm_decay_meters_ * osm_decay_meters_;
         float min_signed_d = std::numeric_limits<float>::max();
         for (const auto &cw : cycleways) {
+            if (bbox_distance_sq(x, y, cw) > decay_sq) continue;
             float signed_d = distance_to_polygon_boundary(x, y, cw);
             if (signed_d <= 0.f) return 1.f;
             if (signed_d < min_signed_d) min_signed_d = signed_d;
