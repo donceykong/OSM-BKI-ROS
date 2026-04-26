@@ -6,10 +6,10 @@
     data_root: "/media/donceykong/doncey_ssd_02/datasets/"
 
     # Map information
-    resolution: 0.5
+    resolution: 0.3
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
+    ds_resolution: 0.1      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
     num_class: 9
@@ -17,7 +17,7 @@
     # Information about range-finder data
     scan_num: 10000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
-    keyframe_dist: 5.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
+    keyframe_dist: 2.5  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
@@ -26,15 +26,15 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
     lidar_pose_suffix: pose_inW.csv
-    input_label_suffix: inferred_labels/cenet_kitti360
+    input_label_suffix: inferred_labels/cenet_kitti360_softmax
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/osm_bki_onehot  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/cross_domain/vanilla #evaluations/osm_bki_no_c  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
-    publish_semantic_occ_map: true   # publish /occupied_cells_vis_array; other map topics are gated independently
+    publish_semantic_occ_map: false   # publish /occupied_cells_vis_array; other map topics are gated independently
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
-    inferred_use_multiclass: false   # inferred labels from input_label_suffix
+    inferred_use_multiclass: true   # inferred labels from input_label_suffix
     gt_use_multiclass: false        # GT labels from gt_label_suffix
     inferred_labels_key: kitti360        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
@@ -84,8 +84,8 @@
     use_uncertainty_filter: false
     # Filter mode: "confusion_matrix" (per-class precision threshold) or "top_percent" (drop top N% most uncertain)
     uncertainty_filter_mode: top_percent
-    uncertainty_drop_percent: 99.0  # for top_percent mode: discount this % of most uncertain points per scan
-    uncertainty_min_weight: 0.00     # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
+    uncertainty_drop_percent: 100.0  # for top_percent mode: discount this % of most uncertain points per scan
+    uncertainty_min_weight: 0.00    # minimum kernel weight for the most uncertain points (0.0 = no influence, 1.0 = no discounting)
     confusion_matrix_file: confusion_matrix_mcd_optimized.yaml  # for confusion_matrix mode
 
     # --------------------------------
@@ -104,10 +104,10 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
-    osm_prior_strength: 0.5 # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.5   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_prior_strength: 0.0 #0.10             # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.0 #0.50   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
-    osm_height_filtering: true           # use height-based filtering for OSM priors
+    osm_height_filtering: true          # use height-based filtering for OSM priors
 
     # --- Gaussian height filter parameters (active when osm_height_filtering: true) ---
     height_kernel_lambda: 1.0        # blend weight (0 = disabled, 1 = full gating)
@@ -117,9 +117,12 @@
     # Per-common-class μ / τ (size == num_class; order matches labels_common.yaml:
     # 0 unlabeled, 1 road, 2 sidewalk, 3 parking, 4 building, 5 fence,
     # 6 vegetation, 7 vehicle, 8 terrain)
-    height_kernel_mu:  [2.6119, 3.1837, 3.6438, 3.178, -2.1106, 2.3396, -0.7354, 2.418, 2.7568]
-    height_kernel_tau: [100.0, 0.5922, 0.7175, 0.502, 4.5275, 1.4042, 2.7398, 0.9551, 1.5245]
-    height_kernel_dead_zone: [1.2548, 0.3116, 0.4172, 0.3482, 2.8144, 1.07, 1.8919, 0.6965, 0.9041]
+    # height_kernel_mu:  [2.0, 3.0, 3.0, 3.0, -2.0, 2.0, -1.0, 2.0, 3.0]
+    # height_kernel_tau: [100.0, 0.6, 0.6, 0.6, 5.0, 1.5, 5.0, 1.0, 1.5]
+    # height_kernel_dead_zone: [1.2548, 0.4, 0.4, 0.4, 3.0, 1.0, 3.0, 1.0, 1.0]
+    height_kernel_mu:        [2.3447, 3.316, 3.6138, 3.284, -0.9758, 2.4386, -0.1416, 2.5158, 3.1983]
+    height_kernel_tau:       [100.0, 0.4655, 0.6309, 0.5428, 3.2919, 1.462, 2.4682, 0.7994, 1.3838]
+    height_kernel_dead_zone: [0.9947, 0.266, 0.3362, 0.266, 2.3258, 0.8114, 1.5916, 0.5342, 0.5517]
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch

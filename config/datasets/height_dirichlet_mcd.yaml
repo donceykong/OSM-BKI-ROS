@@ -1,0 +1,101 @@
+dataset: mcd
+sequence_name: kth_night_05
+num_scans: 842
+method: dirichlet_posterior
+alpha_0: 0.01
+hdr_mass: 0.5
+bin_width_m: 0.1
+h_range_m:
+- -10.0
+- 15.0
+sensor_mounting_height: 1.73
+class_names:
+- unlabeled
+- road
+- sidewalk
+- parking
+- building
+- fence
+- vegetation
+- vehicle
+- terrain
+height_kernel_mu: [2.3447, 3.316, 3.6138, 3.284, -0.9758, 2.4386, -0.1416, 2.5158,
+  3.1983]
+height_kernel_tau: [100.0, 0.4655, 0.6309, 0.5428, 3.2919, 1.462, 2.4682, 0.7994,
+  1.3838]
+height_kernel_dead_zone: [0.9947, 0.266, 0.3362, 0.266, 2.3258, 0.8114, 1.5916, 0.5342,
+  0.5517]
+per_class:
+  unlabeled:
+    count: 3266663
+    mu: 2.3447
+    tau: 100.0
+    dead_zone: 0.9947
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.25
+    note: ' tau overridden=100.0'
+  road:
+    count: 753564
+    mu: 3.316
+    tau: 0.4655
+    dead_zone: 0.266
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.45
+  sidewalk:
+    count: 5000000
+    mu: 3.6138
+    tau: 0.6309
+    dead_zone: 0.3362
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.55
+  parking:
+    count: 24244
+    mu: 3.284
+    tau: 0.5428
+    dead_zone: 0.266
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.25
+  building:
+    count: 5000000
+    mu: -0.9758
+    tau: 3.2919
+    dead_zone: 2.3258
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.85
+  fence:
+    count: 67569
+    mu: 2.4386
+    tau: 1.462
+    dead_zone: 0.8114
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.55
+  vegetation:
+    count: 4331898
+    mu: -0.1416
+    tau: 2.4682
+    dead_zone: 1.5916
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 0.65
+  vehicle:
+    count: 269338
+    mu: 2.5158
+    tau: 0.7994
+    dead_zone: 0.5342
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 2.45
+  terrain:
+    count: 837086
+    mu: 3.1983
+    tau: 1.3838
+    dead_zone: 0.5517
+    hdr_mass: 0.5
+    alpha_0: 0.01
+    posterior_peak_h: 3.55

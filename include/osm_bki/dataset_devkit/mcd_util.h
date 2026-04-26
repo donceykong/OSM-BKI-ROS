@@ -860,6 +860,7 @@ class MCDData {
           MulticlassResult mc_result = mcd2pcl_multiclass(scan_name, mc_name);
           cloud = mc_result.cloud;
           scan_common_probs_ = mc_result.common_probs;
+          
           if (publish_semantic_uncertainty_ && mc_result.n_classes > 1 && !mc_result.variances.empty()) {
             orig_cloud_for_unc = mc_result.cloud;
             orig_variances_copy = mc_result.variances;  // copy: mc_result is destroyed at block end
@@ -869,103 +870,56 @@ class MCDData {
           if (use_uncertainty_filter_ && cloud && !cloud->points.empty() &&
               mc_result.n_classes > 1) {
 
-            float max_var = static_cast<float>(mc_result.n_classes - 1) /
-                            (static_cast<float>(mc_result.n_classes) * mc_result.n_classes);
             size_t n_pts = cloud->points.size();
 
-            std::vector<float> uncertainties(n_pts);
+            // Per-point uncertainties = normalized entropy (already in [0, 1]).
+            const std::vector<float>& uncertainties = mc_result.variances;
+
+            // Top-N% thresholding: keep the (1 - drop_pct)% least uncertain
+            // points at full weight; ramp the rest down to uncertainty_min_weight_.
+            float keep_fraction = 1.0f - uncertainty_drop_percent_ / 100.0f;
+            size_t keep_rank = static_cast<size_t>(keep_fraction * n_pts);
+            if (keep_rank >= n_pts) keep_rank = n_pts - 1;
+
+            std::vector<float> sorted_unc(uncertainties);
+            std::nth_element(sorted_unc.begin(),
+                             sorted_unc.begin() + keep_rank,
+                             sorted_unc.end());
+            float threshold = sorted_unc[keep_rank];
+
+            scan_point_weights_.resize(n_pts);
+            int n_discounted = 0;
             for (size_t pi = 0; pi < n_pts; ++pi) {
-              uncertainties[pi] = 1.0f - std::min(mc_result.variances[pi] / max_var, 1.0f);
+              if (uncertainties[pi] <= threshold) {
+                scan_point_weights_[pi] = 1.0f;
+              } else {
+                float denom = (1.0f - threshold);
+                float t = (denom > 1e-6f)
+                    ? std::min((uncertainties[pi] - threshold) / denom, 1.0f)
+                    : 1.0f;
+                scan_point_weights_[pi] = 1.0f - t * (1.0f - uncertainty_min_weight_);
+                n_discounted++;
+              }
             }
 
-            if (uncertainty_filter_mode_ == "top_percent") {
-              // Discount the top N% most uncertain points via kernel weights.
-              // Points below the threshold get weight 1.0 (full influence).
-              // Points above get weight ramping from 1.0 down to 0.0, so
-              // confident neighbors can dominate through kernel smoothing.
-              float keep_fraction = 1.0f - uncertainty_drop_percent_ / 100.0f;
-              size_t keep_rank = static_cast<size_t>(keep_fraction * n_pts);
-              if (keep_rank >= n_pts) keep_rank = n_pts - 1;
-
-              std::vector<float> sorted_unc(uncertainties);
-              std::nth_element(sorted_unc.begin(),
-                               sorted_unc.begin() + keep_rank,
-                               sorted_unc.end());
-              float threshold = sorted_unc[keep_rank];
-
-              scan_point_weights_.resize(n_pts);
-              int n_discounted = 0;
-              for (size_t pi = 0; pi < n_pts; ++pi) {
-                if (uncertainties[pi] <= threshold) {
-                  scan_point_weights_[pi] = 1.0f;
-                } else {
-                  // Linearly ramp from 1.0 at threshold to uncertainty_min_weight_ at uncertainty=1.0
-                  float denom = (1.0f - threshold);
-                  float t = (denom > 1e-6f)
-                      ? std::min((uncertainties[pi] - threshold) / denom, 1.0f)
-                      : 1.0f;
-                  scan_point_weights_[pi] = 1.0f - t * (1.0f - uncertainty_min_weight_);
-                  n_discounted++;
-                }
-              }
-
-              total_points_processed_ += static_cast<int>(n_pts);
-              total_points_filtered_ += n_discounted;
-              if (n_discounted > 0 && (list_idx < 5 || list_idx % 50 == 0)) {
-                RCLCPP_INFO_STREAM(node_->get_logger(),
-                    "Scan " << list_idx << ": discounted " << n_discounted << "/"
-                    << n_pts << " points (cumulative: "
-                    << total_points_filtered_ << "/" << total_points_processed_ << ")");
-              }
-
-            } else if (confusion_matrix_loaded_) {
-              // Per-class precision: filter (drop) points entirely.
-              // Labels are already in common taxonomy after ingestion.
-              pcl::PointCloud<pcl::PointXYZL>::Ptr filtered(new pcl::PointCloud<pcl::PointXYZL>);
-              filtered->points.reserve(n_pts);
-              std::vector<std::vector<float>> filtered_common_probs;
-              if (!scan_common_probs_.empty()) filtered_common_probs.reserve(n_pts);
-              int n_dropped = 0;
-
-              for (size_t pi = 0; pi < n_pts; ++pi) {
-                int pred_common = static_cast<int>(cloud->points[pi].label);
-                float precision = (pred_common > 0 && pred_common < N_COMMON)
-                    ? class_precision_[pred_common] : 1.0f;
-                if (uncertainties[pi] <= precision || pred_common == 0) {
-                  filtered->points.push_back(cloud->points[pi]);
-                  if (pi < scan_common_probs_.size())
-                    filtered_common_probs.push_back(scan_common_probs_[pi]);
-                } else {
-                  n_dropped++;
-                }
-              }
-
-              if (n_dropped > 0) {
-                total_points_processed_ += static_cast<int>(n_pts);
-                total_points_filtered_ += n_dropped;
-                if (list_idx < 5 || list_idx % 50 == 0) {
-                  RCLCPP_INFO_STREAM(node_->get_logger(),
-                      "Scan " << list_idx << ": filtered " << n_dropped << "/"
-                      << n_pts << " points (cumulative: "
-                      << total_points_filtered_ << "/" << total_points_processed_ << ")");
-                }
-              }
-
-              filtered->width = static_cast<uint32_t>(filtered->points.size());
-              filtered->height = 1;
-              filtered->is_dense = false;
-              cloud = filtered;
-              scan_point_weights_.clear();
-              scan_common_probs_ = std::move(filtered_common_probs);
+            total_points_processed_ += static_cast<int>(n_pts);
+            total_points_filtered_ += n_discounted;
+            if (n_discounted > 0 && (list_idx < 5 || list_idx % 50 == 0)) {
+              RCLCPP_INFO_STREAM(node_->get_logger(),
+                  "Scan " << list_idx << ": discounted " << n_discounted << "/"
+                  << n_pts << " points (cumulative: "
+                  << total_points_filtered_ << "/" << total_points_processed_ << ")");
             }
           } else {
             scan_point_weights_.clear();
           }
-        } else {
+        } 
+        else {
           scan_common_probs_.clear();
           std::string label_name = input_label_dir + "/" + std::string(scan_id_c) + ".bin";
           cloud = mcd2pcl(scan_name, label_name);
         }
+
         if (!cloud) {
           RCLCPP_WARN_STREAM(node_->get_logger(), "WARNING: mcd2pcl returned null pointer for scan " << scan_file_num);
           continue;
@@ -1985,7 +1939,7 @@ class MCDData {
         float mean = sum / n_classes;
         float variance = sum_sq / n_classes - mean * mean;
         if (variance < 0.0f) variance = 0.0f;
-        result.variances.push_back(variance);
+        // result.variances.push_back(variance);
 
         // Softmax over network classes (used for both common and native paths)
         float max_val = raw_vals[0];
@@ -2004,6 +1958,27 @@ class MCDData {
           for (int c = 0; c < n_classes; c++)
             softmax_net[static_cast<size_t>(c)] /= softmax_sum;
         }
+
+
+        // Softmax-normalize raw_vals, then compute normalized entropy in [0, 1].
+        float max_logit = raw_vals[0];
+        for (int c = 1; c < n_classes; ++c)
+            if (raw_vals[c] > max_logit) max_logit = raw_vals[c];
+
+        float Z = 0.0f;
+        std::vector<float> probs(n_classes);
+        for (int c = 0; c < n_classes; ++c) {
+            probs[c] = std::exp(raw_vals[c] - max_logit);
+            Z += probs[c];
+        }
+        float H = 0.0f;
+        for (int c = 0; c < n_classes; ++c) {
+            float p = probs[c] / Z;
+            if (p > 1e-12f) H -= p * std::log(p);
+        }
+        float H_norm = H / std::log(static_cast<float>(n_classes));
+        result.variances.push_back(H_norm);
+
 
         if (common_label_config_loaded_) {
           // Map to common taxonomy: point label and soft counts in common space

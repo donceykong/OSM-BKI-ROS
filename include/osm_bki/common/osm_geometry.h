@@ -16,7 +16,42 @@ namespace osm_bki {
     struct Geometry2D {
         std::vector<std::pair<float, float>> coords;
         std::vector<Geometry2D> holes;  // Inner rings (cutouts); empty = no holes
+        /// Cached AABB over `coords`. Default values cause bbox_distance_sq to return
+        /// FLT_MAX, so an unpopulated bbox always fails a prefilter — call compute_bbox
+        /// after constructing the geometry to enable the prefilter.
+        float bbox_min_x = std::numeric_limits<float>::max();
+        float bbox_max_x = std::numeric_limits<float>::lowest();
+        float bbox_min_y = std::numeric_limits<float>::max();
+        float bbox_max_y = std::numeric_limits<float>::lowest();
     };
+
+    /// Compute and cache the AABB on a Geometry2D (and any holes). Call once after
+    /// the geometry's `coords` are finalized.
+    inline void compute_bbox(Geometry2D& g) {
+        g.bbox_min_x = std::numeric_limits<float>::max();
+        g.bbox_max_x = std::numeric_limits<float>::lowest();
+        g.bbox_min_y = std::numeric_limits<float>::max();
+        g.bbox_max_y = std::numeric_limits<float>::lowest();
+        for (const auto& p : g.coords) {
+            if (p.first  < g.bbox_min_x) g.bbox_min_x = p.first;
+            if (p.first  > g.bbox_max_x) g.bbox_max_x = p.first;
+            if (p.second < g.bbox_min_y) g.bbox_min_y = p.second;
+            if (p.second > g.bbox_max_y) g.bbox_max_y = p.second;
+        }
+        for (auto& hole : g.holes) compute_bbox(hole);
+    }
+
+    /// Squared distance from (px,py) to the geometry's cached AABB. Returns 0 when
+    /// (px,py) is inside the bbox, so a `> decay_sq` test never skips a polygon
+    /// that contains the query point.
+    inline float bbox_distance_sq(float px, float py, const Geometry2D& g) {
+        float dx = 0.f, dy = 0.f;
+        if      (px < g.bbox_min_x) dx = g.bbox_min_x - px;
+        else if (px > g.bbox_max_x) dx = px - g.bbox_max_x;
+        if      (py < g.bbox_min_y) dy = g.bbox_min_y - py;
+        else if (py > g.bbox_max_y) dy = py - g.bbox_max_y;
+        return dx * dx + dy * dy;
+    }
 
     /// Ray-casting point-in-polygon test (returns true if (px,py) is inside poly).
     inline bool point_in_polygon(float px, float py, const Geometry2D& poly) {

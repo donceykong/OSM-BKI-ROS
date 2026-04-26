@@ -184,9 +184,11 @@ namespace osm_bki {
               for (size_t i = 0; i < y_soft.size(); ++i) {
                   T w = has_weights ? w_vec[i] : static_cast<T>(1);
                   T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
-                  _y_vec(i, 0) = y_soft[i][k] * w * wc;
+                  _y_vec(i, 0) = w * y_soft[i][k] + y_soft[i][k] * wc;
               }
+              
               MatrixYType _ybar = Ks * _y_vec;
+              
               for (int r = 0; r < _ybar.rows(); ++r)
                   ybars[r][k] = _ybar(r, 0);
           }
