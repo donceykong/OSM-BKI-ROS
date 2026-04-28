@@ -21,7 +21,7 @@
 
     # Dataset information: paths are derived from sequence_name + suffix (no repeated sequence in paths).
     dataset_name: mcd
-    sequence_name: kth_night_05
+    sequence_name: kth_day_09
 
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
@@ -29,7 +29,7 @@
     input_label_suffix: inferred_labels/cenet_kitti360_softmax
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/cross_domain/vanilla #evaluations/osm_bki_no_c  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/cross_domain/osm_bki_softmax_Bp_00.50_Bk_01.00 #evaluations/osm_bki_no_c  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
     publish_semantic_occ_map: false   # publish /occupied_cells_vis_array; other map topics are gated independently
 
@@ -67,7 +67,7 @@
     # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
     publish_osm_height_bins_scan: false
     publish_osm_height_bins_map: false
-    osm_height_bins_step_meters: 0.1     # meters per bin; num_bins derived per scan, symmetric about sensor origin
+    osm_height_bins_step_meters: 0.18    # meters per bin; num_bins derived per scan, symmetric about sensor origin
     osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
     osm_height_bins_scan_topic: /osm_height_bins_scan
     osm_height_bins_map_topic: /osm_height_bins_map
@@ -104,8 +104,8 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
-    osm_prior_strength: 0.0 #0.10             # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.0 #0.50   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_prior_strength: 1.0 #0.10             # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.5 #0.50   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
     osm_height_filtering: true          # use height-based filtering for OSM priors
 
@@ -120,9 +120,14 @@
     # height_kernel_mu:  [2.0, 3.0, 3.0, 3.0, -2.0, 2.0, -1.0, 2.0, 3.0]
     # height_kernel_tau: [100.0, 0.6, 0.6, 0.6, 5.0, 1.5, 5.0, 1.0, 1.5]
     # height_kernel_dead_zone: [1.2548, 0.4, 0.4, 0.4, 3.0, 1.0, 3.0, 1.0, 1.0]
-    height_kernel_mu:        [2.3447, 3.316, 3.6138, 3.284, -0.9758, 2.4386, -0.1416, 2.5158, 3.1983]
-    height_kernel_tau:       [100.0, 0.4655, 0.6309, 0.5428, 3.2919, 1.462, 2.4682, 0.7994, 1.3838]
-    height_kernel_dead_zone: [0.9947, 0.266, 0.3362, 0.266, 2.3258, 0.8114, 1.5916, 0.5342, 0.5517]
+    
+    #height_kernel_mu:        [2.3447, 3.316, 3.6138, 3.284, -0.9758, 2.4386, -0.1416, 2.5158, 3.1983]
+    #height_kernel_tau:       [100.0, 0.4655, 0.6309, 0.5428, 3.2919, 1.462, 2.4682, 0.7994, 1.3838]
+    #height_kernel_dead_zone: [0.9947, 0.266, 0.3362, 0.266, 2.3258, 0.8114, 1.5916, 0.5342, 0.5517]
+
+    height_kernel_mu:        [1.485, -0.0011, 0.0682, 0.1366, 1.7499, 0.8846, 1.7249, 0.9045, 0.2722]
+    height_kernel_tau:       [100.0, 0.9315, 0.8144, 0.8657, 1.4464, 1.07, 1.4119, 1.0307, 0.9145]
+    height_kernel_dead_zone: [1.135, 0.4511, 0.4182, 0.4134, 0.9001, 0.6346, 0.8749, 0.5545, 0.5222]
 
     # --------------------------------
     # OSM visualizer (RViz) — same file as above; paths resolved via data_dir from launch

@@ -152,7 +152,7 @@ namespace osm_bki {
                 if (y_vec[i] == k) {
                   T w = has_weights ? w_vec[i] : static_cast<T>(1);
                   T wc = has_class_weights ? w_class[i][k] : static_cast<T>(1);
-                  _y_vec(i, 0) = w * wc;
+                  _y_vec(i, 0) = w + wc;
                 } else
                   _y_vec(i, 0) = 0;
               }
