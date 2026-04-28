@@ -26,17 +26,17 @@
     # Path suffixes relative to sequence (full path = sequence_name/suffix). All under data/<dataset>/.
     input_data_suffix: lidar_bin/data
     lidar_pose_suffix: pose_inW.csv
-    input_label_suffix: inferred_labels/cenet_kitti360_softmax
+    input_label_suffix: inferred_labels/cenet_mcd_terrain_softmax
     gt_label_suffix: gt_labels_terrain
 
-    evaluation_result_prefix: evaluations/cross_domain/vanilla #evaluations/osm_bki_no_c  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
+    evaluation_result_prefix: evaluations/in_domain/osm_bki_new_occ #evaluations/osm_bki_no_c  # prefix for evaluation results (full path = sequence_name/evaluation_result_prefix_*.yaml)
     query: true
     publish_semantic_occ_map: false   # publish /occupied_cells_vis_array; other map topics are gated independently
 
     # Multiclass: per-class confidence scores (float16) vs single uint32 per point.
     inferred_use_multiclass: true   # inferred labels from input_label_suffix
     gt_use_multiclass: false        # GT labels from gt_label_suffix
-    inferred_labels_key: kitti360        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
+    inferred_labels_key: mcd        # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for inferred
     gt_labels_key: mcd              # "mcd", "semkitti", or "kitti360" — *_to_common and learning_map_inv for GT
 
     # Visualization: show OSM priors colored. Use semantic for class colors.
@@ -67,7 +67,7 @@
     # The map cloud is voxel-downsampled with osm_height_bins_map_leaf_size after each scan.
     publish_osm_height_bins_scan: false
     publish_osm_height_bins_map: false
-    osm_height_bins_step_meters: 0.1     # meters per bin; num_bins derived per scan, symmetric about sensor origin
+    osm_height_bins_step_meters: 0.18    # meters per bin; num_bins derived per scan, symmetric about sensor origin
     osm_height_bins_map_leaf_size: 0.5   # meters; voxel leaf size for accumulated map
     osm_height_bins_scan_topic: /osm_height_bins_scan
     osm_height_bins_map_topic: /osm_height_bins_map
@@ -104,8 +104,8 @@
     # To use inferred (model) labels as rows (optimize for OSM to correct inferred toward GT), add --use-inferred-row.
     # Then set osm_confusion_matrix_file to the output file.
     osm_confusion_matrix_file: osm_confusion_matrix_optimized_MCD_NEW.yaml
-    osm_prior_strength: 0.0 #0.10             # per-class kernel boost strength (0.0 = disabled)
-    osm_dirichlet_prior_strength: 0.0 #0.50   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
+    osm_prior_strength: 0.1 #0.10             # per-class kernel boost strength (0.0 = disabled)
+    osm_dirichlet_prior_strength: 0.1 #0.50   # spatially varying Dirichlet prior from OSM (0.0 = uniform prior everywhere)
     osm_scan_radius_extension: 1.5      # multiply scan's max XY extent by this factor for OSM geometry pre-filtering (1.0 = exact, >1.0 = margin)
     osm_height_filtering: true          # use height-based filtering for OSM priors
 

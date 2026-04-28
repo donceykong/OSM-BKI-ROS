@@ -21,7 +21,7 @@
 
     # Geometry parameters used for polygon-band OSM priors and visualization.
     osm_geometry_parameters:
-      osm_decay_meters: 2.000
+      osm_decay_meters: 1.000
       road_width_meters: 3.000
       sidewalk_width_meters: 3.000
       cycleway_width_meters: 3.000
