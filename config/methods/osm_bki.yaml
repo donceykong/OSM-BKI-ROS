@@ -3,7 +3,7 @@
 /**:
   ros__parameters:
     # Octree parameter
-    block_depth: 3 # Test-data octree depth (see Wang & Englot ICRA 2016)
+    block_depth: 1 # Test-data octree depth (see Wang & Englot ICRA 2016)
 
     # Kernel parameters
     sf2: 10.0 # Actually sigma_0 in sparse kernel
@@ -27,13 +27,3 @@
       cycleway_width_meters: 3.000
       fence_width_meters: 0.600
       tree_point_radius_meters: 5.000
-
-    # # Default OSM geometry parameters (used by optimize_osm_cm_*.py scripts).
-    # # Dataset-specific confusion matrix yamls or CLI args can override these.
-    # osm_geometry_parameters:
-    #   osm_decay_meters: 2.000
-    #   road_width_meters: 3.0   # fallback for unmapped highway types (OSM2World "else" default)
-    #   sidewalk_width_meters: 3.0
-    #   cycleway_width_meters: 3.0
-    #   fence_width_meters: 0.6
-    #   tree_point_radius_meters: 5.0

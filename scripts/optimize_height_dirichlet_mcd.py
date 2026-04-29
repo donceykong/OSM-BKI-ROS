@@ -158,7 +158,8 @@ def main():
     parser.add_argument("--data-dir", type=str, default=None)
     parser.add_argument("--max-scans", type=int, default=50000)
     parser.add_argument("--keyframe-dist", type=float, default=1.0)
-    parser.add_argument("--sensor-mounting-height", type=float, default=None)
+    parser.add_argument("--sensor-mounting-height", type=float, default=1.7)
+
     parser.add_argument("--h-min", type=float, default=-10.0,
                         help="Minimum height (m) for histogram bins.")
     parser.add_argument("--h-max", type=float, default=15.0,

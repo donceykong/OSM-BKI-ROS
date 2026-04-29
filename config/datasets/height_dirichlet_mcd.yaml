@@ -8,7 +8,7 @@ bin_width_m: 0.1
 h_range_m:
 - -10.0
 - 15.0
-sensor_mounting_height: 1.73
+sensor_mounting_height: 1.7
 class_names:
 - unlabeled
 - road
@@ -19,83 +19,83 @@ class_names:
 - vegetation
 - vehicle
 - terrain
-height_kernel_mu: [2.3447, 3.316, 3.6138, 3.284, -0.9758, 2.4386, -0.1416, 2.5158,
-  3.1983]
-height_kernel_tau: [100.0, 0.4655, 0.6309, 0.5428, 3.2919, 1.462, 2.4682, 0.7994,
+height_kernel_mu: [2.3148, 3.2861, 3.5839, 3.2548, -1.0027, 2.409, -0.1709, 2.485,
+  3.1682]
+height_kernel_tau: [100.0, 0.4657, 0.6309, 0.5426, 3.288, 1.4624, 2.4667, 0.7992,
   1.3838]
-height_kernel_dead_zone: [0.9947, 0.266, 0.3362, 0.266, 2.3258, 0.8114, 1.5916, 0.5342,
-  0.5517]
+height_kernel_dead_zone: [0.9352, 0.2639, 0.3339, 0.2952, 2.3527, 0.841, 1.5791, 0.535,
+  0.5818]
 per_class:
   unlabeled:
     count: 3266663
-    mu: 2.3447
+    mu: 2.3148
     tau: 100.0
-    dead_zone: 0.9947
+    dead_zone: 0.9352
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 3.25
     note: ' tau overridden=100.0'
   road:
     count: 753564
-    mu: 3.316
-    tau: 0.4655
-    dead_zone: 0.266
+    mu: 3.2861
+    tau: 0.4657
+    dead_zone: 0.2639
     hdr_mass: 0.5
     alpha_0: 0.01
-    posterior_peak_h: 3.45
+    posterior_peak_h: 3.35
   sidewalk:
     count: 5000000
-    mu: 3.6138
+    mu: 3.5839
     tau: 0.6309
-    dead_zone: 0.3362
+    dead_zone: 0.3339
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 3.55
   parking:
     count: 24244
-    mu: 3.284
-    tau: 0.5428
-    dead_zone: 0.266
+    mu: 3.2548
+    tau: 0.5426
+    dead_zone: 0.2952
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 3.25
   building:
     count: 5000000
-    mu: -0.9758
-    tau: 3.2919
-    dead_zone: 2.3258
+    mu: -1.0027
+    tau: 3.288
+    dead_zone: 2.3527
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 0.85
   fence:
     count: 67569
-    mu: 2.4386
-    tau: 1.462
-    dead_zone: 0.8114
+    mu: 2.409
+    tau: 1.4624
+    dead_zone: 0.841
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 3.55
   vegetation:
     count: 4331898
-    mu: -0.1416
-    tau: 2.4682
-    dead_zone: 1.5916
+    mu: -0.1709
+    tau: 2.4667
+    dead_zone: 1.5791
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 0.65
   vehicle:
     count: 269338
-    mu: 2.5158
-    tau: 0.7994
-    dead_zone: 0.5342
+    mu: 2.485
+    tau: 0.7992
+    dead_zone: 0.535
     hdr_mass: 0.5
     alpha_0: 0.01
-    posterior_peak_h: 2.45
+    posterior_peak_h: 2.35
   terrain:
     count: 837086
-    mu: 3.1983
+    mu: 3.1682
     tau: 1.3838
-    dead_zone: 0.5517
+    dead_zone: 0.5818
     hdr_mass: 0.5
     alpha_0: 0.01
     posterior_peak_h: 3.55

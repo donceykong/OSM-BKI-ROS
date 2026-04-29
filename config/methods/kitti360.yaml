@@ -3,19 +3,19 @@
 /**:
   ros__parameters:
     # Root data directory; if empty, use package local data dir (e.g. <pkg>/data).
-    data_root: "/media/donceykong/doncey_ssd_02/datasets/"
+    data_root: "/media/donceykong/doncey_ssd_011/datasets/"
 
     # Map information
     resolution: 0.5
     # Sampling resolutions
     free_resolution: 100.0  # Free space sampling resolution
-    ds_resolution: 0.5      # Voxel DS size for pointcloud (before insertion)
+    ds_resolution: 0.2      # Voxel DS size for pointcloud (before insertion)
     # num_class: number of common taxonomy classes (see labels_common.yaml).
     # All raw labels are mapped to [0, num_class-1] at ingestion time.
     num_class: 9
 
     # Information about range-finder data
-    scan_num: 500   # How many scans to use
+    scan_num: 1000   # How many scans to use
     max_range: 200.0  # Sensor max range (m)
     keyframe_dist: 5.0  # Minimum euclidean distance (m) between consecutive lidar poses to be considered a keyframe (0 = use every frame)
 
